@@ -24,6 +24,20 @@ Phone with STT → Agent → (TTS + Screen Results)
 - Daylight computer (for code/visual display while walking)
 - AR Glasses (future target once occlusion issues solved)
 
+## Development Workflow: Git Worktrees
+
+Each phase of development lives in its own git worktree, allowing parallel development and clean separation of features while maintaining a shared git history. This approach enables:
+- Clean commits per phase without polluting other work
+- Easy switching between phases
+- Parallel development when needed
+- Clear progression tracking
+
+**Current Worktree Structure**:
+- `codewalk/` (main branch) - Foundation and vision
+- `codewalk-app/` (phase-2-tauri-app) - Tauri GUI port
+
+To switch between phases: `cd ../codewalk-app` or `cd ../codewalk`
+
 ## Roadmap: Useful Stepping Stones
 
 Any stepping stone here has to be useful in some deliverable product.
@@ -38,7 +52,7 @@ DONE
 
 ---
 
-2. Get Git worktrees to work to properly jump between projects
+2. Get Git worktrees to work to properly jump between projects ✓
 3. Port to a simple tauri GUI, so stt-clipboard-turbo works on computer
 4. Get app to work on testflight (tauri gui)
 
