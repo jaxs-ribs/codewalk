@@ -33,7 +33,7 @@ impl TerminalUI {
 
 impl UserInterface for TerminalUI {
     fn show_recording(&self) -> Result<()> {
-        self.print_inline("\r🔴 Recording... (press SPACE to stop)")
+        self.print_inline("\r🔴 Recording... (press hotkey to stop)")
     }
 
     fn show_processing(&self) -> Result<()> {
@@ -44,20 +44,20 @@ impl UserInterface for TerminalUI {
         self.clear_line()?;
         self.print_line("✅ Copied to clipboard\n")?;
         self.print_line(&format!("{}\n", text.trim()))?;
-        self.print_inline("Ready (SPACE to record, Q to quit)")
+        self.print_inline("Ready")
     }
 
     fn show_error(&self, error: &str) -> Result<()> {
         let truncated = ErrorFormatter::truncate(error, ERROR_DISPLAY_LIMIT);
         self.print_inline(&format!(
-            "\r\x1b[K❌ Error: {}. Ready (SPACE to record, Q to quit)",
+            "\r\x1b[K❌ Error: {}. Ready",
             truncated
         ))
     }
 
     fn show_warning(&self, message: &str) -> Result<()> {
         self.print_inline(&format!(
-            "\r\x1b[K⚠️  {}. Ready (SPACE to record, Q to quit)",
+            "\r\x1b[K⚠️  {}. Ready",
             message
         ))
     }

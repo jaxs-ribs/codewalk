@@ -1,43 +1,38 @@
 use anyhow::{Result, anyhow};
 use global_hotkey::{GlobalHotKeyManager, HotKeyState};
-use global_hotkey::hotkey::{HotKey, Modifiers, Code};
-use std::sync::mpsc;
-use crate::constants::HOTKEY_TIMEOUT_MS;
-use std::time::Duration;
+use global_hotkey::hotkey::{HotKey, Code, Modifiers};
 
 pub struct GlobalHotkeyHandler {
     _manager: GlobalHotKeyManager,
-    receiver: mpsc::Receiver<HotkeyEvent>,
+    hotkey: HotKey,
 }
 
 impl GlobalHotkeyHandler {
     pub fn new() -> Result<Self> {
+        println!("🔧 Initializing global hotkey manager...");
         let manager = GlobalHotKeyManager::new()
             .map_err(|e| anyhow!("Failed to create hotkey manager: {}", e))?;
         
         let hotkey = HotkeyBuilder::build_default()?;
+        println!("📌 Registering hotkey: Cmd+Option+Shift+T (ID: {:?})", hotkey.id());
+        
         manager.register(hotkey)
             .map_err(|e| anyhow!("Failed to register hotkey: {}", e))?;
         
-        let receiver = Self::create_event_receiver();
+        println!("✅ Hotkey registered successfully");
         
-        Ok(Self { _manager: manager, receiver })
+        Ok(Self { _manager: manager, hotkey })
     }
-
-    pub fn poll_event(&self) -> Option<HotkeyEvent> {
-        self.receiver
-            .recv_timeout(Duration::from_millis(HOTKEY_TIMEOUT_MS))
-            .ok()
-    }
-
-    fn create_event_receiver() -> mpsc::Receiver<HotkeyEvent> {
-        let (sender, receiver) = mpsc::channel();
-        
-        std::thread::spawn(move || {
-            HotkeyListener::listen(sender);
-        });
-        
-        receiver
+    
+    pub fn check_pressed(&self) -> bool {
+        if let Ok(event) = global_hotkey::GlobalHotKeyEvent::receiver().try_recv() {
+            println!("🔑 Hotkey event detected: {:?} for ID: {:?}", event.state, event.id);
+            if event.state == HotKeyState::Pressed && event.id == self.hotkey.id() {
+                println!("⚡ Hotkey matched!");
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -45,28 +40,9 @@ struct HotkeyBuilder;
 
 impl HotkeyBuilder {
     fn build_default() -> Result<HotKey> {
-        let modifiers = Modifiers::META | Modifiers::SHIFT;
-        let code = Code::KeyR;
+        let modifiers = Modifiers::META | Modifiers::ALT | Modifiers::SHIFT;
+        let code = Code::KeyT;
         
         Ok(HotKey::new(Some(modifiers), code))
     }
-}
-
-struct HotkeyListener;
-
-impl HotkeyListener {
-    fn listen(sender: mpsc::Sender<HotkeyEvent>) {
-        loop {
-            if let Ok(event) = global_hotkey::GlobalHotKeyEvent::receiver().recv() {
-                if event.state == HotKeyState::Pressed {
-                    let _ = sender.send(HotkeyEvent::ToggleRecording);
-                }
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum HotkeyEvent {
-    ToggleRecording,
 }

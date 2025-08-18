@@ -11,7 +11,4 @@ pub const GROQ_LANGUAGE: &str = "en";
 pub const ENV_FILE_PATH: &str = ".env";
 pub const ENV_API_KEY: &str = "GROQ_API_KEY";
 
-pub const POLL_TIMEOUT_MS: u64 = 50;
-pub const HOTKEY_TIMEOUT_MS: u64 = 100;
-
 pub const ERROR_DISPLAY_LIMIT: usize = 20;
