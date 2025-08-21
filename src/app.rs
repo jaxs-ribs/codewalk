@@ -35,21 +35,23 @@ impl App {
         }
     }
 
-    pub fn start_recording(&mut self) -> Result<()> {
+    pub async fn start_recording(&mut self) -> Result<()> {
         self.mode = Mode::Recording;
         self.recording.start();
-        backend::record_voice(true)?;
+        backend::record_voice(true).await?;
+        self.append_output(format!("{} Recording started...", prefixes::ASR));
         Ok(())
     }
 
-    pub fn stop_recording(&mut self) -> Result<()> {
-        backend::record_voice(false)?;
-        let audio = backend::take_recorded_audio()?;
+    pub async fn stop_recording(&mut self) -> Result<()> {
+        backend::record_voice(false).await?;
+        let audio = backend::take_recorded_audio().await?;
         
         if audio.is_empty() {
             self.handle_empty_recording();
         } else {
-            self.process_audio(audio)?;
+            self.append_output(format!("{} Processing audio...", prefixes::ASR));
+            self.process_audio(audio).await?;
         }
         
         self.recording.stop();
@@ -61,10 +63,15 @@ impl App {
         self.mode = Mode::Idle;
     }
 
-    fn process_audio(&mut self, audio: Vec<u8>) -> Result<()> {
-        let utterance = backend::voice_to_text(audio)?;
-        self.append_output(format!("{} {}", prefixes::ASR, utterance));
-        self.create_plan(&utterance)?;
+    async fn process_audio(&mut self, audio: Vec<u8>) -> Result<()> {
+        let utterance = backend::voice_to_text(audio).await?;
+        if !utterance.trim().is_empty() {
+            self.append_output(format!("{} Transcribed: {}", prefixes::ASR, utterance));
+            self.mode = Mode::Idle;
+        } else {
+            self.append_output(format!("{} No speech detected", prefixes::ASR));
+            self.mode = Mode::Idle;
+        }
         Ok(())
     }
 

@@ -1,16 +1,72 @@
 use anyhow::Result;
 use serde_json::Value;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-pub fn record_voice(_start: bool) -> Result<()> {
+use crate::groq::GroqClient;
+
+// Store audio recorder and groq client as thread-local since audio recorder isn't Send
+thread_local! {
+    static AUDIO_RECORDER: std::cell::RefCell<Option<crate::audio::AudioRecorder>> = std::cell::RefCell::new(None);
+}
+
+lazy_static::lazy_static! {
+    static ref GROQ_CLIENT: Arc<Mutex<Option<GroqClient>>> = Arc::new(Mutex::new(None));
+}
+
+pub async fn initialize_backend(api_key: String) -> Result<()> {
+    // Initialize audio recorder in thread-local storage
+    AUDIO_RECORDER.with(|r| {
+        *r.borrow_mut() = Some(crate::audio::AudioRecorder::new()?);
+        Ok::<(), anyhow::Error>(())
+    })?;
+    
+    let mut client_guard = GROQ_CLIENT.lock().await;
+    *client_guard = Some(GroqClient::new(api_key)?);
+    
     Ok(())
 }
 
-pub fn take_recorded_audio() -> Result<Vec<u8>> {
-    Ok(vec![1, 2, 3])
+pub async fn record_voice(start: bool) -> Result<()> {
+    AUDIO_RECORDER.with(|r| {
+        if let Some(recorder) = r.borrow_mut().as_mut() {
+            if start {
+                recorder.start_recording()?;
+            }
+        }
+        Ok(())
+    })
 }
 
-pub fn voice_to_text(_audio: Vec<u8>) -> Result<String> {
-    Ok("connect to bandit level zero and read readme".to_string())
+pub async fn take_recorded_audio() -> Result<Vec<u8>> {
+    AUDIO_RECORDER.with(|r| {
+        if let Some(recorder) = r.borrow_mut().as_mut() {
+            let samples = recorder.stop_recording()?;
+            
+            if samples.is_empty() {
+                return Ok(Vec::new());
+            }
+            
+            // Use the actual sample rate from the device
+            recorder.samples_to_wav(&samples)
+        } else {
+            Ok(Vec::new())
+        }
+    })
+}
+
+pub async fn voice_to_text(audio: Vec<u8>) -> Result<String> {
+    if audio.is_empty() {
+        return Ok(String::new());
+    }
+    
+    let client_guard = GROQ_CLIENT.lock().await;
+    
+    if let Some(client) = client_guard.as_ref() {
+        client.transcribe(audio).await
+    } else {
+        Ok(String::new())
+    }
 }
 
 pub fn text_to_llm_cmd(text: &str) -> Result<String> {

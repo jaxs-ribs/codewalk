@@ -64,7 +64,7 @@ impl HelpPane {
     
     fn create_help_content() -> Vec<Line<'static>> {
         vec![
-            Self::help_line("Ctrl+R", "Toggle voice recording (start/finalize)"),
+            Self::help_line("Ctrl+R", "🎤 Toggle voice recording (uses Groq Whisper)"),
             Self::help_line("Enter", "Submit text / Confirm plan"),
             Self::help_line("Esc", "Cancel recording or plan"),
             Self::help_line("n", "Cancel plan (when pending)"),

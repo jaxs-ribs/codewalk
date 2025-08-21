@@ -7,7 +7,7 @@ use crate::types::Mode;
 pub struct InputHandler;
 
 impl InputHandler {
-    pub fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
+    pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
         if !Self::is_valid_event(key) {
             return Ok(false);
         }
@@ -17,7 +17,7 @@ impl InputHandler {
             return Ok(true); // Quit signal
         }
 
-        Self::process_key(app, key)?;
+        Self::process_key(app, key).await?;
         Ok(false)
     }
 
@@ -25,16 +25,16 @@ impl InputHandler {
         matches!(key.kind, KeyEventKind::Press)
     }
 
-    fn process_key(app: &mut App, key: KeyEvent) -> Result<()> {
+    async fn process_key(app: &mut App, key: KeyEvent) -> Result<()> {
         if key.kind == KeyEventKind::Press {
-            Self::handle_key_press(app, key)?;
+            Self::handle_key_press(app, key).await?;
         }
         Ok(())
     }
 
-    fn handle_key_press(app: &mut App, key: KeyEvent) -> Result<()> {
+    async fn handle_key_press(app: &mut App, key: KeyEvent) -> Result<()> {
         match (key.code, key.modifiers) {
-            (KeyCode::Char('r'), KeyModifiers::CONTROL) => Self::handle_record_toggle(app)?,
+            (KeyCode::Char('r'), KeyModifiers::CONTROL) => Self::handle_record_toggle(app).await?,
             (KeyCode::Enter, _) => Self::handle_enter(app)?,
             (KeyCode::Esc, _) => Self::handle_cancel(app),
             (KeyCode::Char('n'), KeyModifiers::NONE) if app.mode == Mode::PlanPending => {
@@ -49,11 +49,11 @@ impl InputHandler {
         Ok(())
     }
 
-    fn handle_record_toggle(app: &mut App) -> Result<()> {
+    async fn handle_record_toggle(app: &mut App) -> Result<()> {
         if app.can_start_recording() {
-            app.start_recording()?;
+            app.start_recording().await?;
         } else if app.can_stop_recording() {
-            app.stop_recording()?;
+            app.stop_recording().await?;
         }
         Ok(())
     }
