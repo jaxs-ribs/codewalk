@@ -1,6 +1,12 @@
 use anyhow::{Result, anyhow};
 
 pub fn load_api_key() -> Result<String> {
+    // Try environment variable first
+    if let Ok(key) = std::env::var("GROQ_API_KEY") {
+        return Ok(key);
+    }
+    
+    // Fall back to .env file if it exists
     load_env_file_if_present(".env");
     get_groq_api_key()
 }
@@ -59,5 +65,5 @@ fn set_env_if_unset(key: String, value: String) {
 
 fn get_groq_api_key() -> Result<String> {
     std::env::var("GROQ_API_KEY")
-        .map_err(|_| anyhow!("GROQ_API_KEY not found. Please set it in .env file or environment"))
+        .map_err(|_| anyhow!("GROQ_API_KEY not found. Please set it as an environment variable"))
 }

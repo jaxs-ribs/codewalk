@@ -19,7 +19,21 @@ impl AudioRecorder {
 
     pub fn start_recording(&mut self) -> Result<()> {
         let device = get_default_input_device()?;
-        let config = device.default_input_config()?;
+        
+        // Try to get a config at 16kHz first (to avoid resampling)
+        let config = if let Ok(supported_configs) = device.supported_input_configs() {
+            let mut found_16k = None;
+            for config in supported_configs {
+                if config.min_sample_rate().0 <= 16000 && config.max_sample_rate().0 >= 16000 {
+                    // Found a config that supports 16kHz
+                    found_16k = Some(config.with_sample_rate(cpal::SampleRate(16000)));
+                    break;
+                }
+            }
+            found_16k.unwrap_or_else(|| device.default_input_config().unwrap())
+        } else {
+            device.default_input_config()?
+        };
         
         // Store the actual sample rate from the device
         self.sample_rate = Some(config.sample_rate().0);
@@ -38,7 +52,8 @@ impl AudioRecorder {
             drop(stream);
         }
         
-        Ok(self.get_samples())
+        // Use std::mem::take to avoid cloning
+        Ok(self.take_samples())
     }
 
     pub fn samples_to_wav(&self, samples: &[f32]) -> Result<Vec<u8>> {
@@ -54,8 +69,10 @@ impl AudioRecorder {
         self.samples.lock().unwrap().clear();
     }
 
-    fn get_samples(&self) -> Vec<f32> {
-        self.samples.lock().unwrap().clone()
+    fn take_samples(&self) -> Vec<f32> {
+        // Take ownership without cloning
+        let mut samples = self.samples.lock().unwrap();
+        std::mem::take(&mut *samples)
     }
 }
 
@@ -111,11 +128,24 @@ where
 
 fn create_wav_from_samples(samples: &[f32], input_rate: u32) -> Result<Vec<u8>> {
     let spec = wav_spec_16khz_mono();
-    let mut buffer = Vec::new();
+    
+    // Pre-allocate buffer with estimated size
+    let estimated_size = (samples.len() * 2) + 44; // 16-bit samples + WAV header
+    let mut buffer = Vec::with_capacity(estimated_size);
     
     {
         let mut writer = hound::WavWriter::new(std::io::Cursor::new(&mut buffer), spec)?;
-        write_resampled_audio(&mut writer, samples, input_rate, spec.sample_rate)?;
+        
+        // Skip resampling if already at 16kHz
+        if input_rate == 16000 {
+            for &sample in samples {
+                let amplitude = convert_to_i16(sample);
+                writer.write_sample(amplitude)?;
+            }
+        } else {
+            write_resampled_audio(&mut writer, samples, input_rate, spec.sample_rate)?;
+        }
+        
         writer.finalize()?;
     }
     

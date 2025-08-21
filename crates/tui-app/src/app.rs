@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::time::Duration;
 
-use crate::backend::{self, PlanInfo};
+use crate::backend;
 use crate::constants::{self, messages, prefixes};
 use crate::types::{Mode, PlanState, RecordingState};
 
@@ -75,12 +75,12 @@ impl App {
         Ok(())
     }
 
-    pub fn create_plan(&mut self, text: &str) -> Result<()> {
-        let plan_json = backend::text_to_llm_cmd(text)?;
-        let plan_info = backend::parse_plan_json(&plan_json).ok();
+    pub async fn create_plan(&mut self, text: &str) -> Result<()> {
+        let plan_json = backend::text_to_llm_cmd(text).await?;
+        let plan_info = backend::extract_command_plan(&plan_json).await.ok();
         
         if let Some(info) = plan_info {
-            self.handle_plan_response(info, plan_json)?;
+            self.handle_plan_response(info, plan_json).await?;
         } else {
             self.handle_invalid_plan();
         }
@@ -88,15 +88,17 @@ impl App {
         Ok(())
     }
 
-    fn handle_plan_response(&mut self, info: PlanInfo, json: String) -> Result<()> {
-        match info.status.as_str() {
-            "ok" if info.has_steps => {
-                let cmd = backend::extract_cmd(&json)?;
+    async fn handle_plan_response(&mut self, info: llm_interface::CommandPlan, json: String) -> Result<()> {
+        use llm_interface::PlanStatus;
+        
+        match info.status {
+            PlanStatus::Ok if info.is_valid() => {
+                let cmd = backend::extract_cmd(&json).await?;
                 self.plan.set(json.clone(), cmd);
                 self.mode = Mode::PlanPending;
                 self.append_output(format!("{} {}", prefixes::PLAN, json));
             }
-            "deny" => {
+            PlanStatus::Deny => {
                 let reason = info.reason.unwrap_or_else(|| "unknown".to_string());
                 self.append_output(format!("{} {}{}", prefixes::PLAN, messages::PLAN_DENY_PREFIX, reason));
                 self.mode = Mode::Idle;
@@ -145,12 +147,12 @@ impl App {
         }
     }
 
-    pub fn handle_text_input(&mut self) -> Result<()> {
+    pub async fn handle_text_input(&mut self) -> Result<()> {
         if !self.input.is_empty() {
             let text = self.input.clone();
             self.append_output(format!("{} {}", prefixes::UTTERANCE, text));
             self.input.clear();
-            self.create_plan(&text)?;
+            self.create_plan(&text).await?;
         }
         Ok(())
     }

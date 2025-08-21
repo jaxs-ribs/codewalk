@@ -35,7 +35,7 @@ impl InputHandler {
     async fn handle_key_press(app: &mut App, key: KeyEvent) -> Result<()> {
         match (key.code, key.modifiers) {
             (KeyCode::Char('r'), KeyModifiers::CONTROL) => Self::handle_record_toggle(app).await?,
-            (KeyCode::Enter, _) => Self::handle_enter(app)?,
+            (KeyCode::Enter, _) => Self::handle_enter(app).await?,
             (KeyCode::Esc, _) => Self::handle_cancel(app),
             (KeyCode::Char('n'), KeyModifiers::NONE) if app.mode == Mode::PlanPending => {
                 Self::handle_cancel(app)
@@ -58,9 +58,9 @@ impl InputHandler {
         Ok(())
     }
 
-    fn handle_enter(app: &mut App) -> Result<()> {
+    async fn handle_enter(app: &mut App) -> Result<()> {
         match app.mode {
-            Mode::Idle => app.handle_text_input()?,
+            Mode::Idle => app.handle_text_input().await?,
             Mode::PlanPending => app.execute_plan(),
             _ => {}
         }

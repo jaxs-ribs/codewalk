@@ -1,9 +1,7 @@
 mod app;
-mod audio;
 mod backend;
 mod config;
 mod constants;
-mod groq;
 mod handlers;
 mod types;
 mod ui;
@@ -26,9 +24,9 @@ async fn main() -> Result<()> {
     // Load API key
     let api_key = match config::load_api_key() {
         Ok(key) => key,
-        Err(e) => {
-            eprintln!("Error loading API key: {}", e);
-            eprintln!("Please set GROQ_API_KEY environment variable or add it to .env file");
+        Err(_) => {
+            eprintln!("Error: GROQ_API_KEY environment variable not set");
+            eprintln!("Please run: export GROQ_API_KEY=your_key_here");
             return Ok(());
         }
     };
