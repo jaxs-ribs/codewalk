@@ -2,8 +2,8 @@ use anyhow::Result;
 use std::time::Duration;
 
 use crate::backend;
-use crate::claude_launcher::{self, ClaudeSession};
 use crate::constants::{self, messages, prefixes};
+use crate::executor::{ExecutorSession, ExecutorFactory, ExecutorType, ExecutorConfig, ExecutorOutput};
 use crate::types::{Mode, PlanState, RecordingState};
 use llm_interface::RouterAction;
 
@@ -13,7 +13,8 @@ pub struct App {
     pub mode: Mode,
     pub plan: PlanState,
     pub recording: RecordingState,
-    pub claude_session: Option<ClaudeSession>,
+    pub executor_session: Option<Box<dyn ExecutorSession>>,
+    pub current_executor: ExecutorType,
 }
 
 impl App {
@@ -24,13 +25,14 @@ impl App {
             mode: Mode::Idle,
             plan: PlanState::new(),
             recording: RecordingState::new(),
-            claude_session: None,
+            executor_session: None,
+            current_executor: ExecutorFactory::default_executor(),
         }
     }
     
-    /// Clean up any running Claude sessions before exit
+    /// Clean up any running executor sessions before exit
     pub async fn cleanup(&mut self) {
-        if let Some(mut session) = self.claude_session.take() {
+        if let Some(mut session) = self.executor_session.take() {
             let _ = session.terminate().await;
         }
     }
@@ -87,62 +89,6 @@ impl App {
         Ok(())
     }
 
-    pub async fn create_plan(&mut self, text: &str) -> Result<()> {
-        let plan_json = backend::text_to_llm_cmd(text).await?;
-        let plan_info = backend::extract_command_plan(&plan_json).await.ok();
-        
-        if let Some(info) = plan_info {
-            self.handle_plan_response(info, plan_json).await?;
-        } else {
-            self.handle_invalid_plan();
-        }
-        
-        Ok(())
-    }
-
-    async fn handle_plan_response(&mut self, info: llm_interface::CommandPlan, json: String) -> Result<()> {
-        use llm_interface::PlanStatus;
-        
-        match info.status {
-            PlanStatus::Ok if info.is_valid() => {
-                let cmd = backend::extract_cmd(&json).await?;
-                self.plan.set(json.clone(), cmd);
-                self.mode = Mode::PlanPending;
-                self.append_output(format!("{} {}", prefixes::PLAN, json));
-            }
-            PlanStatus::Deny => {
-                let reason = info.reason.unwrap_or_else(|| "unknown".to_string());
-                self.append_output(format!("{} {}{}", prefixes::PLAN, messages::PLAN_DENY_PREFIX, reason));
-                self.mode = Mode::Idle;
-            }
-            _ => self.handle_invalid_plan(),
-        }
-        Ok(())
-    }
-
-    fn handle_invalid_plan(&mut self) {
-        self.append_output(format!("{} {}", prefixes::PLAN, messages::PLAN_INVALID));
-        self.mode = Mode::Idle;
-    }
-
-    pub fn execute_plan(&mut self) {
-        if let Some(cmd) = &self.plan.command.clone() {
-            self.mode = Mode::Executing;
-            self.append_output(format!("{} {}", prefixes::EXEC, cmd));
-            self.simulate_execution();
-            self.complete_execution();
-        }
-    }
-
-    fn simulate_execution(&mut self) {
-        self.append_output(messages::SIMULATED_OUTPUT.to_string());
-        self.append_output(messages::DONE.to_string());
-    }
-
-    fn complete_execution(&mut self) {
-        self.plan.clear();
-        self.mode = Mode::Idle;
-    }
 
     pub fn cancel_current_operation(&mut self) {
         match self.mode {
@@ -155,13 +101,13 @@ impl App {
                 self.recording.stop();
                 self.mode = Mode::Idle;
             }
-            Mode::ClaudeRunning => {
-                if let Some(mut session) = self.claude_session.take() {
-                    // Try to terminate Claude gracefully
+            Mode::ExecutorRunning => {
+                if let Some(mut session) = self.executor_session.take() {
+                    // Try to terminate executor gracefully
                     let _ = tokio::task::block_in_place(|| {
                         tokio::runtime::Handle::current().block_on(session.terminate())
                     });
-                    self.append_output(format!("{} Claude session terminated by user", prefixes::EXEC));
+                    self.append_output(format!("{} Executor session terminated by user", prefixes::EXEC));
                 }
                 self.mode = Mode::Idle;
             }
@@ -179,8 +125,8 @@ impl App {
         match response.action {
             RouterAction::LaunchClaude => {
                 if let Some(prompt) = response.prompt {
-                    self.append_output(format!("{} Launching Claude with: {}", prefixes::EXEC, prompt));
-                    self.launch_claude(&prompt).await?;
+                    self.append_output(format!("{} Launching {} with: {}", prefixes::EXEC, self.current_executor.name(), prompt));
+                    self.launch_executor(&prompt).await?;
                 } else {
                     self.append_output(format!("{} Error: No prompt extracted", prefixes::PLAN));
                     self.mode = Mode::Idle;
@@ -196,22 +142,24 @@ impl App {
         Ok(())
     }
     
-    async fn launch_claude(&mut self, prompt: &str) -> Result<()> {
-        self.append_output(format!("{} Starting Claude Code...", prefixes::EXEC));
+    async fn launch_executor(&mut self, prompt: &str) -> Result<()> {
+        self.append_output(format!("{} Starting {}...", prefixes::EXEC, self.current_executor.name()));
         
-        match claude_launcher::launch_claude_session(prompt).await {
+        let config = ExecutorConfig::default();
+        match ExecutorFactory::create(self.current_executor.clone(), prompt, Some(config.clone())).await {
             Ok(session) => {
-                self.claude_session = Some(session);
-                self.mode = Mode::ClaudeRunning;
-                self.append_output(format!("{} Claude session started in {}", prefixes::EXEC, claude_launcher::PROJECT_DIR));
-                self.append_output(format!("Claude prompt: {}", prompt));
+                self.executor_session = Some(session);
+                self.mode = Mode::ExecutorRunning;
+                self.append_output(format!("{} {} session started", prefixes::EXEC, self.current_executor.name()));
+                self.append_output(format!("Working directory: {:?}", config.working_dir));
+                self.append_output(format!("Prompt: {}", prompt));
                 // Don't block here - output will be polled in main loop
             }
             Err(e) => {
-                if e.to_string().contains("No such file or directory") {
-                    self.append_output(format!("{} Claude Code not found. Install with: npm install -g @anthropic-ai/claude-code", prefixes::PLAN));
+                if e.to_string().contains("No such file or directory") || e.to_string().contains("not found") {
+                    self.append_output(format!("{} {} not found. Please install it first.", prefixes::PLAN, self.current_executor.name()));
                 } else {
-                    self.append_output(format!("{} Failed to launch Claude: {}", prefixes::PLAN, e));
+                    self.append_output(format!("{} Failed to launch {}: {}", prefixes::PLAN, self.current_executor.name(), e));
                 }
                 self.mode = Mode::Idle;
             }
@@ -220,25 +168,15 @@ impl App {
         Ok(())
     }
     
-    pub async fn poll_claude_output(&mut self) -> Result<()> {
+    pub async fn poll_executor_output(&mut self) -> Result<()> {
         let mut session_ended = false;
-        let mut output_lines = Vec::new();
-        let mut error_lines = Vec::new();
+        let mut outputs = Vec::new();
         
-        if let Some(session) = &mut self.claude_session {
-            // Read up to 10 lines per poll to avoid blocking
+        if let Some(session) = &mut self.executor_session {
+            // Read up to 10 outputs per poll to avoid blocking
             for _ in 0..10 {
-                match session.read_stdout_line().await {
-                    Ok(Some(line)) => output_lines.push(line),
-                    Ok(None) => break,
-                    Err(_) => break,
-                }
-            }
-            
-            // Also check stderr for errors
-            for _ in 0..5 {
-                match session.read_stderr_line().await {
-                    Ok(Some(line)) => error_lines.push(line),
+                match session.read_output().await {
+                    Ok(Some(output)) => outputs.push(output),
                     Ok(None) => break,
                     Err(_) => break,
                 }
@@ -250,23 +188,27 @@ impl App {
             }
         }
         
-        // Display output
-        for line in output_lines {
-            if !line.trim().is_empty() {
-                self.append_output(format!("Claude: {}", line));
-            }
-        }
-        
-        // Display errors
-        for line in error_lines {
-            if !line.trim().is_empty() {
-                self.append_output(format!("{} Claude error: {}", prefixes::WARN, line));
+        // Display outputs based on type
+        for output in outputs {
+            match output {
+                ExecutorOutput::Stdout(line) => {
+                    self.append_output(format!("{}: {}", self.current_executor.name(), line));
+                }
+                ExecutorOutput::Stderr(line) => {
+                    self.append_output(format!("{} {} error: {}", prefixes::WARN, self.current_executor.name(), line));
+                }
+                ExecutorOutput::Status(status) => {
+                    self.append_output(format!("{} Status: {}", prefixes::EXEC, status));
+                }
+                ExecutorOutput::Progress(pct, msg) => {
+                    self.append_output(format!("{} Progress: {:.0}% - {}", prefixes::EXEC, pct * 100.0, msg));
+                }
             }
         }
         
         if session_ended {
-            self.append_output(format!("{} Claude session completed", prefixes::EXEC));
-            self.claude_session = None;
+            self.append_output(format!("{} {} session completed", prefixes::EXEC, self.current_executor.name()));
+            self.executor_session = None;
             self.mode = Mode::Idle;
         }
         
@@ -309,6 +251,6 @@ impl App {
     }
 
     pub fn can_cancel(&self) -> bool {
-        matches!(self.mode, Mode::Recording | Mode::PlanPending | Mode::ClaudeRunning)
+        matches!(self.mode, Mode::Recording | Mode::PlanPending | Mode::ExecutorRunning)
     }
 }

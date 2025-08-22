@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use audio_transcribe::{AudioRecorder, TranscriptionProvider, GroqProvider as AudioGroqProvider};
-use llm_interface::{LLMProvider, PlanExtractor, JsonPlanExtractor, GroqProvider as LLMGroqProvider, CommandPlan, RouterResponse};
+use llm_interface::{LLMProvider, GroqProvider as LLMGroqProvider, RouterResponse};
 
 // Store providers and components as thread-local or global state
 thread_local! {
@@ -13,7 +13,6 @@ thread_local! {
 lazy_static::lazy_static! {
     static ref TRANSCRIPTION_PROVIDER: Arc<Mutex<Option<Box<dyn TranscriptionProvider>>>> = Arc::new(Mutex::new(None));
     static ref LLM_PROVIDER: Arc<Mutex<Option<Box<dyn LLMProvider>>>> = Arc::new(Mutex::new(None));
-    static ref PLAN_EXTRACTOR: Arc<Mutex<JsonPlanExtractor>> = Arc::new(Mutex::new(JsonPlanExtractor::new()));
 }
 
 pub async fn initialize_backend(api_key: String) -> Result<()> {
@@ -93,17 +92,6 @@ pub async fn text_to_llm_cmd(text: &str) -> Result<String> {
     } else {
         Err(anyhow::anyhow!("LLM provider not initialized"))
     }
-}
-
-pub async fn extract_command_plan(json_str: &str) -> Result<CommandPlan> {
-    let extractor = PLAN_EXTRACTOR.lock().await;
-    extractor.extract_plan(json_str)
-}
-
-pub async fn extract_cmd(json_str: &str) -> Result<String> {
-    let extractor = PLAN_EXTRACTOR.lock().await;
-    extractor.extract_first_command(json_str)?
-        .ok_or_else(|| anyhow::anyhow!("No command found in plan"))
 }
 
 pub async fn parse_router_response(json_str: &str) -> Result<RouterResponse> {

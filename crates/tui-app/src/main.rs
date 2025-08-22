@@ -1,8 +1,8 @@
 mod app;
 mod backend;
-mod claude_launcher;
 mod config;
 mod constants;
+mod executor;
 mod handlers;
 mod types;
 mod ui;
@@ -67,9 +67,9 @@ async fn run_application<B: ratatui::backend::Backend>(terminal: &mut Terminal<B
     loop {
         app.update_blink();
         
-        // Poll Claude output if it's running
-        if app.mode == types::Mode::ClaudeRunning {
-            app.poll_claude_output().await?;
+        // Poll executor output if it's running
+        if app.mode == types::Mode::ExecutorRunning {
+            app.poll_executor_output().await?;
         }
         
         terminal.draw(|frame| UI::draw(frame, &app))?;

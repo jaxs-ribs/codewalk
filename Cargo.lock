@@ -2315,6 +2315,7 @@ name = "tui-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "audio-transcribe",
  "crossterm",
  "lazy_static",

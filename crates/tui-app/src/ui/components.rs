@@ -20,7 +20,7 @@ impl OutputPane {
         
         let widget = match app.mode {
             Mode::PlanPending => list.style(Styles::dimmed()),
-            Mode::ClaudeRunning => list.style(Styles::highlight()),
+            Mode::ExecutorRunning => list.style(Styles::highlight()),
             _ => list
         };
         
@@ -123,7 +123,7 @@ impl InputLine {
             Mode::Recording => "Recording",
             Mode::PlanPending => "PlanPending",
             Mode::Executing => "Executing",
-            Mode::ClaudeRunning => "Claude Running",
+            Mode::ExecutorRunning => "Executor Running",
         }
     }
     

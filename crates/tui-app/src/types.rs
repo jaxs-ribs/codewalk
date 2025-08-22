@@ -6,7 +6,7 @@ pub enum Mode {
     Recording,
     PlanPending,
     Executing,
-    ClaudeRunning,
+    ExecutorRunning,  // Generic executor running (Claude, Devin, etc.)
 }
 
 pub struct RecordingState {
