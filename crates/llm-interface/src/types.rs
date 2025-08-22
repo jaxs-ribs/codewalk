@@ -1,6 +1,21 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouterResponse {
+    pub action: RouterAction,
+    pub prompt: Option<String>,
+    pub reason: Option<String>,
+    pub confidence: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RouterAction {
+    LaunchClaude,
+    CannotParse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandPlan {
     pub status: PlanStatus,
     pub confidence: Option<PlanConfidence>,

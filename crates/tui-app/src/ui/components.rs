@@ -18,10 +18,10 @@ impl OutputPane {
         let items = Self::create_list_items(app);
         let list = Self::create_list(items);
         
-        let widget = if app.mode == Mode::PlanPending {
-            list.style(Styles::dimmed())
-        } else {
-            list
+        let widget = match app.mode {
+            Mode::PlanPending => list.style(Styles::dimmed()),
+            Mode::ClaudeRunning => list.style(Styles::highlight()),
+            _ => list
         };
         
         frame.render_widget(widget, *area);
@@ -123,6 +123,7 @@ impl InputLine {
             Mode::Recording => "Recording",
             Mode::PlanPending => "PlanPending",
             Mode::Executing => "Executing",
+            Mode::ClaudeRunning => "Claude Running",
         }
     }
     

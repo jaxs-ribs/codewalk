@@ -2,8 +2,10 @@ use anyhow::Result;
 use std::time::Duration;
 
 use crate::backend;
+use crate::claude_launcher::{self, ClaudeSession};
 use crate::constants::{self, messages, prefixes};
 use crate::types::{Mode, PlanState, RecordingState};
+use llm_interface::RouterAction;
 
 pub struct App {
     pub output: Vec<String>,
@@ -11,6 +13,7 @@ pub struct App {
     pub mode: Mode,
     pub plan: PlanState,
     pub recording: RecordingState,
+    pub claude_session: Option<ClaudeSession>,
 }
 
 impl App {
@@ -21,6 +24,14 @@ impl App {
             mode: Mode::Idle,
             plan: PlanState::new(),
             recording: RecordingState::new(),
+            claude_session: None,
+        }
+    }
+    
+    /// Clean up any running Claude sessions before exit
+    pub async fn cleanup(&mut self) {
+        if let Some(mut session) = self.claude_session.take() {
+            let _ = session.terminate().await;
         }
     }
 
@@ -67,7 +78,8 @@ impl App {
         let utterance = backend::voice_to_text(audio).await?;
         if !utterance.trim().is_empty() {
             self.append_output(format!("{} Transcribed: {}", prefixes::ASR, utterance));
-            self.mode = Mode::Idle;
+            // Send to LLM router
+            self.route_command(&utterance).await?;
         } else {
             self.append_output(format!("{} No speech detected", prefixes::ASR));
             self.mode = Mode::Idle;
@@ -143,16 +155,131 @@ impl App {
                 self.recording.stop();
                 self.mode = Mode::Idle;
             }
+            Mode::ClaudeRunning => {
+                if let Some(mut session) = self.claude_session.take() {
+                    // Try to terminate Claude gracefully
+                    let _ = tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(session.terminate())
+                    });
+                    self.append_output(format!("{} Claude session terminated by user", prefixes::EXEC));
+                }
+                self.mode = Mode::Idle;
+            }
             _ => {}
         }
     }
 
+    async fn route_command(&mut self, text: &str) -> Result<()> {
+        self.append_output(format!("{} Routing command...", prefixes::PLAN));
+        
+        // Get router response from LLM
+        let response_json = backend::text_to_llm_cmd(text).await?;
+        let response = backend::parse_router_response(&response_json).await?;
+        
+        match response.action {
+            RouterAction::LaunchClaude => {
+                if let Some(prompt) = response.prompt {
+                    self.append_output(format!("{} Launching Claude with: {}", prefixes::EXEC, prompt));
+                    self.launch_claude(&prompt).await?;
+                } else {
+                    self.append_output(format!("{} Error: No prompt extracted", prefixes::PLAN));
+                    self.mode = Mode::Idle;
+                }
+            }
+            RouterAction::CannotParse => {
+                let reason = response.reason.unwrap_or_else(|| "Could not understand command".to_string());
+                self.append_output(format!("{} {}", prefixes::PLAN, reason));
+                self.mode = Mode::Idle;
+            }
+        }
+        
+        Ok(())
+    }
+    
+    async fn launch_claude(&mut self, prompt: &str) -> Result<()> {
+        self.append_output(format!("{} Starting Claude Code...", prefixes::EXEC));
+        
+        match claude_launcher::launch_claude_session(prompt).await {
+            Ok(session) => {
+                self.claude_session = Some(session);
+                self.mode = Mode::ClaudeRunning;
+                self.append_output(format!("{} Claude session started in {}", prefixes::EXEC, claude_launcher::PROJECT_DIR));
+                self.append_output(format!("Claude prompt: {}", prompt));
+                // Don't block here - output will be polled in main loop
+            }
+            Err(e) => {
+                if e.to_string().contains("No such file or directory") {
+                    self.append_output(format!("{} Claude Code not found. Install with: npm install -g @anthropic-ai/claude-code", prefixes::PLAN));
+                } else {
+                    self.append_output(format!("{} Failed to launch Claude: {}", prefixes::PLAN, e));
+                }
+                self.mode = Mode::Idle;
+            }
+        }
+        
+        Ok(())
+    }
+    
+    pub async fn poll_claude_output(&mut self) -> Result<()> {
+        let mut session_ended = false;
+        let mut output_lines = Vec::new();
+        let mut error_lines = Vec::new();
+        
+        if let Some(session) = &mut self.claude_session {
+            // Read up to 10 lines per poll to avoid blocking
+            for _ in 0..10 {
+                match session.read_stdout_line().await {
+                    Ok(Some(line)) => output_lines.push(line),
+                    Ok(None) => break,
+                    Err(_) => break,
+                }
+            }
+            
+            // Also check stderr for errors
+            for _ in 0..5 {
+                match session.read_stderr_line().await {
+                    Ok(Some(line)) => error_lines.push(line),
+                    Ok(None) => break,
+                    Err(_) => break,
+                }
+            }
+            
+            // Check if process is still running
+            if !session.is_running() {
+                session_ended = true;
+            }
+        }
+        
+        // Display output
+        for line in output_lines {
+            if !line.trim().is_empty() {
+                self.append_output(format!("Claude: {}", line));
+            }
+        }
+        
+        // Display errors
+        for line in error_lines {
+            if !line.trim().is_empty() {
+                self.append_output(format!("{} Claude error: {}", prefixes::WARN, line));
+            }
+        }
+        
+        if session_ended {
+            self.append_output(format!("{} Claude session completed", prefixes::EXEC));
+            self.claude_session = None;
+            self.mode = Mode::Idle;
+        }
+        
+        Ok(())
+    }
+    
     pub async fn handle_text_input(&mut self) -> Result<()> {
         if !self.input.is_empty() {
             let text = self.input.clone();
             self.append_output(format!("{} {}", prefixes::UTTERANCE, text));
             self.input.clear();
-            self.create_plan(&text).await?;
+            // Route through LLM instead of old plan system
+            self.route_command(&text).await?;
         }
         Ok(())
     }
@@ -182,6 +309,6 @@ impl App {
     }
 
     pub fn can_cancel(&self) -> bool {
-        matches!(self.mode, Mode::Recording | Mode::PlanPending)
+        matches!(self.mode, Mode::Recording | Mode::PlanPending | Mode::ClaudeRunning)
     }
 }

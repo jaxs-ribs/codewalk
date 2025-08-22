@@ -6,6 +6,7 @@ pub enum Mode {
     Recording,
     PlanPending,
     Executing,
+    ClaudeRunning,
 }
 
 pub struct RecordingState {
