@@ -7,7 +7,9 @@ use crate::executor::{ExecutorSession, ExecutorFactory, ExecutorType, ExecutorCo
 use crate::settings::AppSettings;
 use crate::types::{Mode, PlanState, RecordingState, PendingExecutor, ErrorInfo, ScrollState, ScrollDirection};
 use crate::utils::TextWrapper;
+use crate::log_monitor::{ParsedLogLine, spawn_log_monitor, LogType};
 use router::RouterAction;
+use tokio::sync::mpsc;
 
 pub struct App {
     pub output: Vec<String>,
@@ -21,6 +23,9 @@ pub struct App {
     pub pending_executor: Option<PendingExecutor>,
     pub error_info: Option<ErrorInfo>,
     pub scroll: ScrollState,
+    pub session_logs: Vec<ParsedLogLine>,
+    pub log_scroll: ScrollState,
+    pub log_receiver: Option<mpsc::Receiver<ParsedLogLine>>,
 }
 
 impl App {
@@ -38,6 +43,9 @@ impl App {
             pending_executor: None,
             error_info: None,
             scroll: ScrollState::new(),
+            session_logs: Vec::new(),
+            log_scroll: ScrollState::new(),
+            log_receiver: None,
         }
     }
     
@@ -295,6 +303,10 @@ impl App {
                 self.append_output(format!("{} {} session started", prefixes::EXEC, self.current_executor.name()));
                 self.append_output(format!("Working directory: {:?}", config.working_dir));
                 self.append_output(format!("Prompt: {}", prompt));
+                
+                // Start log monitoring for this session
+                self.start_log_monitoring(Some(&config.working_dir));
+                
                 // Don't block here - output will be polled in main loop
             }
             Err(e) => {
@@ -334,7 +346,17 @@ impl App {
         for output in outputs {
             match output {
                 ExecutorOutput::Stdout(line) => {
-                    self.append_output(format!("{}: {}", self.current_executor.name(), line));
+                    // Try to parse as streaming JSON from Claude
+                    if let Some(log_entry) = self.parse_claude_json(&line) {
+                        self.session_logs.push(log_entry);
+                        // Auto-scroll logs if enabled
+                        if self.log_scroll.auto_scroll {
+                            self.log_scroll.scroll_to_bottom(self.session_logs.len().saturating_sub(1));
+                        }
+                    } else {
+                        // Fallback to regular output display
+                        self.append_output(format!("{}: {}", self.current_executor.name(), line));
+                    }
                 }
                 ExecutorOutput::Stderr(line) => {
                     self.append_output(format!("{} {} error: {}", prefixes::WARN, self.current_executor.name(), line));
@@ -419,5 +441,197 @@ impl App {
     
     pub fn can_cancel(&self) -> bool {
         matches!(self.mode, Mode::Recording | Mode::PlanPending | Mode::ExecutorRunning | Mode::ConfirmingExecutor | Mode::ShowingError)
+    }
+    
+    /// Start monitoring log files for the current session
+    pub fn start_log_monitoring(&mut self, working_dir: Option<&std::path::Path>) {
+        // Clear previous logs
+        self.session_logs.clear();
+        self.log_scroll = ScrollState::new();
+        
+        // Start new monitor
+        let receiver = spawn_log_monitor(working_dir);
+        self.log_receiver = Some(receiver);
+    }
+    
+    /// Parse Claude's streaming JSON output
+    fn parse_claude_json(&self, line: &str) -> Option<ParsedLogLine> {
+        // Try to parse the line as JSON
+        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(line) {
+            // Extract type field
+            let entry_type = json_value.get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            
+            // Determine log type with improved detection
+            let log_type = match entry_type {
+                "message" | "message_start" => {
+                    // Check role to determine if user or assistant
+                    let role = json_value.get("message")
+                        .and_then(|m| m.get("role"))
+                        .and_then(|r| r.as_str())
+                        .or_else(|| json_value.get("role").and_then(|r| r.as_str()));
+                    
+                    match role {
+                        Some("user") => crate::log_monitor::LogType::UserMessage,
+                        Some("assistant") => crate::log_monitor::LogType::AssistantMessage,
+                        Some("system") => crate::log_monitor::LogType::Status,
+                        _ => crate::log_monitor::LogType::Unknown,
+                    }
+                }
+                "content_block_start" | "content_block_delta" | "text" => {
+                    // These are typically assistant content
+                    crate::log_monitor::LogType::AssistantMessage
+                }
+                "tool_use" | "tool_call" => crate::log_monitor::LogType::ToolCall,
+                "tool_result" | "tool_response" => crate::log_monitor::LogType::ToolResult,
+                "error" => crate::log_monitor::LogType::Error,
+                "status" | "ping" | "message_stop" => crate::log_monitor::LogType::Status,
+                _ => {
+                    // Fallback: check for role field directly
+                    if let Some(role) = json_value.get("role").and_then(|r| r.as_str()) {
+                        match role {
+                            "user" => crate::log_monitor::LogType::UserMessage,
+                            "assistant" => crate::log_monitor::LogType::AssistantMessage,
+                            "system" => crate::log_monitor::LogType::Status,
+                            _ => crate::log_monitor::LogType::Unknown,
+                        }
+                    } else {
+                        crate::log_monitor::LogType::Unknown
+                    }
+                }
+            };
+            
+            // Extract content with better handling
+            let content = self.extract_json_content(&json_value);
+            
+            return Some(ParsedLogLine {
+                timestamp: std::time::SystemTime::now(),
+                entry_type: log_type,
+                content,
+                raw: line.to_string(),
+            });
+        }
+        
+        None
+    }
+    
+    /// Extract human-readable content from JSON
+    fn extract_json_content(&self, json: &serde_json::Value) -> String {
+        // Try to get message content
+        if let Some(message) = json.get("message") {
+            if let Some(content) = message.get("content") {
+                if let Some(text) = content.as_str() {
+                    return text.to_string();
+                }
+                // Handle content array (Claude often uses content array with text blocks)
+                if let Some(arr) = content.as_array() {
+                    let texts: Vec<String> = arr.iter()
+                        .filter_map(|item| {
+                            item.get("text")
+                                .and_then(|t| t.as_str())
+                                .map(|s| s.to_string())
+                        })
+                        .collect();
+                    if !texts.is_empty() {
+                        return texts.join(" ");
+                    }
+                }
+            }
+        }
+        
+        // Try content_block for streaming content
+        if let Some(content_block) = json.get("content_block") {
+            if let Some(text) = content_block.get("text").and_then(|t| t.as_str()) {
+                return text.to_string();
+            }
+        }
+        
+        // Try delta for streaming updates
+        if let Some(delta) = json.get("delta") {
+            if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
+                return text.to_string();
+            }
+        }
+        
+        // Try tool information
+        if let Some(tool_name) = json.get("name").and_then(|n| n.as_str()) {
+            // Try to get tool input for more context
+            if let Some(input) = json.get("input") {
+                if let Some(file_path) = input.get("file_path").and_then(|f| f.as_str()) {
+                    return format!("{}: {}", tool_name, file_path);
+                }
+                return format!("{}", tool_name);
+            }
+            return format!("{}", tool_name);
+        }
+        
+        // Try tool result output
+        if let Some(output) = json.get("output").and_then(|o| o.as_str()) {
+            // Truncate long outputs
+            if output.len() > 50 {
+                return format!("{}...", &output[..47]);
+            }
+            return output.to_string();
+        }
+        
+        // Try to get text field directly
+        if let Some(text) = json.get("text").and_then(|t| t.as_str()) {
+            return text.to_string();
+        }
+        
+        // Try to get type as fallback
+        if let Some(typ) = json.get("type").and_then(|t| t.as_str()) {
+            // Don't show certain verbose types
+            if matches!(typ, "ping" | "message_start" | "message_stop" | "content_block_start" | "content_block_stop") {
+                return format!("[{}]", typ);
+            }
+            return format!("[{}]", typ);
+        }
+        
+        // Try to get result field for tool results
+        if let Some(result) = json.get("result").and_then(|r| r.as_str()) {
+            return result.to_string();
+        }
+        
+        // Last resort - show type field or unknown
+        "[...]".to_string()
+    }
+    
+    /// Poll for new log entries
+    pub async fn poll_logs(&mut self) -> Result<()> {
+        if let Some(receiver) = &mut self.log_receiver {
+            // Try to receive up to 10 log entries without blocking
+            for _ in 0..10 {
+                match receiver.try_recv() {
+                    Ok(log) => {
+                        self.session_logs.push(log);
+                        // Auto-scroll logs if enabled
+                        if self.log_scroll.auto_scroll {
+                            self.log_scroll.scroll_to_bottom(self.session_logs.len().saturating_sub(1));
+                        }
+                    }
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        self.log_receiver = None;
+                        break;
+                    }
+                }
+            }
+            
+            // Trim logs if too many
+            const MAX_LOGS: usize = 1000;
+            if self.session_logs.len() > MAX_LOGS {
+                let remove_count = self.session_logs.len() - MAX_LOGS;
+                self.session_logs.drain(0..remove_count);
+                // Adjust scroll offset
+                if self.log_scroll.offset >= remove_count {
+                    self.log_scroll.offset -= remove_count;
+                } else {
+                    self.log_scroll.offset = 0;
+                }
+            }
+        }
+        Ok(())
     }
 }

@@ -55,9 +55,16 @@ impl ExecutorSession for ClaudeExecutor {
         // Build the Claude command
         let mut cmd = TokioCommand::new("claude");
         
-        // Core arguments
+        // Core arguments for headless mode
         cmd.arg("-p")
            .arg(prompt);
+        
+        // Add streaming JSON output for better logging
+        cmd.arg("--output-format")
+           .arg("stream-json");
+        
+        // Add verbose mode for detailed logging
+        cmd.arg("--verbose");
         
         // Add permission skip if configured
         if config.skip_permissions {

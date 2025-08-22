@@ -2,6 +2,7 @@ mod components;
 mod confirmation;
 mod error_dialog;
 mod layout;
+mod log_pane;
 mod styles;
 
 use ratatui::Frame;
@@ -10,6 +11,7 @@ use crate::app::App;
 use components::{HelpPane, InputLine, OutputPane, PlanOverlay};
 use confirmation::ConfirmationDialog;
 use error_dialog::ErrorDialog;
+use log_pane::LogPane;
 use layout::LayoutManager;
 
 pub struct UI;
@@ -19,6 +21,7 @@ impl UI {
         let chunks = LayoutManager::create_main_layout(frame.area());
         
         OutputPane::render(frame, &chunks.output, app);
+        LogPane::render(frame, &chunks.logs, app);
         HelpPane::render(frame, &chunks.help, app);
         InputLine::render(frame, &chunks.input, app);
         

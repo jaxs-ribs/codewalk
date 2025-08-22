@@ -4,6 +4,7 @@ mod config;
 mod constants;
 mod executor;
 mod handlers;
+mod log_monitor;
 mod settings;
 mod types;
 mod ui;
@@ -73,6 +74,9 @@ async fn run_application<B: ratatui::backend::Backend>(terminal: &mut Terminal<B
         if app.mode == types::Mode::ExecutorRunning {
             app.poll_executor_output().await?;
         }
+        
+        // Poll for new log entries
+        app.poll_logs().await?;
         
         terminal.draw(|frame| UI::draw(frame, &app))?;
         
