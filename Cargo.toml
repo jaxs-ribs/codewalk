@@ -3,6 +3,7 @@ members = [
     "crates/tui-app",
     "crates/audio-transcribe", 
     "crates/llm-interface",
+    "crates/llm-client",
 ]
 resolver = "2"
 default-members = ["crates/tui-app"]
