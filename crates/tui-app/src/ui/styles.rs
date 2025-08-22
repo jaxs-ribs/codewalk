@@ -67,4 +67,33 @@ impl Styles {
             Self::default()
         }
     }
+    
+    pub fn confirmation_border() -> Style {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    }
+    
+    pub fn confirmation_label() -> Style {
+        Style::default()
+            .fg(Color::Gray)
+            .add_modifier(Modifier::BOLD)
+    }
+    
+    pub fn confirmation_value() -> Style {
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
+    }
+    
+    pub fn confirmation_prompt() -> Style {
+        Style::default()
+            .fg(Color::Cyan)
+    }
+    
+    pub fn confirmation_key() -> Style {
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD)
+    }
 }

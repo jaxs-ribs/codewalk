@@ -6,13 +6,20 @@ use crate::types::RouterResponse;
 pub struct GroqProvider {
     client: Option<llm_client::Client>,
     ready: bool,
+    model: String,
 }
 
 impl GroqProvider {
     pub fn new() -> Self {
+        // Check environment variable for model selection
+        // Default to llama-3.1-8b-instant when K2 is over capacity
+        let model = std::env::var("GROQ_MODEL")
+            .unwrap_or_else(|_| "llama-3.1-8b-instant".to_string());
+        
         Self {
             client: None,
             ready: false,
+            model,
         }
     }
 }
@@ -20,10 +27,13 @@ impl GroqProvider {
 #[async_trait]
 impl LLMProvider for GroqProvider {
     async fn initialize(&mut self, _config: serde_json::Value) -> Result<()> {
-        // Use Kimi K2 for better performance and prompt caching
-        let client = llm_client::Client::from_env_groq("moonshotai/kimi-k2-instruct")?;
+        // Use the model from environment or default
+        let client = llm_client::Client::from_env_groq(&self.model)?;
         self.client = Some(client);
         self.ready = true;
+        
+        // Log which model we're using
+        eprintln!("GroqProvider initialized with model: {}", self.model);
         Ok(())
     }
     
@@ -31,9 +41,11 @@ impl LLMProvider for GroqProvider {
         let client = self.client.as_ref()
             .ok_or_else(|| anyhow::anyhow!("GroqProvider not initialized"))?;
         
-        // STABLE SYSTEM PROMPT - Keep exactly the same for prompt caching
-        // This prefix will be cached across all requests, saving 50% on tokens
-        let system_prompt = r#"You are a voice command router for a development assistant.
+        // Use different prompts based on model
+        let system_prompt = if self.model.contains("kimi") {
+            // STABLE SYSTEM PROMPT FOR KIMI K2 - Keep exactly the same for prompt caching
+            // This prefix will be cached across all requests, saving 50% on tokens
+            r#"You are a voice command router for a development assistant.
 
 TASK: Determine if the user wants to start a coding/development task with Claude Code.
 
@@ -64,7 +76,18 @@ OUTPUT FORMAT (JSON only):
   "confidence": 0.0 to 1.0
 }
 
-IMPORTANT: Preserve the user's exact words in the prompt field."#;
+IMPORTANT: Preserve the user's exact words in the prompt field."#
+        } else {
+            // Shorter prompt for Llama models (no prompt caching)
+            r#"You are a voice command router. Determine if the user wants to code with Claude.
+
+Return JSON: {"action": "launch_claude" or "cannot_parse", "prompt": "user request or null", "reason": "explanation or null", "confidence": 0.0-1.0}
+
+launch_claude: coding, debugging, programming tasks
+cannot_parse: non-technical, unclear, or social requests
+
+Preserve exact user words in prompt."#
+        };
 
         let messages = vec![
             llm_client::ChatMessage {

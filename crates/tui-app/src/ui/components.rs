@@ -124,11 +124,12 @@ impl InputLine {
             Mode::PlanPending => "PlanPending",
             Mode::Executing => "Executing",
             Mode::ExecutorRunning => "Executor Running",
+            Mode::ConfirmingExecutor => "Confirming",
         }
     }
     
     fn get_recording_indicator(app: &App) -> (String, usize) {
-        if app.mode == Mode::Recording {
+        if app.recording.is_active {
             let dot = if app.recording.blink_state { "●" } else { "○" };
             let indicator = format!("  [REC {} {}]", dot, app.get_recording_time());
             let len = indicator.len();

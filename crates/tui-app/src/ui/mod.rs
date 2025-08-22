@@ -1,4 +1,5 @@
 mod components;
+mod confirmation;
 mod layout;
 mod styles;
 
@@ -6,6 +7,7 @@ use ratatui::Frame;
 
 use crate::app::App;
 use components::{HelpPane, InputLine, OutputPane, PlanOverlay};
+use confirmation::ConfirmationDialog;
 use layout::LayoutManager;
 
 pub struct UI;
@@ -21,6 +23,9 @@ impl UI {
         if app.plan.is_pending() {
             PlanOverlay::render(frame, app);
         }
+        
+        // Render confirmation dialog if in confirmation mode
+        ConfirmationDialog::render(frame, app);
         
         Self::set_cursor(frame, app, &chunks.input);
     }

@@ -4,7 +4,8 @@ use std::time::Duration;
 use crate::backend;
 use crate::constants::{self, messages, prefixes};
 use crate::executor::{ExecutorSession, ExecutorFactory, ExecutorType, ExecutorConfig, ExecutorOutput};
-use crate::types::{Mode, PlanState, RecordingState};
+use crate::settings::AppSettings;
+use crate::types::{Mode, PlanState, RecordingState, PendingExecutor};
 use llm_interface::RouterAction;
 
 pub struct App {
@@ -15,10 +16,13 @@ pub struct App {
     pub recording: RecordingState,
     pub executor_session: Option<Box<dyn ExecutorSession>>,
     pub current_executor: ExecutorType,
+    pub settings: AppSettings,
+    pub pending_executor: Option<PendingExecutor>,
 }
 
 impl App {
     pub fn new() -> Self {
+        let settings = AppSettings::load();
         Self {
             output: Vec::new(),
             input: String::new(),
@@ -27,6 +31,8 @@ impl App {
             recording: RecordingState::new(),
             executor_session: None,
             current_executor: ExecutorFactory::default_executor(),
+            settings,
+            pending_executor: None,
         }
     }
     
@@ -82,6 +88,10 @@ impl App {
             self.append_output(format!("{} Transcribed: {}", prefixes::ASR, utterance));
             // Send to LLM router
             self.route_command(&utterance).await?;
+            // If we're not in a special mode after routing, go back to idle
+            if self.mode == Mode::Recording {
+                self.mode = Mode::Idle;
+            }
         } else {
             self.append_output(format!("{} No speech detected", prefixes::ASR));
             self.mode = Mode::Idle;
@@ -98,8 +108,13 @@ impl App {
                 self.mode = Mode::Idle;
             }
             Mode::Recording => {
+                // Stop backend recording first
+                let _ = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(backend::record_voice(false))
+                });
                 self.recording.stop();
                 self.mode = Mode::Idle;
+                self.append_output(format!("{} Recording cancelled", prefixes::ASR));
             }
             Mode::ExecutorRunning => {
                 if let Some(mut session) = self.executor_session.take() {
@@ -110,6 +125,9 @@ impl App {
                     self.append_output(format!("{} Executor session terminated by user", prefixes::EXEC));
                 }
                 self.mode = Mode::Idle;
+            }
+            Mode::ConfirmingExecutor => {
+                self.cancel_executor_confirmation();
             }
             _ => {}
         }
@@ -125,8 +143,22 @@ impl App {
         match response.action {
             RouterAction::LaunchClaude => {
                 if let Some(prompt) = response.prompt {
-                    self.append_output(format!("{} Launching {} with: {}", prefixes::EXEC, self.current_executor.name(), prompt));
-                    self.launch_executor(&prompt).await?;
+                    if self.settings.require_executor_confirmation {
+                        // Store pending executor info and switch to confirmation mode
+                        let config = ExecutorConfig::default();
+                        self.pending_executor = Some(PendingExecutor {
+                            prompt: prompt.clone(),
+                            executor_name: self.current_executor.name().to_string(),
+                            working_dir: config.working_dir.to_string_lossy().to_string(),
+                        });
+                        self.mode = Mode::ConfirmingExecutor;
+                        self.append_output(format!("{} Ready to launch {}. Press Enter to confirm, Escape to cancel.", 
+                                                 prefixes::PLAN, self.current_executor.name()));
+                    } else {
+                        // Launch immediately without confirmation
+                        self.append_output(format!("{} Launching {} with: {}", prefixes::EXEC, self.current_executor.name(), prompt));
+                        self.launch_executor(&prompt).await?;
+                    }
                 } else {
                     self.append_output(format!("{} Error: No prompt extracted", prefixes::PLAN));
                     self.mode = Mode::Idle;
@@ -250,7 +282,32 @@ impl App {
         self.mode == Mode::Recording && self.recording.is_active
     }
 
+    pub async fn confirm_executor(&mut self) -> Result<()> {
+        if let Some(pending) = self.pending_executor.take() {
+            self.append_output(format!("{} Confirmed. Launching {}...", prefixes::EXEC, pending.executor_name));
+            self.mode = Mode::Idle;  // Reset mode before launching
+            self.launch_executor(&pending.prompt).await?;
+        }
+        Ok(())
+    }
+    
+    pub fn cancel_executor_confirmation(&mut self) {
+        if self.mode == Mode::ConfirmingExecutor {
+            self.pending_executor = None;
+            self.mode = Mode::Idle;
+            self.append_output(format!("{} Executor launch cancelled", prefixes::PLAN));
+        }
+    }
+    
+    /// Toggle executor confirmation requirement (for testing)
+    #[allow(dead_code)]
+    pub fn toggle_confirmation(&mut self) {
+        self.settings.require_executor_confirmation = !self.settings.require_executor_confirmation;
+        let status = if self.settings.require_executor_confirmation { "ON" } else { "OFF" };
+        self.append_output(format!("{} Executor confirmation is now {}", prefixes::EXEC, status));
+    }
+    
     pub fn can_cancel(&self) -> bool {
-        matches!(self.mode, Mode::Recording | Mode::PlanPending | Mode::ExecutorRunning)
+        matches!(self.mode, Mode::Recording | Mode::PlanPending | Mode::ExecutorRunning | Mode::ConfirmingExecutor)
     }
 }

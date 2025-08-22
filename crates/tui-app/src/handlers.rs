@@ -61,6 +61,7 @@ impl InputHandler {
     async fn handle_enter(app: &mut App) -> Result<()> {
         match app.mode {
             Mode::Idle => app.handle_text_input().await?,
+            Mode::ConfirmingExecutor => app.confirm_executor().await?,
             _ => {}
         }
         Ok(())

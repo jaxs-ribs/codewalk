@@ -4,6 +4,7 @@ mod config;
 mod constants;
 mod executor;
 mod handlers;
+mod settings;
 mod types;
 mod ui;
 

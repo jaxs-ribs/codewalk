@@ -8,6 +8,7 @@ pub enum Mode {
     #[allow(dead_code)]
     Executing,  // Kept for potential future use
     ExecutorRunning,  // Generic executor running (Claude, Devin, etc.)
+    ConfirmingExecutor,  // Waiting for user confirmation to launch executor
 }
 
 pub struct RecordingState {
@@ -47,6 +48,13 @@ impl RecordingState {
 pub struct PlanState {
     pub json: Option<String>,
     pub command: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingExecutor {
+    pub prompt: String,
+    pub executor_name: String,
+    pub working_dir: String,
 }
 
 impl PlanState {
