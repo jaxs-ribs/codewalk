@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 /// Type of executor backend
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum ExecutorType {
     Claude,
     Devin,      // Future
@@ -29,6 +30,7 @@ pub struct ExecutorConfig {
     /// Working directory for the executor
     pub working_dir: PathBuf,
     /// Optional log directory
+    #[allow(dead_code)]
     pub log_dir: Option<PathBuf>,
     /// Whether to skip permission prompts
     pub skip_permissions: bool,
@@ -49,6 +51,7 @@ impl Default for ExecutorConfig {
 
 /// Output from an executor
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum ExecutorOutput {
     Stdout(String),
     Stderr(String),
@@ -60,6 +63,7 @@ pub enum ExecutorOutput {
 #[async_trait]
 pub trait ExecutorSession: Send {
     /// Get the executor type
+    #[allow(dead_code)]
     fn executor_type(&self) -> ExecutorType;
     
     /// Launch the executor with a prompt
@@ -74,6 +78,7 @@ pub trait ExecutorSession: Send {
     fn is_running(&mut self) -> bool;
     
     /// Send input to the executor (if supported)
+    #[allow(dead_code)]
     async fn send_input(&mut self, _input: &str) -> Result<()> {
         Err(anyhow::anyhow!("Input not supported by this executor"))
     }
@@ -82,6 +87,7 @@ pub trait ExecutorSession: Send {
     async fn terminate(&mut self) -> Result<()>;
     
     /// Get session metadata
+    #[allow(dead_code)]
     fn get_metadata(&self) -> Option<serde_json::Value> {
         None
     }

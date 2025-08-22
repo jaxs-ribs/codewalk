@@ -61,7 +61,6 @@ impl InputHandler {
     async fn handle_enter(app: &mut App) -> Result<()> {
         match app.mode {
             Mode::Idle => app.handle_text_input().await?,
-            Mode::PlanPending => app.execute_plan(),
             _ => {}
         }
         Ok(())

@@ -15,8 +15,4 @@ pub mod prefixes {
 pub mod messages {
     pub const NO_AUDIO: &str = "no audio captured";
     pub const PLAN_CANCELED: &str = "canceled";
-    pub const PLAN_INVALID: &str = "invalid plan";
-    pub const PLAN_DENY_PREFIX: &str = "deny: ";
-    pub const DONE: &str = "DONE";
-    pub const SIMULATED_OUTPUT: &str = "[simulated command output]";
 }

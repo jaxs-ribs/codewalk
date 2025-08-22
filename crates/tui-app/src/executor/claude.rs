@@ -13,6 +13,7 @@ pub struct ClaudeExecutor {
     child: Child,
     stdout_reader: tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
     stderr_reader: tokio::io::Lines<BufReader<tokio::process::ChildStderr>>,
+    #[allow(dead_code)]
     config: ExecutorConfig,
 }
 

@@ -5,7 +5,8 @@ pub enum Mode {
     Idle,
     Recording,
     PlanPending,
-    Executing,
+    #[allow(dead_code)]
+    Executing,  // Kept for potential future use
     ExecutorRunning,  // Generic executor running (Claude, Devin, etc.)
 }
 
@@ -54,11 +55,6 @@ impl PlanState {
             json: None,
             command: None,
         }
-    }
-
-    pub fn set(&mut self, json: String, command: String) {
-        self.json = Some(json);
-        self.command = Some(command);
     }
 
     pub fn clear(&mut self) {

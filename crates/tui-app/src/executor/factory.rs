@@ -36,6 +36,7 @@ impl ExecutorFactory {
     }
     
     /// Check if an executor type is available
+    #[allow(dead_code)]
     pub fn is_available(executor_type: &ExecutorType) -> bool {
         match executor_type {
             ExecutorType::Claude => {
@@ -51,6 +52,7 @@ impl ExecutorFactory {
     }
     
     /// Get list of available executors
+    #[allow(dead_code)]
     pub fn available_executors() -> Vec<ExecutorType> {
         vec![
             ExecutorType::Claude,
