@@ -1,12 +1,12 @@
 [workspace]
 members = [
-    "crates/tui-app",
-    "crates/audio-transcribe", 
-    "crates/llm-interface",
-    "crates/llm-client",
+    "crates/orchestrator",
+    "crates/stt", 
+    "crates/router",
+    "crates/llm",
 ]
 resolver = "2"
-default-members = ["crates/tui-app"]
+default-members = ["crates/orchestrator"]
 
 [workspace.package]
 version = "0.1.0"

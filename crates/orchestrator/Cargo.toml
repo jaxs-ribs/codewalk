@@ -1,0 +1,32 @@
+[package]
+name = "orchestrator"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lib]
+name = "orchestrator"
+path = "src/lib.rs"
+
+[[bin]]
+name = "codewalk"
+path = "src/main.rs"
+
+[dependencies]
+# Workspace dependencies
+anyhow.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+
+# Local crates
+stt = { path = "../stt" }
+router = { path = "../router" }
+
+# TUI dependencies
+ratatui = "0.28"
+crossterm = "0.28"
+
+# Utilities
+lazy_static = "1.4"
