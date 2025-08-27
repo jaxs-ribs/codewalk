@@ -1,0 +1,30 @@
+[package]
+name = "relay-server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "relay-server"
+path = "src/main.rs"
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+axum = { version = "0.7", features = ["ws"] }
+axum-extra = { version = "0.9", features = ["typed-header"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors"] }
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+qrcode = "0.14"
+image = "0.25"
+base64 = "0.22"
+dotenvy = "0.15"
+chrono = "0.4"
+futures = "0.3"
