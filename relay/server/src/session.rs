@@ -50,6 +50,13 @@ impl Session {
         Ok(())
     }
 
+    pub async fn refresh(redis: &ConnectionManager, id: &str, ttl: u64) -> Result<()> {
+        let mut conn = redis.clone();
+        let key = format!("sess:{}", id);
+        conn.expire(&key, ttl as i64).await?;
+        Ok(())
+    }
+
     pub async fn load(id: &str, redis: &ConnectionManager) -> Result<Option<Self>> {
         let mut conn = redis.clone();
         let key = format!("sess:{}", id);

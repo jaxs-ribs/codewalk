@@ -47,3 +47,24 @@ The relay system handles:
 
 - Rust 1.70+
 - Redis 6.0+
+
+## HTTP API
+
+- `POST /api/register` → returns `{ sessionId, token, ws, ttl, qrDataUrl, qrPayload }` where `qrPayload` is `{ u, s, t }`.
+- `DELETE /api/session/:id` → explicitly kills the session (returns 204 on success, 404 if missing).
+
+## WebSocket Contract
+
+- Hello: `{ "type":"hello", "s":"<sessionId>", "t":"<token>", "r":"workstation|phone" }` → `{"type":"hello-ack"}`
+- Relay frame: `{ "type":"frame", "sid", "fromRole", "at", "frame", "b64" }`
+- Peer notifications: `{"type":"peer-joined"}`, `{"type":"peer-left"}`
+- Heartbeat: clients send `{"type":"hb"}` periodically; server refreshes session TTL and may reply `{"type":"hb-ack"}`
+- Session killed: server publishes `{"type":"session-killed"}` and closes connections
+
+## Environment
+
+- `PORT` (default `3001`)
+- `REDIS_URL` (default `redis://127.0.0.1:6379`)
+- `PUBLIC_WS_URL` (default `ws://localhost:{PORT}/ws`)
+- `SESSION_IDLE_SECS` (default `7200`): refresh on any activity (hello, frame, heartbeat)
+- `HEARTBEAT_INTERVAL_SECS` (default `30`): heartbeat interval expected from clients

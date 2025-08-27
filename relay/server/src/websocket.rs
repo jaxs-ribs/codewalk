@@ -4,9 +4,9 @@ use axum::{
     response::IntoResponse,
 };
 use futures::{SinkExt, StreamExt};
-use redis::{AsyncCommands, aio::PubSub};
+use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, broadcast};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -41,6 +41,12 @@ pub struct HelloAck {
     pub session_id: String,
 }
 
+#[derive(Debug)]
+pub enum Outgoing {
+    Text(String),
+    Close,
+}
+
 pub async fn handle_websocket(
     ws: WebSocketUpgrade,
     Extension(state): Extension<AppState>,
@@ -53,13 +59,21 @@ async fn websocket_handler(socket: WebSocket, state: AppState) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
     
     // Channel for sending messages to websocket (increased buffer for higher throughput)
-    let (tx, mut rx) = mpsc::channel::<String>(1000);
+    let (tx, mut rx) = mpsc::channel::<Outgoing>(1000);
     
     // Spawn task to forward messages from channel to websocket
     let mut send_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            if ws_sender.send(Message::Text(msg)).await.is_err() {
-                break;
+            match msg {
+                Outgoing::Text(s) => {
+                    if ws_sender.send(Message::Text(s)).await.is_err() {
+                        break;
+                    }
+                }
+                Outgoing::Close => {
+                    let _ = ws_sender.send(Message::Close(None)).await;
+                    break;
+                }
             }
         }
     });
@@ -97,27 +111,41 @@ async fn websocket_handler(socket: WebSocket, state: AppState) {
                                     let mut conn = state.redis.clone();
                                     let roles_key = format!("sess:{}:roles", hello.s);
                                     let _: () = conn.hset(&roles_key, &hello.r, &conn_id).await.unwrap_or(());
-                                    
+
                                     // Start Redis subscriber for this session
                                     let channel = format!("ch:{}", hello.s);
                                     let channel_clone = channel.clone();
                                     let tx_clone = tx.clone();
                                     let role_clone = hello.r.clone();
                                     let sid_clone = hello.s.clone();
+                                    let sid_for_pubsub = sid_clone.clone();
                                     
+                                    let session_idle_secs = state.session_idle_secs;
                                     redis_task = Some(tokio::spawn(async move {
                                         if let Ok(client) = redis::Client::open(std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string())) {
                                             if let Ok(mut pubsub) = client.get_async_pubsub().await {
                                                 if pubsub.subscribe(&channel_clone).await.is_ok() {
                                                     while let Some(msg) = pubsub.on_message().next().await {
                                                         let payload: String = msg.get_payload().unwrap_or_default();
-                                                        
+
+                                                        // Lightweight router: check type field first to handle minimal notifications
+                                                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&payload) {
+                                                            if val.get("type").and_then(|v| v.as_str()) == Some("session-killed") {
+                                                                if val.get("sid").and_then(|v| v.as_str()) == Some(&sid_for_pubsub) {
+                                                                    let _ = tx_clone.send(Outgoing::Text(serde_json::json!({"type":"session-killed"}).to_string())).await;
+                                                                    let _ = tx_clone.send(Outgoing::Close).await;
+                                                                    break;
+                                                                }
+                                                                continue;
+                                                            }
+                                                        }
+
                                                         if let Ok(relay_msg) = serde_json::from_str::<RelayMessage>(&payload) {
                                                             // Forward messages from other role or system notifications
-                                                            if relay_msg.sid == sid_clone {
+                                                            if relay_msg.sid == sid_for_pubsub {
                                                                 if relay_msg.msg_type == "frame" && relay_msg.from_role != role_clone {
                                                                     // Forward the entire message (which the client will extract the frame from)
-                                                                    if tx_clone.send(payload.clone()).await.is_err() {
+                                                                    if tx_clone.send(Outgoing::Text(payload.clone())).await.is_err() {
                                                                         break;
                                                                     }
                                                                 } else if relay_msg.msg_type == "peer-joined" || relay_msg.msg_type == "peer-left" {
@@ -126,7 +154,7 @@ async fn websocket_handler(socket: WebSocket, state: AppState) {
                                                                         "type": relay_msg.msg_type,
                                                                         "role": relay_msg.from_role
                                                                     });
-                                                                    if tx_clone.send(notification.to_string()).await.is_err() {
+                                                                    if tx_clone.send(Outgoing::Text(notification.to_string())).await.is_err() {
                                                                         break;
                                                                     }
                                                                 }
@@ -137,7 +165,13 @@ async fn websocket_handler(socket: WebSocket, state: AppState) {
                                             }
                                         }
                                     }));
-                                    
+
+                                    // Register sender for direct kill notifications
+                                    {
+                                        let mut map = state.session_senders.write().await;
+                                        map.entry(hello.s.clone()).or_default().push(tx.clone());
+                                    }
+
                                     // Notify peer joined
                                     let notification = RelayMessage {
                                         msg_type: "peer-joined".to_string(),
@@ -148,16 +182,38 @@ async fn websocket_handler(socket: WebSocket, state: AppState) {
                                         b64: None,
                                     };
                                     let _: () = conn.publish(&channel, serde_json::to_string(&notification).unwrap()).await.unwrap_or(());
-                                    
+                                    // Refresh session TTL on successful hello and peer notification
+                                    let _ = Session::refresh(&state.redis, &hello.s, state.session_idle_secs).await;
+
                                     // Send hello-ack
                                     let ack = HelloAck {
                                         msg_type: "hello-ack".to_string(),
                                         session_id: hello.s.clone(),
                                     };
-                                    
-                                    let _ = tx.send(serde_json::to_string(&ack).unwrap()).await;
-                                    
+
+                                    let _ = tx.send(Outgoing::Text(serde_json::to_string(&ack).unwrap())).await;
+
                                     info!("Connection established: {} as {}", hello.s, hello.r);
+
+                                    // Subscribe to in-process kill broadcast for this session
+                                    let mut kill_rx_opt: Option<broadcast::Receiver<()>> = None;
+                                    {
+                                        let mut map = state.kill_broadcasts.write().await;
+                                        let entry = map.entry(sid_clone.clone()).or_insert_with(|| {
+                                            let (txb, _rxb) = broadcast::channel::<()>(8);
+                                            txb
+                                        });
+                                        kill_rx_opt = Some(entry.subscribe());
+                                    }
+
+                                    if let Some(mut kill_rx) = kill_rx_opt {
+                                        let tx_kill = tx.clone();
+                                        tokio::spawn(async move {
+                                            let _ = kill_rx.recv().await;
+                                            let _ = tx_kill.send(Outgoing::Text(serde_json::json!({"type":"session-killed"}).to_string())).await;
+                                            let _ = tx_kill.send(Outgoing::Close).await;
+                                        });
+                                    }
                                 }
                                 _ => {
                                     warn!("Invalid session or token");
@@ -171,6 +227,15 @@ async fn websocket_handler(socket: WebSocket, state: AppState) {
                         }
                     }
                 } else if let (Some(sid), Some(r)) = (&session_id, &role) {
+                    // Recognize heartbeat
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                        if json.get("type").and_then(|v| v.as_str()) == Some("hb") {
+                            // Refresh TTL and optionally ack
+                            let _ = Session::refresh(&state.redis, sid, state.session_idle_secs).await;
+                            let _ = tx.send(Outgoing::Text(serde_json::json!({"type":"hb-ack"}).to_string())).await;
+                            continue;
+                        }
+                    }
                     // Relay the message
                     let mut conn = state.redis.clone();
                     let channel = format!("ch:{}", sid);
@@ -184,6 +249,7 @@ async fn websocket_handler(socket: WebSocket, state: AppState) {
                     };
                     let msg_str = serde_json::to_string(&relay_msg).unwrap();
                     let _: () = conn.publish(&channel, msg_str).await.unwrap_or(());
+                    let _ = Session::refresh(&state.redis, sid, state.session_idle_secs).await;
                 }
             }
             Message::Binary(data) => {
@@ -199,6 +265,7 @@ async fn websocket_handler(socket: WebSocket, state: AppState) {
                         b64: Some(true),
                     };
                     let _: () = conn.publish(&channel, serde_json::to_string(&relay_msg).unwrap()).await.unwrap_or(());
+                    let _ = Session::refresh(&state.redis, sid, state.session_idle_secs).await;
                 }
             }
             Message::Close(_) => break,
@@ -230,6 +297,7 @@ async fn websocket_handler(socket: WebSocket, state: AppState) {
                 b64: None,
             };
             let _: () = conn.publish(&channel, serde_json::to_string(&notification).unwrap()).await.unwrap_or(());
+            let _ = Session::refresh(&state.redis, sid, state.session_idle_secs).await;
         }
         
         info!("Connection closed: {} as {}", sid, r);

@@ -10,10 +10,11 @@ use axum::{
     Router,
 };
 use dotenvy::dotenv;
-use redis::aio::ConnectionManager;
+use redis::{aio::ConnectionManager, AsyncCommands};
 use serde_json::json;
 use std::{collections::HashMap, env, net::SocketAddr, sync::Arc};
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
+// RwLock already imported above
 use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -28,7 +29,10 @@ pub struct AppState {
     pub sessions: Arc<RwLock<SessionStore>>,
     pub connections: Arc<RwLock<HashMap<String, String>>>, // conn_id -> session_id
     pub public_ws_url: String,
-    pub session_ttl: u64,
+    pub session_idle_secs: u64,
+    pub heartbeat_interval_secs: u64,
+    pub kill_broadcasts: Arc<RwLock<HashMap<String, broadcast::Sender<()>>>>,
+    pub session_senders: Arc<RwLock<HashMap<String, Vec<tokio::sync::mpsc::Sender<crate::websocket::Outgoing>>>>>,
 }
 
 #[tokio::main]
@@ -49,8 +53,11 @@ async fn main() -> Result<()> {
     let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
     let public_ws_url = env::var("PUBLIC_WS_URL")
         .unwrap_or_else(|_| format!("ws://localhost:{}/ws", port));
-    let session_ttl: u64 = env::var("SESSION_TTL_SECS")
-        .unwrap_or_else(|_| "3600".to_string())
+    let session_idle_secs: u64 = env::var("SESSION_IDLE_SECS")
+        .unwrap_or_else(|_| "7200".to_string())
+        .parse()?;
+    let heartbeat_interval_secs: u64 = env::var("HEARTBEAT_INTERVAL_SECS")
+        .unwrap_or_else(|_| "30".to_string())
         .parse()?;
 
     let client = redis::Client::open(redis_url)?;
@@ -61,13 +68,17 @@ async fn main() -> Result<()> {
         sessions: Arc::new(RwLock::new(SessionStore::new())),
         connections: Arc::new(RwLock::new(HashMap::new())),
         public_ws_url,
-        session_ttl,
+        session_idle_secs,
+        heartbeat_interval_secs,
+        kill_broadcasts: Arc::new(RwLock::new(HashMap::new())),
+        session_senders: Arc::new(RwLock::new(HashMap::new())),
     };
 
     // No longer need global redis subscriber - each connection handles its own
 
     let app = Router::new()
         .route("/api/register", post(register_session))
+        .route("/api/session/:id", axum::routing::delete(kill_session))
         .route("/health", get(health_check))
         .route("/ws", get(handle_websocket))
         .layer(CorsLayer::permissive())
@@ -89,7 +100,7 @@ async fn register_session(Extension(state): Extension<AppState>) -> impl IntoRes
     
     let session = Session::new(session_id.clone(), token.clone());
     
-    if let Err(e) = session.save(&state.redis, state.session_ttl).await {
+    if let Err(e) = session.save(&state.redis, state.session_idle_secs).await {
         error!("Failed to save session: {}", e);
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
             "error": "register_failed"
@@ -126,7 +137,7 @@ async fn register_session(Extension(state): Extension<AppState>) -> impl IntoRes
     (StatusCode::OK, Json(json!({
         "sessionId": session_id,
         "token": token,
-        "ttl": state.session_ttl,
+        "ttl": state.session_idle_secs,
         "ws": state.public_ws_url,
         "qrDataUrl": format!("data:image/png;base64,{}", qr_code),
         "qrPayload": payload
@@ -135,4 +146,50 @@ async fn register_session(Extension(state): Extension<AppState>) -> impl IntoRes
 
 async fn health_check() -> impl IntoResponse {
     Json(json!({ "ok": true }))
+}
+
+async fn kill_session(
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Extension(state): Extension<AppState>,
+) -> impl IntoResponse {
+    let mut conn = state.redis.clone();
+    let sess_key = format!("sess:{}", id);
+    let roles_key = format!("sess:{}:roles", id);
+    let channel_key = format!("ch:{}", id);
+
+    // Check if exists
+    match conn.exists(&sess_key).await {
+        Ok(true) => {
+            let _: () = conn.del(&sess_key).await.unwrap_or(());
+            let _: () = conn.del(&roles_key).await.unwrap_or(());
+            // Publish session-killed notification via Redis
+            let msg = serde_json::json!({
+                "type": "session-killed",
+                "sid": id,
+            })
+            .to_string();
+            let _: () = conn.publish(&channel_key, msg).await.unwrap_or(());
+
+            // Also notify in-process subscribers (reliable control path)
+            if let Some(tx) = {
+                let map = state.kill_broadcasts.read().await;
+                map.get(&id).cloned()
+            } {
+                let _ = tx.send(());
+            }
+
+            // Best-effort: notify any active websocket senders directly
+            if let Some(list) = {
+                let map = state.session_senders.read().await;
+                map.get(&id).cloned()
+            } {
+                for sender in list {
+                    let _ = sender.send(crate::websocket::Outgoing::Text(serde_json::json!({"type":"session-killed"}).to_string())).await;
+                    let _ = sender.send(crate::websocket::Outgoing::Close).await;
+                }
+            }
+            (StatusCode::NO_CONTENT, ())
+        }
+        Ok(false) | Err(_) => (StatusCode::NOT_FOUND, ()),
+    }
 }

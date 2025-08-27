@@ -13,6 +13,9 @@ use tracing::info;
 struct Args {
     #[clap(default_value = "http://localhost:3001")]
     server_url: String,
+    /// Kill an existing session and exit
+    #[clap(long, value_parser)]
+    kill: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -58,6 +61,19 @@ async fn main() -> Result<()> {
     
     let args = Args::parse();
     
+    if let Some(session_id) = &args.kill {
+        let url = format!("{}/api/session/{}", args.server_url, session_id);
+        let client = reqwest::Client::new();
+        let resp = client.delete(&url).send().await?;
+        if resp.status().is_success() {
+            println!("Session {} killed ({}).", session_id, resp.status());
+            return Ok(());
+        } else {
+            println!("Failed to kill session {} ({}).", session_id, resp.status());
+            std::process::exit(1);
+        }
+    }
+    
     info!("Registering session with server: {}", args.server_url);
     
     let client = reqwest::Client::new();
@@ -83,7 +99,7 @@ async fn main() -> Result<()> {
     println!("\nConnecting to WebSocket: {}", register_data.ws);
     
     let (ws_stream, _) = connect_async(&register_data.ws).await?;
-    let (mut write, mut read) = ws_stream.split();
+    let (write, mut read) = ws_stream.split();
     
     let hello = HelloMessage {
         msg_type: "hello".to_string(),
@@ -92,58 +108,88 @@ async fn main() -> Result<()> {
         r: "workstation".to_string(),
     };
     
-    write.send(Message::Text(serde_json::to_string(&hello)?)).await?;
+    use std::sync::Arc;
+    let write = Arc::new(tokio::sync::Mutex::new(write));
+    {
+        let mut guard = write.lock().await;
+        guard.send(Message::Text(serde_json::to_string(&hello)?)).await?;
+    }
     info!("Sent hello message, waiting for acknowledgment...");
     
-    let stdin = tokio::io::stdin();
-    let mut reader = BufReader::new(stdin);
-    let mut input_buffer = String::new();
-    
-    println!("\n[Workstation] Connected! Waiting for mobile client...");
-    println!("Type messages to send (press Enter to send):");
-    
-    loop {
-        tokio::select! {
-            Some(msg) = read.next() => {
-                match msg? {
-                    Message::Text(text) => {
-                        if let Ok(server_msg) = serde_json::from_str::<ServerMessage>(&text) {
-                            match server_msg.msg_type.as_str() {
-                                "hello-ack" => {
-                                    info!("Connection acknowledged");
-                                }
-                                "peer-joined" => {
-                                    println!("[System] Mobile client connected!");
-                                }
-                                "peer-left" => {
-                                    println!("[System] Mobile client disconnected");
-                                }
-                                _ => {}
-                            }
-                        } else {
-                            println!("[Mobile] {}", text);
-                        }
-                    }
-                    Message::Binary(data) => {
-                        println!("[Mobile] Received {} bytes of binary data", data.len());
-                    }
-                    Message::Close(_) => {
-                        println!("[System] Connection closed");
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-            Ok(_) = reader.read_line(&mut input_buffer) => {
-                if !input_buffer.trim().is_empty() {
-                    write.send(Message::Text(input_buffer.trim().to_string())).await?;
-                    print!("[You] {}", input_buffer);
-                    io::stdout().flush()?;
-                }
-                input_buffer.clear();
+    // Start heartbeat task
+    let hb_secs: u64 = std::env::var("HEARTBEAT_INTERVAL_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(30);
+    let write_clone = write.clone();
+    tokio::spawn(async move {
+        let payload = r#"{"type":"hb"}"#;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(hb_secs)).await;
+            let mut guard = write_clone.lock().await;
+            if guard.send(Message::Text(payload.to_string())).await.is_err() {
+                break;
             }
         }
+    });
+
+    let stdin = tokio::io::stdin();
+    let mut reader = BufReader::new(stdin);
+    let write_clone2 = write.clone();
+
+    println!("\n[Workstation] Connected! Waiting for mobile client...");
+    println!("Type messages to send (press Enter to send):");
+
+    // Reader task for server messages
+    let read_task = tokio::spawn(async move {
+        while let Some(msg) = read.next().await {
+            match msg {
+                Ok(Message::Text(text)) => {
+                    if let Ok(server_msg) = serde_json::from_str::<ServerMessage>(&text) {
+                        match server_msg.msg_type.as_str() {
+                            "hello-ack" => info!("Connection acknowledged"),
+                            "peer-joined" => println!("[System] Mobile client connected!"),
+                            "peer-left" => println!("[System] Mobile client disconnected"),
+                            "session-killed" => {
+                                println!("[System] Session was killed by workstation. Closing.");
+                                break;
+                            }
+                            _ => {}
+                        }
+                    } else {
+                        println!("[Mobile] {}", text);
+                    }
+                }
+                Ok(Message::Binary(data)) => println!("[Mobile] Received {} bytes of binary data", data.len()),
+                Ok(Message::Close(_)) => {
+                    println!("[System] Connection closed");
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("WebSocket error: {}", e);
+                    break;
+                }
+                _ => {}
+            }
+        }
+    });
+
+    // Stdin loop for sending
+    let mut input_buffer = String::new();
+    loop {
+        if reader.read_line(&mut input_buffer).await.is_err() {
+            break;
+        }
+        if !input_buffer.trim().is_empty() {
+            let mut guard = write_clone2.lock().await;
+            guard.send(Message::Text(input_buffer.trim().to_string())).await?;
+            print!("[You] {}", input_buffer);
+            io::stdout().flush()?;
+        }
+        input_buffer.clear();
     }
+
+    let _ = read_task.await;
     
     Ok(())
 }

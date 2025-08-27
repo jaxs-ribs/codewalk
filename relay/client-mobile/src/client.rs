@@ -62,6 +62,24 @@ impl RelayClient {
         let on_message = Arc::clone(&self.on_message);
         let on_error = Arc::clone(&self.on_error);
         let on_status = Arc::clone(&self.on_status);
+
+        // Heartbeat sender
+        let sender_for_hb = Arc::clone(&self.sender);
+        let hb_secs: u64 = std::env::var("HEARTBEAT_INTERVAL_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(30);
+        tokio::spawn(async move {
+            let payload = Message::Text("{\"type\":\"hb\"}".to_string());
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(hb_secs)).await;
+                let mut guard = sender_for_hb.write().await;
+                if let Some(ref mut s) = *guard {
+                    if s.send(payload.clone()).await.is_err() {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+        });
         
         tokio::spawn(async move {
             on_status("connected".to_string());
@@ -80,6 +98,10 @@ impl RelayClient {
                                     }
                                     "peer-left" => {
                                         on_status("peer-left".to_string());
+                                    }
+                                    "session-killed" => {
+                                        on_status("session-killed".to_string());
+                                        break;
                                     }
                                     _ => {
                                         on_message(text);

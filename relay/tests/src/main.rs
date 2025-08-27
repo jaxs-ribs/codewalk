@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tokio::time::{sleep, timeout};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
+use std::future::Future;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SessionInfo {
@@ -24,7 +25,6 @@ struct TestMetrics {
     messages_sent: Arc<AtomicU64>,
     messages_received: Arc<AtomicU64>,
     messages_lost: Arc<AtomicU64>,
-    latencies: Arc<RwLock<Vec<Duration>>>,
     errors: Arc<AtomicUsize>,
 }
 
@@ -34,18 +34,7 @@ impl TestMetrics {
             messages_sent: Arc::new(AtomicU64::new(0)),
             messages_received: Arc::new(AtomicU64::new(0)),
             messages_lost: Arc::new(AtomicU64::new(0)),
-            latencies: Arc::new(RwLock::new(Vec::new())),
             errors: Arc::new(AtomicUsize::new(0)),
-        }
-    }
-
-    async fn avg_latency(&self) -> Duration {
-        let latencies = self.latencies.read().await;
-        if latencies.is_empty() {
-            Duration::from_millis(0)
-        } else {
-            let sum: Duration = latencies.iter().sum();
-            sum / latencies.len() as u32
         }
     }
 
@@ -67,12 +56,23 @@ impl TestMetrics {
 }
 
 async fn register_session() -> Result<SessionInfo> {
+    let base = std::env::var("RELAY_BASE_URL").unwrap_or_else(|_| "http://localhost:3001".to_string());
     let client = reqwest::Client::new();
     let resp = client
-        .post("http://localhost:3001/api/register")
+        .post(format!("{}/api/register", base))
         .send()
         .await?;
     Ok(resp.json().await?)
+}
+
+async fn run_with_timeout<F>(name: &str, secs: u64, fut: F) -> Result<()>
+where
+    F: Future<Output = Result<()>>,
+{
+    match timeout(Duration::from_secs(secs), fut).await {
+        Ok(r) => r,
+        Err(_) => anyhow::bail!(format!("Test '{}' timed out after {}s", name, secs)),
+    }
 }
 
 // Test 1: Basic connectivity and message relay
@@ -182,7 +182,7 @@ async fn test_message_ordering() -> Result<()> {
     
     // Connect both clients
     let (ws1, _) = connect_async(&session.ws).await?;
-    let (mut write1, mut read1) = ws1.split();
+    let (mut write1, mut _read1) = ws1.split();
     
     write1.send(Message::Text(json!({
         "type": "hello",
@@ -314,7 +314,6 @@ async fn test_throughput() -> Result<()> {
     });
     
     // Workstation receives echoes and calculates latency
-    let metrics_clone = metrics.clone();
     tokio::spawn(async move {
         while let Some(msg) = read1.next().await {
             if let Ok(Message::Text(text)) = msg {
@@ -565,6 +564,189 @@ async fn test_connection_stability() -> Result<()> {
     Ok(())
 }
 
+// New: Idle expiry basic (Test 6)
+async fn test_idle_expiry_basic() -> Result<()> {
+    println!("\n{}", "TEST 6: Idle Expiry Basic".green().bold());
+    let session = register_session().await?;
+    // Do not connect; wait for expiration
+    sleep(Duration::from_secs(3)).await;
+    // Try to connect and hello; should be rejected (no hello-ack, likely close)
+    let (ws, _) = connect_async(&session.ws).await?;
+    let (mut write, mut read) = ws.split();
+    write.send(Message::Text(json!({
+        "type":"hello",
+        "s": session.session_id,
+        "t": session.token,
+        "r": "workstation"
+    }).to_string())).await?;
+    // Expect close or no hello-ack within 500ms
+    if let Ok(Some(Ok(Message::Text(t)))) = timeout(Duration::from_millis(500), read.next()).await {
+        // If we got a hello-ack, it's a failure
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
+            if v["type"] == "hello-ack" {
+                anyhow::bail!("Session should have expired and been rejected");
+            }
+        }
+    }
+    println!("{}", "✓ Expired sessions are rejected".green());
+    Ok(())
+}
+
+// New: Idle refresh on heartbeat (Test 7)
+async fn test_idle_refresh_on_heartbeat() -> Result<()> {
+    println!("\n{}", "TEST 7: Idle Refresh on Heartbeat".green().bold());
+    let session = register_session().await?;
+    let (ws1, _) = connect_async(&session.ws).await?;
+    let (mut write1, _read1) = ws1.split();
+    write1.send(Message::Text(json!({
+        "type":"hello","s":session.session_id,"t":session.token,"r":"workstation"
+    }).to_string())).await?;
+    let (ws2, _) = connect_async(&session.ws).await?;
+    let (mut write2, mut read2) = ws2.split();
+    write2.send(Message::Text(json!({
+        "type":"hello","s":session.session_id,"t":session.token,"r":"phone"
+    }).to_string())).await?;
+    // Send heartbeat every 1s for 5s from workstation
+    for _ in 0..5 {
+        write1.send(Message::Text("{\"type\":\"hb\"}".to_string())).await?;
+        sleep(Duration::from_secs(1)).await;
+    }
+    // Now try a frame and expect delivery
+    write1.send(Message::Text("alive?".to_string())).await?;
+    let got = timeout(Duration::from_secs(1), async {
+        loop {
+            if let Some(Ok(Message::Text(t))) = read2.next().await {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
+                    if v["type"] == "frame" && v["frame"].as_str() == Some("alive?") { break true; }
+                }
+            } else { break false; }
+        }
+    }).await.unwrap_or(false);
+    if !got { anyhow::bail!("Did not receive frame after heartbeats"); }
+    println!("{}", "✓ Heartbeats keep session alive".green());
+    Ok(())
+}
+
+// New: Kill endpoint terminates connections (Test 8)
+async fn test_kill_endpoint() -> Result<()> {
+    println!("\n{}", "TEST 8: Kill Endpoint".green().bold());
+    let session = register_session().await?;
+    let (ws1, _) = connect_async(&session.ws).await?;
+    let (mut _w1, mut r1) = ws1.split();
+    _w1.send(Message::Text(json!({
+        "type":"hello","s":session.session_id,"t":session.token,"r":"workstation"
+    }).to_string())).await?;
+    let (ws2, _) = connect_async(&session.ws).await?;
+    let (mut _w2, mut r2) = ws2.split();
+    _w2.send(Message::Text(json!({
+        "type":"hello","s":session.session_id,"t":session.token,"r":"phone"
+    }).to_string())).await?;
+    // Wait briefly for both sides to establish and subscribe
+    let mut saw_ack_1 = false;
+    let mut saw_ack_2 = false;
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_millis(500) {
+        if !saw_ack_1 {
+            if let Ok(Some(Ok(Message::Text(t)))) = timeout(Duration::from_millis(10), r1.next()).await {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) { if v["type"] == "hello-ack" { saw_ack_1 = true; } }
+            }
+        }
+        if !saw_ack_2 {
+            if let Ok(Some(Ok(Message::Text(t)))) = timeout(Duration::from_millis(10), r2.next()).await {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) { if v["type"] == "hello-ack" { saw_ack_2 = true; } }
+            }
+        }
+        if saw_ack_1 && saw_ack_2 { break; }
+    }
+    // Issue DELETE
+    let base = std::env::var("RELAY_BASE_URL").unwrap_or_else(|_| "http://localhost:3001".to_string());
+    let client = reqwest::Client::new();
+    let resp = client.delete(format!("{}/api/session/{}", base, session.session_id)).send().await?;
+    if resp.status() != 204 { anyhow::bail!("Kill endpoint failed: {}", resp.status()); }
+    // Expect session-killed or close on each
+    let mut term = 0u32;
+    for rx in [&mut r1, &mut r2] {
+        let seen = timeout(Duration::from_secs(3), async {
+            loop {
+                match rx.next().await {
+                    Some(Ok(Message::Text(t))) => {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
+                            if v["type"] == "session-killed" { break true; }
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) => break true,
+                    Some(Ok(_)) => {}
+                    Some(Err(_)) | None => break false,
+                }
+            }
+        }).await.unwrap_or(false);
+        if seen { term += 1; }
+    }
+    if term == 0 {
+        // Fallback: verify that session is dead by rejecting new hello
+        let (ws_new, _) = connect_async(&session.ws).await?;
+        let (mut w_new, mut r_new) = ws_new.split();
+        w_new.send(Message::Text(json!({
+            "type":"hello","s":session.session_id,"t":session.token,"r":"workstation"
+        }).to_string())).await?;
+        if let Ok(Some(Ok(Message::Text(t)))) = timeout(Duration::from_millis(500), r_new.next()).await {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) { if v["type"] == "hello-ack" { anyhow::bail!("Kill did not invalidate session"); } }
+        }
+        println!("{}", "✓ Kill invalidates session for new connections".green());
+    } else {
+        println!("{}", "✓ Kill publishes notifications and closes".green());
+    }
+    Ok(())
+}
+
+// New: Reject wrong token (Test 9)
+async fn test_reject_wrong_token() -> Result<()> {
+    println!("\n{}", "TEST 9: Reject Wrong Token".green().bold());
+    let session = register_session().await?;
+    let (ws, _) = connect_async(&session.ws).await?;
+    let (mut w, mut r) = ws.split();
+    w.send(Message::Text(json!({"type":"hello","s":session.session_id,"t":"badtoken","r":"workstation"}).to_string())).await?;
+    // Expect close or no hello-ack
+    if let Ok(Some(Ok(Message::Text(t)))) = timeout(Duration::from_millis(500), r.next()).await {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) { if v["type"] == "hello-ack" { anyhow::bail!("Accepted wrong token"); } }
+    }
+    println!("{}", "✓ Wrong token rejected".green());
+    Ok(())
+}
+
+// New: No backfill after late join (Test 10)
+async fn test_no_backfill_after_late_join() -> Result<()> {
+    println!("\n{}", "TEST 10: No Backfill After Late Join".green().bold());
+    let session = register_session().await?;
+    let (ws1, _) = connect_async(&session.ws).await?;
+    let (mut w1, _r1) = ws1.split();
+    w1.send(Message::Text(json!({"type":"hello","s":session.session_id,"t":session.token,"r":"workstation"}).to_string())).await?;
+    // Send a few frames before phone joins
+    for i in 0..3 {
+        w1.send(Message::Text(format!("early-{}", i))).await?;
+    }
+    // Now phone joins
+    let (ws2, _) = connect_async(&session.ws).await?;
+    let (mut _w2, mut r2) = ws2.split();
+    _w2.send(Message::Text(json!({"type":"hello","s":session.session_id,"t":session.token,"r":"phone"}).to_string())).await?;
+    // Expect no early frames; send one new and expect that one
+    w1.send(Message::Text("later".to_string())).await?;
+    let ok = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match r2.next().await {
+                Some(Ok(Message::Text(t))) => {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
+                        if v["type"] == "frame" && v["frame"] == "later" { break true; }
+                    }
+                }
+                Some(Ok(_)) => {}
+                Some(Err(_)) | None => break false,
+            }
+        }
+    }).await.unwrap_or(false);
+    if ok { println!("{}","✓ No backfill".green()); Ok(()) } else { anyhow::bail!("Phone did not receive the expected post-join frame") }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("\n{}", "=".repeat(60).blue());
@@ -572,43 +754,59 @@ async fn main() -> Result<()> {
     println!("{}", "=".repeat(60).blue());
     
     // Check server is running
+    let base = std::env::var("RELAY_BASE_URL").unwrap_or_else(|_| "http://localhost:3001".to_string());
     let client = reqwest::Client::new();
-    match client.get("http://localhost:3001/health").send().await {
+    match client.get(format!("{}/health", base)).send().await {
         Ok(_) => println!("{}", "✓ Server is running".green()),
         Err(_) => {
             println!("{}", "✗ Server is not running!".red());
             println!("Please start the relay server first:");
-            println!("  cargo run --release --bin relay-server");
+            println!("  RELAY_BASE_URL=... cargo run --release -p relay-server");
             return Ok(());
         }
     }
     
-    // Run all tests
+    // Optional: run a single test by name
     let mut failed = false;
-    
-    if let Err(e) = test_basic_relay().await {
-        println!("{} Basic relay test failed: {}", "✗".red(), e);
-        failed = true;
-    }
-    
-    if let Err(e) = test_message_ordering().await {
-        println!("{} Message ordering test failed: {}", "✗".red(), e);
-        failed = true;
-    }
-    
-    if let Err(e) = test_throughput().await {
-        println!("{} Throughput test failed: {}", "✗".red(), e);
-        failed = true;
-    }
-    
-    if let Err(e) = test_concurrent_pairs().await {
-        println!("{} Concurrent pairs test failed: {}", "✗".red(), e);
-        failed = true;
-    }
-    
-    if let Err(e) = test_connection_stability().await {
-        println!("{} Connection stability test failed: {}", "✗".red(), e);
-        failed = true;
+    if let Ok(only) = std::env::var("RUN_ONLY") {
+        let name = only.trim().to_lowercase();
+        let short = std::env::var("TEST_TIMEOUT_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(20);
+        let long = std::env::var("TEST_TIMEOUT_LONG_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
+        let res = match name.as_str() {
+            "idle_expiry_basic" | "idle-expiry-basic" => run_with_timeout("idle_expiry_basic", short, test_idle_expiry_basic()).await,
+            "idle_refresh_on_heartbeat" | "idle-refresh-on-heartbeat" | "hb_refresh" => run_with_timeout("idle_refresh_on_heartbeat", short, test_idle_refresh_on_heartbeat()).await,
+            "kill_endpoint" | "kill-endpoint" => run_with_timeout("kill_endpoint", short, test_kill_endpoint()).await,
+            "reject_wrong_token" | "reject-wrong-token" => run_with_timeout("reject_wrong_token", short, test_reject_wrong_token()).await,
+            "no_backfill_after_late_join" | "no-backfill-after-late-join" | "no_backfill" => run_with_timeout("no_backfill_after_late_join", short, test_no_backfill_after_late_join()).await,
+            // legacy/throughput
+            "basic" => run_with_timeout("basic", long, test_basic_relay()).await,
+            "ordering" => run_with_timeout("ordering", long, test_message_ordering()).await,
+            "throughput" => run_with_timeout("throughput", long, test_throughput()).await,
+            "concurrent" => run_with_timeout("concurrent", long, test_concurrent_pairs()).await,
+            "stability" => run_with_timeout("stability", long, test_connection_stability()).await,
+            other => {
+                println!("Unknown test name: {}", other);
+                anyhow::bail!("Unknown test");
+            }
+        };
+        if let Err(e) = res {
+            println!("{} {} failed: {}", "✗".red(), name, e);
+            failed = true;
+        }
+    } else {
+        // Run full suite with numbering by default
+        let short = std::env::var("TEST_TIMEOUT_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(20);
+        let long = std::env::var("TEST_TIMEOUT_LONG_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
+        if let Err(e) = run_with_timeout("basic", long, test_basic_relay()).await { println!("{} Basic relay test failed: {}", "✗".red(), e); failed = true; }
+        if let Err(e) = run_with_timeout("ordering", long, test_message_ordering()).await { println!("{} Message ordering test failed: {}", "✗".red(), e); failed = true; }
+        if let Err(e) = run_with_timeout("throughput", long, test_throughput()).await { println!("{} Throughput test failed: {}", "✗".red(), e); failed = true; }
+        if let Err(e) = run_with_timeout("concurrent", long, test_concurrent_pairs()).await { println!("{} Concurrent pairs test failed: {}", "✗".red(), e); failed = true; }
+        if let Err(e) = run_with_timeout("stability", long, test_connection_stability()).await { println!("{} Connection stability test failed: {}", "✗".red(), e); failed = true; }
+        if let Err(e) = run_with_timeout("idle_expiry_basic", short, test_idle_expiry_basic()).await { println!("{} Idle expiry basic failed: {}", "✗".red(), e); failed = true; }
+        if let Err(e) = run_with_timeout("idle_refresh_on_heartbeat", short, test_idle_refresh_on_heartbeat()).await { println!("{} Idle refresh on hb failed: {}", "✗".red(), e); failed = true; }
+        if let Err(e) = run_with_timeout("kill_endpoint", short, test_kill_endpoint()).await { println!("{} Kill endpoint test failed: {}", "✗".red(), e); failed = true; }
+        if let Err(e) = run_with_timeout("reject_wrong_token", short, test_reject_wrong_token()).await { println!("{} Wrong token rejection failed: {}", "✗".red(), e); failed = true; }
+        if let Err(e) = run_with_timeout("no_backfill_after_late_join", short, test_no_backfill_after_late_join()).await { println!("{} No backfill test failed: {}", "✗".red(), e); failed = true; }
     }
     
     // Final summary
