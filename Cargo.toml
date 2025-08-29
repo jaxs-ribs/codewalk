@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/control_center",
     "crates/orchestrator",
     "crates/stt", 
     "crates/router",

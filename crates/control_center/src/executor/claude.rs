@@ -139,7 +139,6 @@ impl ExecutorSession for ClaudeExecutor {
         }))
     }
 }
-
 /// Ensure Claude process is killed when executor is dropped
 impl Drop for ClaudeExecutor {
     fn drop(&mut self) {
@@ -153,3 +152,4 @@ impl Drop for ClaudeExecutor {
         let _ = self.child.start_kill();
     }
 }
+

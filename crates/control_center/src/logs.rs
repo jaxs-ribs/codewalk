@@ -10,18 +10,6 @@ use notify::{Watcher, RecursiveMode, Event, EventKind};
 const CLAUDE_LOGS_DIR: &str = "~/.claude/projects";
 const POLL_INTERVAL_MS: u64 = 100;
 
-/// Represents a single log entry from Claude
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LogEntry {
-    #[serde(rename = "type")]
-    pub entry_type: String,
-    pub timestamp: Option<String>,
-    pub content: Option<serde_json::Value>,
-    pub tool: Option<String>,
-    pub role: Option<String>,
-    pub message: Option<String>,
-}
-
 /// Represents a parsed log line with metadata
 #[derive(Debug, Clone)]
 pub struct ParsedLogLine {
@@ -42,21 +30,14 @@ pub enum LogType {
     Unknown,
 }
 
-impl LogType {
-    fn from_entry(entry: &LogEntry) -> Self {
-        match entry.entry_type.as_str() {
-            "user" | "user_message" => LogType::UserMessage,
-            "assistant" | "assistant_message" => LogType::AssistantMessage,
-            "tool_call" | "tool_use" => LogType::ToolCall,
-            "tool_result" | "tool_response" => LogType::ToolResult,
-            "status" => LogType::Status,
-            "error" => LogType::Error,
-            _ => LogType::Unknown,
-        }
-    }
+/// Abstract log monitor trait
+#[async_trait::async_trait]
+pub trait LogMonitor: Send {
+    async fn start(&mut self) -> Result<()>;
 }
 
-pub struct LogMonitor {
+/// Implementation that reads Claude Code JSONL files
+pub struct ClaudeLogMonitor {
     log_dir: PathBuf,
     session_dir: Option<PathBuf>,
     tx: mpsc::Sender<ParsedLogLine>,
@@ -64,7 +45,18 @@ pub struct LogMonitor {
     current_file: Option<PathBuf>,
 }
 
-impl LogMonitor {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LogEntry {
+    #[serde(rename = "type")]
+    entry_type: String,
+    timestamp: Option<String>,
+    content: Option<serde_json::Value>,
+    tool: Option<String>,
+    role: Option<String>,
+    message: Option<String>,
+}
+
+impl ClaudeLogMonitor {
     /// Create a new log monitor
     pub fn new(tx: mpsc::Sender<ParsedLogLine>) -> Self {
         let log_dir = Self::expand_tilde(Path::new(CLAUDE_LOGS_DIR));
@@ -90,45 +82,19 @@ impl LogMonitor {
         
         monitor
     }
-    
-    /// Start monitoring for new log entries
-    pub async fn start(&mut self) -> Result<()> {
-        // First, try to find the latest session file
-        self.find_latest_session().await?;
-        
-        // Set up file watcher
-        let (watcher_tx, mut watcher_rx) = mpsc::channel(100);
-        let watch_path = self.session_dir.as_ref().unwrap_or(&self.log_dir);
-        
-        // Spawn file watcher in background
-        let watch_path_clone = watch_path.clone();
-        tokio::spawn(async move {
-            Self::watch_directory(&watch_path_clone, watcher_tx).await
-        });
-        
-        // Main monitoring loop
-        let mut poll_interval = interval(Duration::from_millis(POLL_INTERVAL_MS));
-        
-        loop {
-            tokio::select! {
-                _ = poll_interval.tick() => {
-                    // Poll current file for changes
-                    if let Err(e) = self.check_current_file().await {
-                        eprintln!("Error checking log file: {}", e);
-                    }
-                }
-                
-                Some(_event) = watcher_rx.recv() => {
-                    // File system event - check for new files
-                    if let Err(e) = self.find_latest_session().await {
-                        eprintln!("Error finding session: {}", e);
-                    }
-                }
-            }
+
+    fn log_type_from_entry(entry: &LogEntry) -> LogType {
+        match entry.entry_type.as_str() {
+            "user" | "user_message" => LogType::UserMessage,
+            "assistant" | "assistant_message" => LogType::AssistantMessage,
+            "tool_call" | "tool_use" => LogType::ToolCall,
+            "tool_result" | "tool_response" => LogType::ToolResult,
+            "status" => LogType::Status,
+            "error" => LogType::Error,
+            _ => LogType::Unknown,
         }
     }
     
-    /// Find the latest Claude session log file
     async fn find_latest_session(&mut self) -> Result<()> {
         let search_dir = self.session_dir.as_ref().unwrap_or(&self.log_dir);
         
@@ -162,7 +128,6 @@ impl LogMonitor {
         Ok(())
     }
     
-    /// Check current file for new content
     async fn check_current_file(&mut self) -> Result<()> {
         if let Some(file_path) = &self.current_file {
             let content = fs::read_to_string(file_path).await?;
@@ -184,10 +149,9 @@ impl LogMonitor {
         Ok(())
     }
     
-    /// Parse a single JSONL log line
     fn parse_log_line(&self, line: &str) -> Result<ParsedLogLine> {
         let entry: LogEntry = serde_json::from_str(line)?;
-        let log_type = LogType::from_entry(&entry);
+        let log_type = Self::log_type_from_entry(&entry);
         
         // Extract content based on type
         let content = self.extract_content(&entry);
@@ -200,7 +164,6 @@ impl LogMonitor {
         })
     }
     
-    /// Extract human-readable content from log entry
     fn extract_content(&self, entry: &LogEntry) -> String {
         // Try to extract message
         if let Some(msg) = &entry.message {
@@ -237,7 +200,6 @@ impl LogMonitor {
         format!("[{}]", entry.entry_type)
     }
     
-    /// Watch a directory for changes
     async fn watch_directory(path: &Path, tx: mpsc::Sender<()>) -> Result<()> {
         let (notify_tx, mut notify_rx) = mpsc::channel(100);
         
@@ -257,7 +219,7 @@ impl LogMonitor {
         
         Ok(())
     }
-    
+
     /// Expand tilde in path
     fn expand_tilde(path: &Path) -> PathBuf {
         if let Some(path_str) = path.to_str() {
@@ -273,14 +235,53 @@ impl LogMonitor {
     }
 }
 
-/// Create a log monitoring task
+#[async_trait::async_trait]
+impl LogMonitor for ClaudeLogMonitor {
+    async fn start(&mut self) -> Result<()> {
+        // First, try to find the latest session file
+        self.find_latest_session().await?;
+        
+        // Set up file watcher
+        let (watcher_tx, mut watcher_rx) = mpsc::channel(100);
+        let watch_path = self.session_dir.as_ref().unwrap_or(&self.log_dir);
+        
+        // Spawn file watcher in background
+        let watch_path_clone = watch_path.clone();
+        tokio::spawn(async move {
+            let _ = Self::watch_directory(&watch_path_clone, watcher_tx).await;
+        });
+        
+        // Main monitoring loop
+        let mut poll_interval = interval(Duration::from_millis(POLL_INTERVAL_MS));
+        
+        loop {
+            tokio::select! {
+                _ = poll_interval.tick() => {
+                    // Poll current file for changes
+                    if let Err(e) = self.check_current_file().await {
+                        eprintln!("Error checking log file: {}", e);
+                    }
+                }
+                
+                Some(_event) = watcher_rx.recv() => {
+                    // File system event - check for new files
+                    if let Err(e) = self.find_latest_session().await {
+                        eprintln!("Error finding session: {}", e);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Create a log monitoring task (Claude-only default)
 pub fn spawn_log_monitor(working_dir: Option<&Path>) -> mpsc::Receiver<ParsedLogLine> {
     let (tx, rx) = mpsc::channel(100);
     
     let mut monitor = if let Some(dir) = working_dir {
-        LogMonitor::with_working_dir(dir, tx)
+        ClaudeLogMonitor::with_working_dir(dir, tx)
     } else {
-        LogMonitor::new(tx)
+        ClaudeLogMonitor::new(tx)
     };
     
     tokio::spawn(async move {
@@ -291,3 +292,4 @@ pub fn spawn_log_monitor(working_dir: Option<&Path>) -> mpsc::Receiver<ParsedLog
     
     rx
 }
+
