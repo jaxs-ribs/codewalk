@@ -22,6 +22,7 @@ Quick Launch (everything already installed)
 What You Should See
 
 - A centered “Hello World” on screen.
+  Now also shows a relay connectivity status pill (Connected/Disconnected) and last-checked time.
 
 What Worked For Us (macOS setup notes)
 
@@ -57,6 +58,14 @@ Tips
 - If Pods errors occur, re-run `pod install` inside `ios/`
 - Android: start an AVD in Android Studio first; if Gradle issues, try `cd android && ./gradlew clean && cd ..`
 
+Config: Relay Connectivity Indicator
+
+- Default health endpoint:
+  - iOS Simulator: `http://localhost:3001/health`
+  - Android Emulator: `http://10.0.2.2:3001/health`
+- To change the port/host, edit constants at the top of `apps/VoiceRelay/App.tsx:1` (see `RELAY_PORT`, `RELAY_HOST`, and `RELAY_HEALTH_URL`).
+- The indicator checks immediately at launch and every 10 seconds.
+
 Troubleshooting
 
 - Clear Metro/Watchman cache: `watchman watch-del-all || true && rm -rf node_modules && npm install && npm start -- --reset-cache`
@@ -64,8 +73,8 @@ Troubleshooting
 
 Next Bite-Sized Task
 
-- Add “Relay connectivity” indicator in the app:
-  - A small status pill that pings a configurable HTTP endpoint (e.g., `http://localhost:PORT/health`) on launch and every 10s.
-  - Shows Connected/Disconnected with color (green/red) and last-checked time.
-  - Acceptance: toggling the server up/down updates status within 10 seconds.
-  - This is dependency-free (uses `fetch`) and measurable, and it lays groundwork for later WebSocket streaming.
+- Add a simple WebSocket echo to the relay once available:
+  - Connect to the relay’s `ws://<host>:<port>/ws` after the health check is “Connected”.
+  - Send a JSON hello (session placeholders for now) and echo a test message.
+  - Render connection state and last message received.
+  - This builds directly on the health check and proves bi-directional connectivity.
