@@ -1,2 +1,22 @@
 /target
 .env
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Accidental home dir copy inside repo
+~/
+
+# React Native app artifacts (scoped to apps/VoiceRelay)
+apps/VoiceRelay/node_modules/
+apps/VoiceRelay/.metro-health-check*
+apps/VoiceRelay/coverage/
+apps/VoiceRelay/vendor/bundle/
+apps/VoiceRelay/.bundle/
+apps/VoiceRelay/ios/Pods/
+apps/VoiceRelay/ios/DerivedData/
+apps/VoiceRelay/android/.gradle/
+apps/VoiceRelay/android/build/
+apps/VoiceRelay/android/app/build/
+apps/VoiceRelay/android/.cxx/
