@@ -148,8 +148,14 @@ async fn main() -> Result<()> {
                     if let Ok(server_msg) = serde_json::from_str::<ServerMessage>(&text) {
                         match server_msg.msg_type.as_str() {
                             "hello-ack" => info!("Connection acknowledged"),
-                            "peer-joined" => println!("[System] Mobile client connected!"),
-                            "peer-left" => println!("[System] Mobile client disconnected"),
+                            "peer-joined" => {
+                                let who = server_msg.role.as_deref().unwrap_or("peer");
+                                println!("[System] {} connected", who);
+                            }
+                            "peer-left" => {
+                                let who = server_msg.role.as_deref().unwrap_or("peer");
+                                println!("[System] {} disconnected", who);
+                            }
                             "session-killed" => {
                                 println!("[System] Session was killed by workstation. Closing.");
                                 break;

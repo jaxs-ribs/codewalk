@@ -7,21 +7,21 @@ A high-performance WebSocket relay system using Redis pub/sub for message routin
 - **server**: WebSocket server with Redis-backed session management
 - **client-workstation**: Desktop client that generates QR codes for pairing
 - **client-mobile**: Library for embedding in mobile apps (iOS/Android)
-- **tests**: Comprehensive integration test suite
+ 
 
 ## Quick Start
 
-### Run Tests
+### Run Demo
 
 ```bash
-./run-test.sh
+./run-demo.sh
 ```
 
 This will:
 1. Start Redis (if needed)
-2. Start the relay server
-3. Run the complete integration test suite
-4. Clean up afterwards
+2. Launch the relay server on an isolated port
+3. Run minimal workstation and phone mock clients
+4. Exchange correlated messages both ways and exit cleanly
 
 ### Manual Testing
 

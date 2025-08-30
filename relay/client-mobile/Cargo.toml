@@ -8,6 +8,10 @@ authors.workspace = true
 name = "relay_client_mobile"
 crate-type = ["cdylib", "staticlib"]
 
+[[bin]]
+name = "relay-phone-demo"
+path = "src/bin/phone_demo.rs"
+
 [dependencies]
 tokio = { version = "1.40", features = ["rt", "net", "sync", "macros", "time"] }
 serde.workspace = true

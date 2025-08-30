@@ -62,7 +62,7 @@ async fn websocket_handler(socket: WebSocket, state: AppState) {
     let (tx, mut rx) = mpsc::channel::<Outgoing>(1000);
     
     // Spawn task to forward messages from channel to websocket
-    let mut send_task = tokio::spawn(async move {
+    let send_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             match msg {
                 Outgoing::Text(s) => {
@@ -120,7 +120,7 @@ async fn websocket_handler(socket: WebSocket, state: AppState) {
                                     let sid_clone = hello.s.clone();
                                     let sid_for_pubsub = sid_clone.clone();
                                     
-                                    let session_idle_secs = state.session_idle_secs;
+                                    // Start per-session Redis pubsub listener
                                     redis_task = Some(tokio::spawn(async move {
                                         if let Ok(client) = redis::Client::open(std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string())) {
                                             if let Ok(mut pubsub) = client.get_async_pubsub().await {
@@ -196,24 +196,18 @@ async fn websocket_handler(socket: WebSocket, state: AppState) {
                                     info!("Connection established: {} as {}", hello.s, hello.r);
 
                                     // Subscribe to in-process kill broadcast for this session
-                                    let mut kill_rx_opt: Option<broadcast::Receiver<()>> = None;
-                                    {
-                                        let mut map = state.kill_broadcasts.write().await;
-                                        let entry = map.entry(sid_clone.clone()).or_insert_with(|| {
-                                            let (txb, _rxb) = broadcast::channel::<()>(8);
-                                            txb
-                                        });
-                                        kill_rx_opt = Some(entry.subscribe());
-                                    }
-
-                                    if let Some(mut kill_rx) = kill_rx_opt {
-                                        let tx_kill = tx.clone();
-                                        tokio::spawn(async move {
-                                            let _ = kill_rx.recv().await;
-                                            let _ = tx_kill.send(Outgoing::Text(serde_json::json!({"type":"session-killed"}).to_string())).await;
-                                            let _ = tx_kill.send(Outgoing::Close).await;
-                                        });
-                                    }
+                                    let mut map = state.kill_broadcasts.write().await;
+                                    let entry = map.entry(sid_clone.clone()).or_insert_with(|| {
+                                        let (txb, _rxb) = broadcast::channel::<()>(8);
+                                        txb
+                                    });
+                                    let mut kill_rx = entry.subscribe();
+                                    let tx_kill = tx.clone();
+                                    tokio::spawn(async move {
+                                        let _ = kill_rx.recv().await;
+                                        let _ = tx_kill.send(Outgoing::Text(serde_json::json!({"type":"session-killed"}).to_string())).await;
+                                        let _ = tx_kill.send(Outgoing::Close).await;
+                                    });
                                 }
                                 _ => {
                                     warn!("Invalid session or token");

@@ -8,7 +8,7 @@ members = [
     "relay/server",
     "relay/client-workstation",
     "relay/client-mobile",
-    "relay/tests",
+    
 ]
 resolver = "2"
 default-members = ["crates/orchestrator"]

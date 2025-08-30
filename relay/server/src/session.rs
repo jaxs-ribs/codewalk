@@ -36,7 +36,8 @@ impl Session {
     pub async fn save(&self, redis: &ConnectionManager, ttl: u64) -> Result<()> {
         let mut conn = redis.clone();
         
-        conn.hset_multiple(
+        // Explicit return types avoid never-type fallback warnings
+        conn.hset_multiple::<_, _, _, ()>(
             &self.redis_key(),
             &[
                 ("token", &self.token),
@@ -44,8 +45,8 @@ impl Session {
             ],
         ).await?;
         
-        conn.expire(&self.redis_key(), ttl as i64).await?;
-        conn.del(&self.roles_key()).await?;
+        conn.expire::<_, ()>(&self.redis_key(), ttl as i64).await?;
+        conn.del::<_, ()>(&self.roles_key()).await?;
         
         Ok(())
     }
@@ -53,7 +54,7 @@ impl Session {
     pub async fn refresh(redis: &ConnectionManager, id: &str, ttl: u64) -> Result<()> {
         let mut conn = redis.clone();
         let key = format!("sess:{}", id);
-        conn.expire(&key, ttl as i64).await?;
+        conn.expire::<_, ()>(&key, ttl as i64).await?;
         Ok(())
     }
 

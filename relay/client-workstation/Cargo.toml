@@ -8,6 +8,10 @@ authors.workspace = true
 name = "relay-workstation"
 path = "src/main.rs"
 
+[[bin]]
+name = "relay-workstation-demo"
+path = "src/bin/demo.rs"
+
 [dependencies]
 tokio.workspace = true
 serde.workspace = true

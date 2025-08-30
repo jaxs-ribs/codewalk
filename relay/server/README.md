@@ -133,3 +133,24 @@ Requires: Python 3, `pip install requests websockets`.
 Notes
 - curl examples cover HTTP endpoints; WebSocket messaging examples show the exact JSON frames exchanged once connected.
 - Environment: `PORT` (3001), `REDIS_URL` (redis://127.0.0.1:6379), `PUBLIC_WS_URL` (ws://localhost:PORT/ws), `SESSION_IDLE_SECS` (7200), `HEARTBEAT_INTERVAL_SECS` (30).
+
+## Minimal Demo Pipeline
+
+- Run: `./relay/run-demo.sh`
+- What it does:
+  - Starts Redis (if needed)
+  - Builds and launches the server on an isolated port
+  - Runs a tiny Rust demo that: registers a session, connects workstation and phone websockets, exchanges a message both ways, sends a heartbeat, deletes the session, and observes shutdown
+- Expect logs like:
+  - `[workstation] -> hello` then `<- {"type":"hello-ack",...}`
+  - `[phone] -> hello` then `<- {"type":"hello-ack",...}`
+  - `[workstation] -> hello-from-workstation` and `[phone] <- frame ok`
+  - `[phone] -> hello-from-phone` and `[workstation] <- frame ok`
+  - `DELETE /api/session/<sid>` then `session-killed` notifications
+  - Correlated app messages: demo sends JSON frames with `id` and `replyTo` to show request/response across peers. Set `DEMO_SEED=myrun` to control the ids like `myrun-p1`, `myrun-w1`.
+
+## Real-World Setup
+
+- Server: deploy the relay server behind HTTPS on a public domain (e.g., `wss://relay.example.com/ws`). Use your infra’s port forwarding / reverse proxy and set `PUBLIC_WS_URL` accordingly.
+- Phone app: embed `relay-client-mobile` and, after scanning a QR payload `{u,s,t}`, call `connect_with_qr(...)`. Send app JSON as plain text; receive peer frames via the `on_message` callback.
+- Workstation app: call `POST /api/register` on the server URL, show the QR to the user (or otherwise share `{u,s,t}`), then connect to `ws` and send `hello` with role `workstation`. Send/receive app JSON as plain text; correlate with `id/replyTo` if desired.
