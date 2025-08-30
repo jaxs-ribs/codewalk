@@ -53,6 +53,7 @@ async fn main() -> Result<()> {
     let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
     let public_ws_url = env::var("PUBLIC_WS_URL")
         .unwrap_or_else(|_| format!("ws://localhost:{}/ws", port));
+    let public_ws_url_print = public_ws_url.clone();
     let session_idle_secs: u64 = env::var("SESSION_IDLE_SECS")
         .unwrap_or_else(|_| "7200".to_string())
         .parse()?;
@@ -86,7 +87,7 @@ async fn main() -> Result<()> {
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     info!("Server listening on {}", addr);
-    info!("WebSocket endpoint: ws://{}/ws", addr);
+    info!("Public WebSocket URL: {}", public_ws_url_print);
     
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;

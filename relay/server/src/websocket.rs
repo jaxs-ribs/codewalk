@@ -7,7 +7,7 @@ use futures::{SinkExt, StreamExt};
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, broadcast};
-use tracing::{error, info, warn};
+use tracing::{error, info, warn, debug};
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -141,10 +141,15 @@ async fn websocket_handler(socket: WebSocket, state: AppState) {
                                                         }
 
                                                         if let Ok(relay_msg) = serde_json::from_str::<RelayMessage>(&payload) {
+                                                            debug!(
+                                                                "pubsub event: sid={} type={} from={} -> listening_role={}",
+                                                                relay_msg.sid, relay_msg.msg_type, relay_msg.from_role, role_clone
+                                                            );
                                                             // Forward messages from other role or system notifications
                                                             if relay_msg.sid == sid_for_pubsub {
                                                                 if relay_msg.msg_type == "frame" && relay_msg.from_role != role_clone {
                                                                     // Forward the entire message (which the client will extract the frame from)
+                                                                    debug!("forward frame to client: sid={} from={} to={}", sid_for_pubsub, relay_msg.from_role, role_clone);
                                                                     if tx_clone.send(Outgoing::Text(payload.clone())).await.is_err() {
                                                                         break;
                                                                     }
@@ -154,9 +159,12 @@ async fn websocket_handler(socket: WebSocket, state: AppState) {
                                                                         "type": relay_msg.msg_type,
                                                                         "role": relay_msg.from_role
                                                                     });
+                                                                    debug!("forward {} notification: sid={} role={} to={}", relay_msg.msg_type, sid_for_pubsub, relay_msg.from_role, role_clone);
                                                                     if tx_clone.send(Outgoing::Text(notification.to_string())).await.is_err() {
                                                                         break;
                                                                     }
+                                                                } else if relay_msg.msg_type == "frame" {
+                                                                    debug!("skip same-role frame: sid={} role={}", sid_for_pubsub, relay_msg.from_role);
                                                                 }
                                                             }
                                                         }
@@ -227,10 +235,13 @@ async fn websocket_handler(socket: WebSocket, state: AppState) {
                             // Refresh TTL and optionally ack
                             let _ = Session::refresh(&state.redis, sid, state.session_idle_secs).await;
                             let _ = tx.send(Outgoing::Text(serde_json::json!({"type":"hb-ack"}).to_string())).await;
+                            debug!("hb from {}:{} -> ack", sid, r);
                             continue;
                         }
                     }
                     // Relay the message
+                    let preview = if text.len() > 80 { format!("{}…", &text[..80]) } else { text.clone() };
+                    debug!("recv frame from client sid={} role={} len={} preview=\"{}\"", sid, r, text.len(), preview);
                     let mut conn = state.redis.clone();
                     let channel = format!("ch:{}", sid);
                     let relay_msg = RelayMessage {
@@ -243,6 +254,7 @@ async fn websocket_handler(socket: WebSocket, state: AppState) {
                     };
                     let msg_str = serde_json::to_string(&relay_msg).unwrap();
                     let _: () = conn.publish(&channel, msg_str).await.unwrap_or(());
+                    debug!("published frame on {} from role={}", channel, r);
                     let _ = Session::refresh(&state.redis, sid, state.session_idle_secs).await;
                 }
             }

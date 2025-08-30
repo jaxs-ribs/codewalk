@@ -24,6 +24,31 @@ What You Should See
 - A centered “Hello World” on screen.
   Now also shows a relay connectivity status pill (Connected/Disconnected) and last-checked time.
 
+WebSocket Demo (local relay server)
+
+- Start the relay server on port 3001 in another terminal:
+
+  cd relay/server
+  # For iOS Simulator, prefer IPv4 loopback in the advertised WS URL
+  PUBLIC_WS_URL=ws://127.0.0.1:3001/ws \
+  cargo run --release --bin relay-server
+
+- The app will auto-register a session and connect via WebSocket after health is Connected.
+- You should see a `ws:message:hello-ack` event arrive.
+- Start a workstation peer using the credentials shown in the app (WS, sid, tok):
+
+  DEMO_WS=ws://localhost:3001/ws \
+  DEMO_SID=<sid_from_app> \
+  DEMO_TOK=<tok_from_app> \
+  cargo run --release -p relay-client-workstation --bin demo
+
+- In the app, type a message in the input and press Send:
+  - It sends `{type:'note', id:'demo-p1', text:'...'}` to the workstation and clears the input immediately.
+  - The workstation demo replies with an `ack`, which the app shows under “Ack:”.
+
+Notes
+- WS path must be exactly `/ws` (no trailing slash). `/ws/` will return 404 and the socket will close with code 1006.
+
 What Worked For Us (macOS setup notes)
 
 1) Node via nvm
@@ -61,7 +86,7 @@ Tips
 Config: Relay Connectivity Indicator
 
 - Default health endpoint:
-  - iOS Simulator: `http://localhost:3001/health`
+  - iOS Simulator: `http://127.0.0.1:3001/health`
   - Android Emulator: `http://10.0.2.2:3001/health`
 - To change the port/host, edit constants at the top of `apps/VoiceRelay/App.tsx:1` (see `RELAY_PORT`, `RELAY_HOST`, and `RELAY_HEALTH_URL`).
 - The indicator checks immediately at launch and every 10 seconds.
@@ -70,6 +95,10 @@ Troubleshooting
 
 - Clear Metro/Watchman cache: `watchman watch-del-all || true && rm -rf node_modules && npm install && npm start -- --reset-cache`
 - If CoreSimulator errors: reboot macOS once after running `xcodebuild -runFirstLaunch`, then retry.
+- WS state stays "closed":
+  - Ensure health pill is green; if not, start the relay server on port 3001.
+  - Tap "Show details"; if you see `ws:close code=...`, share the code. Common IPv6 issue is fixed by using 127.0.0.1 on iOS.
+  - Verify registration works: `curl -s -X POST http://127.0.0.1:3001/api/register` should return JSON with `sessionId`, `token`, and `ws`.
 
 Next Bite-Sized Task
 
