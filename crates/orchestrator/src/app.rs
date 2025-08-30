@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use crate::backend;
 use crate::constants::{self, messages, prefixes};
+use crate::relay_client::{self, RelayEvent};
 use control_center::{ExecutorConfig, ExecutorOutput};
 use control_center::center::ControlCenter;
 use crate::settings::AppSettings;
@@ -25,6 +26,7 @@ pub struct App {
     pub scroll: ScrollState,
     pub session_logs: Vec<ParsedLogLine>,
     pub log_scroll: ScrollState,
+    pub relay_rx: Option<tokio::sync::mpsc::Receiver<RelayEvent>>,
     // No direct receiver; logs are pulled via ControlCenter
 }
 
@@ -44,6 +46,7 @@ impl App {
             scroll: ScrollState::new(),
             session_logs: Vec::new(),
             log_scroll: ScrollState::new(),
+            relay_rx: None,
         }
     }
     
@@ -424,6 +427,67 @@ impl App {
                 self.log_scroll.offset -= remove_count;
             } else {
                 self.log_scroll.offset = 0;
+            }
+        }
+        Ok(())
+    }
+
+    /// Attempt to connect to relay if env vars are present
+    pub async fn init_relay(&mut self) {
+        match relay_client::load_config_from_env() {
+            Ok(Some(cfg)) => {
+                self.append_output(format!("{} Connecting to relay...", prefixes::RELAY));
+                match relay_client::start(cfg).await {
+                    Ok(rx) => {
+                        self.relay_rx = Some(rx);
+                        self.append_output(format!("{} Relay client started", prefixes::RELAY));
+                    }
+                    Err(e) => {
+                        self.append_output(format!("{} Failed to start relay: {}", prefixes::RELAY, e));
+                    }
+                }
+            }
+            Ok(None) => {
+                // Silent if not configured; user may only use local features.
+            }
+            Err(e) => {
+                self.append_output(format!("{} Relay config error: {}", prefixes::RELAY, e));
+            }
+        }
+    }
+
+    /// Poll relay events non-blocking and display in TUI
+    pub async fn poll_relay(&mut self) -> Result<()> {
+        if let Some(rx) = &mut self.relay_rx {
+            // Drain events first to avoid borrow conflicts
+            let mut pending = Vec::with_capacity(50);
+            for _ in 0..50 {
+                match rx.try_recv() {
+                    Ok(ev) => pending.push(ev),
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                        pending.push(RelayEvent::Status("disconnected".into()));
+                        self.relay_rx = None;
+                        break;
+                    }
+                }
+            }
+            for ev in pending {
+                match ev {
+                    RelayEvent::Status(s) => self.append_output(format!("{} {}", prefixes::RELAY, s)),
+                    RelayEvent::PeerJoined(who) => self.append_output(format!("{} peer joined: {}", prefixes::RELAY, who)),
+                    RelayEvent::PeerLeft(who) => self.append_output(format!("{} peer left: {}", prefixes::RELAY, who)),
+                    RelayEvent::SessionKilled => self.append_output(format!("{} session killed", prefixes::RELAY)),
+                    RelayEvent::Error(e) => self.append_output(format!("{} error: {}", prefixes::RELAY, e)),
+                    RelayEvent::Frame(text) => {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                            let msg = v.get("text").and_then(|s| s.as_str()).unwrap_or_else(|| text.as_str());
+                            self.append_output(format!("{} {}", prefixes::RELAY, msg));
+                        } else {
+                            self.append_output(format!("{} {}", prefixes::RELAY, text));
+                        }
+                    }
+                }
             }
         }
         Ok(())

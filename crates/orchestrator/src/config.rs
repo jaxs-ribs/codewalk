@@ -11,6 +11,16 @@ pub fn load_api_key() -> Result<String> {
     get_groq_api_key()
 }
 
+/// Load environment variables from .env at repo root (best-effort).
+/// This is used to populate RELAY_* and optional keys without requiring shell exports.
+pub fn load_dotenv() {
+    // Try common locations relative to current working directory
+    // 1) current dir, 2) parent, 3) grandparent
+    load_env_file_if_present(".env");
+    load_env_file_if_present("../.env");
+    load_env_file_if_present("../../.env");
+}
+
 fn load_env_file_if_present(path: &str) {
     if let Ok(content) = std::fs::read_to_string(path) {
         parse_env_file(&content);

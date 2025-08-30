@@ -3,6 +3,7 @@ mod backend;
 mod config;
 mod constants;
 mod handlers;
+mod relay_client;
 mod settings;
 mod types;
 mod ui;
@@ -23,18 +24,20 @@ use ui::UI;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Load API key
-    let api_key = match config::load_api_key() {
-        Ok(key) => key,
-        Err(_) => {
-            eprintln!("Error: GROQ_API_KEY environment variable not set");
-            eprintln!("Please run: export GROQ_API_KEY=your_key_here");
-            return Ok(());
+    // Load .env unconditionally so RELAY_* config is available without exports
+    config::load_dotenv();
+    // Try to load API key; if missing, run in reduced mode (no audio/LLM)
+    match config::load_api_key() {
+        Ok(key) => {
+            // Initialize backend with API key
+            if let Err(e) = backend::initialize_backend(key).await {
+                eprintln!("Warning: backend init failed: {}", e);
+            }
         }
-    };
-
-    // Initialize backend with API key
-    backend::initialize_backend(api_key).await?;
+        Err(_) => {
+            eprintln!("Warning: GROQ_API_KEY not set; voice and LLM disabled");
+        }
+    }
 
     let mut terminal = setup_terminal()?;
     let result = run_application(&mut terminal).await;
@@ -64,6 +67,8 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Re
 
 async fn run_application<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
     let mut app = App::new();
+    // Connect to relay (if configured via env)
+    app.init_relay().await;
     
     loop {
         app.update_blink();
@@ -75,6 +80,9 @@ async fn run_application<B: ratatui::backend::Backend>(terminal: &mut Terminal<B
         
         // Poll for new log entries
         app.poll_logs().await?;
+
+        // Poll relay events (if connected)
+        app.poll_relay().await?;
         
         terminal.draw(|frame| UI::draw(frame, &app))?;
         

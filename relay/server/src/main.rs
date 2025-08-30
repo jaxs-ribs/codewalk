@@ -37,6 +37,9 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load env from top-level .env first, then local .env (if any)
+    // Running from relay/server, workspace root .env is two levels up
+    let _ = dotenvy::from_filename("../../.env");
     dotenv().ok();
 
     tracing_subscriber::registry()
@@ -51,7 +54,9 @@ async fn main() -> Result<()> {
         .parse()?;
     
     let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-    let public_ws_url = env::var("PUBLIC_WS_URL")
+    // Prefer unified RELAY_WS_URL from .env; fall back to PUBLIC_WS_URL; then default
+    let public_ws_url = env::var("RELAY_WS_URL")
+        .or_else(|_| env::var("PUBLIC_WS_URL"))
         .unwrap_or_else(|_| format!("ws://localhost:{}/ws", port));
     let public_ws_url_print = public_ws_url.clone();
     let session_idle_secs: u64 = env::var("SESSION_IDLE_SECS")
@@ -74,6 +79,20 @@ async fn main() -> Result<()> {
         kill_broadcasts: Arc::new(RwLock::new(HashMap::new())),
         session_senders: Arc::new(RwLock::new(HashMap::new())),
     };
+
+    // If a preset session is defined in .env, pre-create it
+    if let (Ok(sid), Ok(tok)) = (env::var("RELAY_SESSION_ID"), env::var("RELAY_TOKEN")) {
+        let session = Session::new(sid.clone(), tok.clone());
+        if let Err(e) = session.save(&app_state.redis, app_state.session_idle_secs).await {
+            error!("Failed to pre-create session from .env: {}", e);
+        } else {
+            {
+                let mut sessions = app_state.sessions.write().await;
+                sessions.add(session.clone());
+            }
+            info!("Preloaded session from .env: {}", sid);
+        }
+    }
 
     // No longer need global redis subscriber - each connection handles its own
 

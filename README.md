@@ -2,51 +2,51 @@
 
 A modular terminal UI application with voice recording and command planning capabilities.
 
-## Mobile E2E (VoiceRelay)
+## End-to-End Flow (Relay + Mobile + Orchestrator)
 
-This repo includes a minimal React Native app at `apps/VoiceRelay` that connects to the relay server, sends a message, and receives an acknowledgement via WebSocket.
+This repo includes:
+- Relay server at `relay/server`
+- Mobile app at `apps/VoiceRelay`
+- Workstation TUI (orchestrator) at `crates/orchestrator` (binary `codewalk`)
 
-Quickstart
+Setup (.env at repo root)
 
-1) Start the relay server (port 3001)
+Create `./.env` with a single source of truth used by server, app, and orchestrator:
+
+RELAY_WS_URL=ws://127.0.0.1:3001/ws
+RELAY_SESSION_ID=dev-session-123
+RELAY_TOKEN=dev-token-abc
+# Optional (enables voice/LLM in TUI)
+# GROQ_API_KEY=your_key
+
+Run Order (four terminals)
+
+1) Relay server
 
    cd relay/server
-   # For iOS Simulator, prefer IPv4 loopback in the advertised WS URL
    PUBLIC_WS_URL=ws://127.0.0.1:3001/ws \
    cargo run --release --bin relay-server
 
-2) Launch the mobile app (iOS Simulator)
+2) Mobile app
 
    # Terminal A (Metro)
-   cd apps/VoiceRelay
-   nvm use && npm start
-
+   cd apps/VoiceRelay && npm install && nvm use && npm start
    # Terminal B (Simulator)
-   cd apps/VoiceRelay
-   npm run ios -- --simulator="iPhone 16 Pro"
+   cd apps/VoiceRelay && npm run ios -- --simulator="iPhone 16 Pro"
 
-3) Start the workstation peer (echo + ack)
+3) Orchestrator (workstation TUI)
 
-   # Use values shown in the app (WS, sid, tok)
-   DEMO_WS=ws://localhost:3001/ws \
-   DEMO_SID=<sid_from_app> \
-   DEMO_TOK=<tok_from_app> \
-   cargo run --release -p relay-client-workstation --bin demo
+   cargo run -p orchestrator --bin codewalk
 
 4) Send a message from the phone
 
-- Type in the app and press Send. The input clears; the workstation replies with an `ack`, which the app shows.
+- Type a message in the app and press Send.
+- Expectation: the TUI shows `RELAY> ...` lines for status and the incoming note. The app shows `Ack: received`.
 
-- Prereqs installed already? If not, see `apps/VoiceRelay/README.md`.
-
-Details
-- The app auto-registers a session and connects once the health check is green.
-- It prints `sid`, `tok`, and `WS` in the details panel; use those for the workstation demo.
-
-Troubleshooting (quick)
-- iOS Simulator only: ensure Xcode is fully installed and `xcode-select -p` points to `/Applications/Xcode.app/Contents/Developer`.
-- Health stays red: confirm the server is running and reachable; the app shows the health URL it is checking.
-- WebSocket not opening: wait for health to be green; the app auto‑connects once healthy. Restart Metro if needed: `npm start -- --reset-cache`.
+Notes
+- Orchestrator connects to the relay on startup when `RELAY_SESSION_ID` and `RELAY_TOKEN` are set. If `GROQ_API_KEY` is unset, voice/LLM features are disabled but the TUI still runs to show relay traffic.
+- For setup details and troubleshooting, see `apps/VoiceRelay/README.md` and `relay/server/README.md`.
+ - If the app shows “Health: configure RELAY_WS_URL in .env”, ensure `.env` exists at repo root, run `npm install` in `apps/VoiceRelay`, and restart Metro with `npm start -- --reset-cache`.
 
 ## Architecture
 

@@ -31,3 +31,8 @@ crossterm = "0.28"
 
 # Utilities
 lazy_static = "1.4"
+
+# Relay client deps
+tokio-tungstenite = "0.23"
+futures-util = "0.3"
+url = "2"

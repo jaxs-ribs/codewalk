@@ -10,6 +10,7 @@ pub mod prefixes {
     pub const EXEC: &str = "EXEC>";
     pub const WARN: &str = "WARN>";
     pub const UTTERANCE: &str = "UTTERANCE>";
+    pub const RELAY: &str = "RELAY>";
 }
 
 pub mod messages {

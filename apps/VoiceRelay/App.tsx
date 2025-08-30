@@ -9,12 +9,46 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { StatusBar, Text, useColorScheme, StyleSheet, View, Platform, Pressable, TextInput } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
+// Allow use of process.env via babel inline-dotenv
+declare const process: any;
+
 type HealthStatus = 'checking' | 'connected' | 'disconnected';
 
-const RELAY_PORT = 3001; // Default relay server port (see relay/server/README.md)
-const RELAY_HOST = Platform.select({ ios: '127.0.0.1', android: '10.0.2.2', default: 'localhost' });
-const RELAY_HEALTH_URL = `http://${RELAY_HOST}:${RELAY_PORT}/health`;
-const RELAY_REGISTER_URL = `http://${RELAY_HOST}:${RELAY_PORT}/api/register`;
+// Unified configuration from .env (inlined at build time)
+const ENV_WS: string | undefined = process.env.RELAY_WS_URL;
+const ENV_SID: string | undefined = process.env.RELAY_SESSION_ID;
+const ENV_TOK: string | undefined = process.env.RELAY_TOKEN;
+
+// Helpers to normalize WS and build Health without relying on URL.host quirks
+const normalizeWs = (raw?: string | null): string | null => {
+  if (!raw || !raw.trim()) return null;
+  let u = raw.trim();
+  // Ensure /ws path and adapt emulator hosts
+  try {
+    const parsed = new URL(u);
+    if (Platform.OS === 'android' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')) {
+      parsed.hostname = '10.0.2.2';
+    } else if (Platform.OS === 'ios' && parsed.hostname === 'localhost') {
+      parsed.hostname = '127.0.0.1';
+    }
+    parsed.pathname = '/ws';
+    u = parsed.toString().replace(/\/$/, '');
+  } catch {
+    // Fallback: simple normalization
+    if (!/\/ws$/.test(u)) u = u.replace(/\/?$/, '/ws');
+  }
+  return u;
+};
+
+const wsToHealth = (wsUrl?: string | null): string | null => {
+  const u = normalizeWs(wsUrl);
+  if (!u) return null;
+  // Replace scheme and path by string ops to avoid URL polyfill inconsistencies
+  const http = u.replace(/^wss?:\/\//, 'http://').replace(/\/ws$/, '');
+  return `${http}/health`;
+};
+
+const RELAY_HEALTH_URL = wsToHealth(ENV_WS);
 
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
@@ -22,7 +56,7 @@ function App() {
   const [lastCheckedAt, setLastCheckedAt] = useState<Date | null>(null);
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [wsState, setWsState] = useState<'idle' | 'registering' | 'connecting' | 'open' | 'closed' | 'error'>('idle');
+  const [wsState, setWsState] = useState<'idle' | 'connecting' | 'open' | 'closed' | 'error'>('idle');
   const [wsUrl, setWsUrl] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -55,6 +89,7 @@ function App() {
       const ac = new AbortController();
       const t = setTimeout(() => ac.abort(), 5000);
       try {
+        if (!RELAY_HEALTH_URL) throw new Error('Missing WS URL');
         const res = await fetch(RELAY_HEALTH_URL, { signal: ac.signal });
         const ok = res.ok;
         // Optional JSON shape: { ok: true }
@@ -120,19 +155,16 @@ function App() {
   };
 
   const connect = async () => {
-    if (wsState === 'connecting' || wsState === 'open' || status !== 'connected') return;
+    // Do not gate on health; try once when values are present
+    if (wsState === 'connecting' || wsState === 'open') return;
     setLastEvent('');
     setLastPayload('');
-    setWsState('registering');
-    // Register a session to get sid/token and ws URL
     try {
-      const res = await fetch(RELAY_REGISTER_URL, { method: 'POST' });
-      const data = await res.json();
-      const sid = data.sessionId || data.sid || data.s;
-      const tok = data.token || data.tok || data.t;
-      // For local dev, prefer an explicit URL we control to avoid localhost/IPv6 or trailing-slash issues
-      const preferred = `ws://${RELAY_HOST}:${RELAY_PORT}/ws`;
-      const u = adaptWsUrl(preferred).replace(/\/$/, '');
+      // Use .env-provided values
+      const sid = String(ENV_SID || '').trim();
+      const tok = String(ENV_TOK || '').trim();
+      const url = String(ENV_WS || '').trim();
+      const u = normalizeWs(url) || adaptWsUrl(url).replace(/\/$/, '');
       setSessionId(sid);
       setToken(tok);
       setWsUrl(u);
@@ -256,7 +288,11 @@ function App() {
           <Text style={[styles.hintText, { color: colors.fg }]}>Start relay server:</Text>
           <Text style={[styles.hintMono, { color: colors.fg }]}>cd relay/server</Text>
           <Text style={[styles.hintMono, { color: colors.fg }]}>cargo run --release --bin relay-server</Text>
-          <Text style={[styles.hintText, { color: colors.dim, marginTop: 6 }]}>Health: {RELAY_HEALTH_URL}</Text>
+          <Text style={[styles.hintText, { color: colors.dim, marginTop: 6 }]}>Health: {RELAY_HEALTH_URL ?? 'configure RELAY_WS_URL in .env'}</Text>
+          <Text style={[styles.hintText, { color: colors.dim, marginTop: 6 }]}>sid/tok from .env</Text>
+          <Text style={[styles.hintText, { color: colors.dim, marginTop: 6 }]}>Env WS: {ENV_WS ? String(ENV_WS) : 'missing'}</Text>
+          <Text style={[styles.hintText, { color: colors.dim }]}>Env SID: {ENV_SID ? String(ENV_SID) : 'missing'}</Text>
+          <Text style={[styles.hintText, { color: colors.dim }]}>Env TOK: {ENV_TOK ? String(ENV_TOK) : 'missing'}</Text>
         </View>
       ) : null}
 

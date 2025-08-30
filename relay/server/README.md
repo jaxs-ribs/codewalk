@@ -1,26 +1,30 @@
 # Relay Server I/O
 
- The relay server pairs a workstation with a phone over a short‑lived session so they can exchange app messages without direct connectivity. The workstation calls POST /api/register to mint a session and QR payload. Both peers open a WebSocket to /ws and must first send a hello JSON with sessionId, token, and role (workstation or phone). If valid, the server replies hello-ack, emits peer-joined/peer-left, and relays whatever one side sends (text/binary) to the opposite role as frame events. Sessions expire on idle; clients send hb to refresh TTL; DELETE /api/session/:id kills immediately. Typical flow: desktop shows a QR, mobile scans and connects, and the two exchange plain text or JSON frames while Redis pub/sub routes messages.
+ The relay server pairs a workstation with a phone over a short‑lived session so they can exchange app messages. In this repo we use a single shared `.env` to configure everything (server, app, and orchestrator) with the same session.
+
+Unified .env
+- RELAY_WS_URL: e.g., `ws://127.0.0.1:3001/ws` (server also accepts `PUBLIC_WS_URL` but RELAY_WS_URL is preferred)
+- RELAY_SESSION_ID: fixed session id to use
+- RELAY_TOKEN: fixed token to use
+
+On startup, if RELAY_SESSION_ID and RELAY_TOKEN are set, the server pre‑creates that session in Redis and logs it. Both peers then connect directly with hello using those values — no per‑run registration step needed.
 
 ## Connection Flow (Exact Order)
 
-- 1) Workstation registers a session:
-  - `curl -s -X POST http://localhost:3001/api/register`
-  - Save `sessionId` (sid), `token` (tok), and `ws` (WebSocket URL).
-- 2) Workstation connects to `ws` and immediately sends hello:
+- 1) Workstation connects to `ws` (from RELAY_WS_URL) and immediately sends hello:
   - `{"type":"hello","s":"<sid>","t":"<tok>","r":"workstation"}`
   - Expect: `{"type":"hello-ack","sessionId":"<sid>"}`
-- 3) Phone connects to the same `ws` and sends hello using values from the QR payload:
+- 2) Phone connects to the same `ws` and sends hello using the same sid/tok from .env:
   - `{"type":"hello","s":"<sid>","t":"<tok>","r":"phone"}`
   - Expect: `{"type":"hello-ack","sessionId":"<sid>"}`
-- 4) Both sides receive peer notifications when the other side joins/leaves:
+- 3) Both sides receive peer notifications when the other side joins/leaves:
   - Joined: `{"type":"peer-joined","role":"workstation|phone"}`
   - Left: `{"type":"peer-left","role":"workstation|phone"}`
-- 5) After both hellos, any plain text frame you send is relayed to the opposite role, delivered as a JSON envelope:
+- 4) After both hellos, any plain text frame you send is relayed to the opposite role, delivered as a JSON envelope:
   - Receiver sees: `{"type":"frame","sid":"<sid>","fromRole":"workstation|phone","at":<ts>,"frame":"<your_text>","b64":false}`
-- 6) Send heartbeats while idle to keep the session alive:
+- 5) Send heartbeats while idle to keep the session alive:
   - Send: `{"type":"hb"}`; server may reply `{"type":"hb-ack"}` and refresh TTL
-- 7) If someone calls `DELETE /api/session/<sid>`, both peers receive `{"type":"session-killed"}` and the socket closes.
+- 6) If someone calls `DELETE /api/session/<sid>`, both peers receive `{"type":"session-killed"}` and the socket closes.
 
 Rules
 - First message must be `hello` or the server will close.
@@ -29,13 +33,7 @@ Rules
 
 ## Workstation
 
-- Register session (gets `sessionId`, `token`, `ws`, and QR):
-  - Command:
-    - `curl -s -X POST http://localhost:3001/api/register`
-  - Expected output (example):
-    - `{ "sessionId":"2d5a1d6d9b3a4c0b8f92b2bb8c5b1b3f", "token":"6af04d6a5a8e4f2caaeced9b88a8a4b1", "ttl":7200, "ws":"ws://localhost:3001/ws", "qrDataUrl":"data:image/png;base64,iVBORw0...", "qrPayload": { "u":"ws://localhost:3001/ws", "s":"2d5a1d6d9b3a4c0b8f92b2bb8c5b1b3f", "t":"6af04d6a5a8e4f2caaeced9b88a8a4b1" } }`
-
-- Connect to WebSocket and identify:
+- Connect to WebSocket and identify (using .env sid/tok):
   - First client message (JSON text frame):
     - `{ "type":"hello", "s":"<sessionId>", "t":"<token>", "r":"workstation" }`
   - Expected server response:
@@ -63,10 +61,7 @@ Rules
 
 ## Mobile Client (phone)
 
-- Obtain QR payload from workstation’s `POST /api/register` response (`qrPayload`):
-  - Example: `{ "u":"ws://localhost:3001/ws", "s":"<sessionId>", "t":"<token>" }`
-
-- Connect to WebSocket URL `u` and identify:
+- Connect to WebSocket URL (RELAY_WS_URL) and identify with sid/tok from .env:
   - First client message: `{ "type":"hello", "s":"<sessionId>", "t":"<token>", "r":"phone" }`
   - Expected server response: `{ "type":"hello-ack", "sessionId":"<sessionId>" }`
   - When the workstation joins, you receive: `{ "type":"peer-joined", "role":"workstation" }`
