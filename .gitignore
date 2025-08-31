@@ -20,3 +20,8 @@ apps/VoiceRelay/android/.gradle/
 apps/VoiceRelay/android/build/
 apps/VoiceRelay/android/app/build/
 apps/VoiceRelay/android/.cxx/
+
+# Node/TS build artifacts (workspace-wide)
+**/node_modules/
+**/dist/
+packages/mobile-core/package-lock.json
