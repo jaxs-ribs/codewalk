@@ -10,6 +10,8 @@ pub const VERSION: u8 = 1;
 pub enum Message {
     UserText(UserText),
     Ack(Ack),
+    Status(Status),
+    PromptConfirmation(PromptConfirmation),
     // Placeholders for future phases
     // ConfirmResponse(ConfirmResponse),
     // Status(Status),
@@ -62,3 +64,24 @@ impl Message {
     }
 }
 
+/// Informational status line for UIs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Status {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub v: Option<u8>,
+    pub level: String, // info|warn|error
+    pub text: String,
+}
+
+/// Ask a UI to confirm an action (e.g., launching an executor)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptConfirmation {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub v: Option<u8>,
+    #[serde(rename = "for")]
+    pub for_: String, // "executor_launch"
+    pub executor: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub working_dir: Option<String>,
+    pub prompt: String,
+}

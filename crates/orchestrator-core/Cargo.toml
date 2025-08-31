@@ -1,0 +1,14 @@
+[package]
+name = "orchestrator-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["full"] }
+protocol = { path = "../protocol" }
+

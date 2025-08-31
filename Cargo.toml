@@ -6,6 +6,7 @@ members = [
     "crates/router",
     "crates/llm",
     "crates/protocol",
+    "crates/orchestrator-core",
     "relay/server",
     "relay/client-workstation",
     "relay/client-mobile",
