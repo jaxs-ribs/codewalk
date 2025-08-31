@@ -94,15 +94,19 @@ impl HelpPane {
     }
     
     fn create_help_content() -> Vec<Line<'static>> {
-        vec![
-            Self::help_line("Ctrl+R", "🎤 Toggle voice recording (uses Groq Whisper)"),
+        let mut lines = vec![
             Self::help_line("Enter", "Submit text / Confirm plan"),
-            Self::help_line("Esc", "Cancel recording or plan"),
+            Self::help_line("Esc", "Cancel or close"),
             Self::help_line("↑/↓", "Scroll messages"),
             Self::help_line("PgUp/PgDn", "Page scroll"),
             Self::help_line("End", "Jump to latest"),
             Self::help_line("Ctrl+C", "Quit application"),
-        ]
+        ];
+        #[cfg(feature = "tui-stt")]
+        {
+            lines.insert(0, Self::help_line("Ctrl+R", "🎤 Toggle voice recording (Groq Whisper)"));
+        }
+        lines
     }
     
     fn help_line(key: &'static str, desc: &'static str) -> Line<'static> {
@@ -153,6 +157,7 @@ impl InputLine {
     fn get_mode_text(mode: &Mode) -> &'static str {
         match mode {
             Mode::Idle => "Idle",
+            #[cfg(feature = "tui-stt")]
             Mode::Recording => "Recording",
             Mode::PlanPending => "PlanPending",
             Mode::Executing => "Executing",
@@ -162,6 +167,7 @@ impl InputLine {
         }
     }
     
+    #[cfg(feature = "tui-stt")]
     fn get_recording_indicator(app: &App) -> (String, usize) {
         if app.recording.is_active {
             let dot = if app.recording.blink_state { "●" } else { "○" };
@@ -172,6 +178,9 @@ impl InputLine {
             (String::new(), 0)
         }
     }
+
+    #[cfg(not(feature = "tui-stt"))]
+    fn get_recording_indicator(_app: &App) -> (String, usize) { (String::new(), 0) }
 }
 
 pub struct PlanOverlay;

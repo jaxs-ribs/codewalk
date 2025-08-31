@@ -36,27 +36,27 @@ impl InputHandler {
         // Handle scrolling controls first (work in most modes)
         match (key.code, key.modifiers) {
             // Scrolling controls
-            (KeyCode::Up, _) if app.mode != Mode::Recording => {
+            (KeyCode::Up, _) if !app.is_recording_mode() => {
                 app.handle_scroll(ScrollDirection::Up, 1);
                 return Ok(());
             }
-            (KeyCode::Down, _) if app.mode != Mode::Recording => {
+            (KeyCode::Down, _) if !app.is_recording_mode() => {
                 app.handle_scroll(ScrollDirection::Down, 1);
                 return Ok(());
             }
-            (KeyCode::PageUp, _) if app.mode != Mode::Recording => {
+            (KeyCode::PageUp, _) if !app.is_recording_mode() => {
                 app.handle_scroll(ScrollDirection::PageUp, 10);
                 return Ok(());
             }
-            (KeyCode::PageDown, _) if app.mode != Mode::Recording => {
+            (KeyCode::PageDown, _) if !app.is_recording_mode() => {
                 app.handle_scroll(ScrollDirection::PageDown, 10);
                 return Ok(());
             }
-            (KeyCode::Home, _) if app.mode != Mode::Recording => {
+            (KeyCode::Home, _) if !app.is_recording_mode() => {
                 app.handle_scroll(ScrollDirection::Home, 0);
                 return Ok(());
             }
-            (KeyCode::End, _) if app.mode != Mode::Recording => {
+            (KeyCode::End, _) if !app.is_recording_mode() => {
                 app.handle_scroll(ScrollDirection::End, 0);
                 return Ok(());
             }
@@ -65,21 +65,25 @@ impl InputHandler {
         
         // Handle mode-specific keys
         match (key.code, key.modifiers) {
+            #[cfg(feature = "tui-stt")]
             (KeyCode::Char('r'), KeyModifiers::CONTROL) => Self::handle_record_toggle(app).await?,
             (KeyCode::Enter, _) => Self::handle_enter(app).await?,
             (KeyCode::Esc, _) => Self::handle_cancel(app),
             (KeyCode::Char('n'), KeyModifiers::NONE) if app.mode == Mode::PlanPending => {
                 Self::handle_cancel(app)
             }
+            #[cfg(feature = "tui-input")]
             (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
                 Self::handle_character_input(app, c)
             }
+            #[cfg(feature = "tui-input")]
             (KeyCode::Backspace, _) => Self::handle_backspace(app),
             _ => {}
         }
         Ok(())
     }
 
+    #[cfg(feature = "tui-stt")]
     async fn handle_record_toggle(app: &mut App) -> Result<()> {
         if app.can_start_recording() {
             app.start_recording().await?;
@@ -91,7 +95,10 @@ impl InputHandler {
 
     async fn handle_enter(app: &mut App) -> Result<()> {
         match app.mode {
+            #[cfg(feature = "tui-input")]
             Mode::Idle => app.handle_text_input().await?,
+            #[cfg(not(feature = "tui-input"))]
+            Mode::Idle => {},
             Mode::ConfirmingExecutor => app.confirm_executor().await?,
             Mode::ShowingError => app.dismiss_error(),
             _ => {}
@@ -105,12 +112,14 @@ impl InputHandler {
         }
     }
 
+    #[cfg(feature = "tui-input")]
     fn handle_character_input(app: &mut App, c: char) {
         if app.can_edit_input() {
             app.input.push(c);
         }
     }
 
+    #[cfg(feature = "tui-input")]
     fn handle_backspace(app: &mut App) {
         if app.can_edit_input() {
             app.input.pop();

@@ -48,6 +48,15 @@ Notes
 - For setup details and troubleshooting, see `apps/VoiceRelay/README.md` and `relay/server/README.md`.
  - If the app shows “Health: configure RELAY_WS_URL in .env”, ensure `.env` exists at repo root, run `npm install` in `apps/VoiceRelay`, and restart Metro with `npm start -- --reset-cache`.
 
+Feature flags (orchestrator)
+- `tui` (default): enables the terminal UI. Disable for headless builds.
+- `tui-stt` (default): enables local mic + Groq transcription in the TUI.
+- `tui-input` (default): enables free‑text typing in the TUI.
+
+Examples
+- Headless build: `cargo build -p orchestrator --no-default-features`
+- TUI without mic: `cargo build -p orchestrator --no-default-features --features tui,tui-input`
+
 ## Architecture
 
 The project is organized as a Rust workspace with three independent crates:

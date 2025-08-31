@@ -21,13 +21,15 @@ serde_json.workspace = true
 async-trait.workspace = true
 
 # Local crates
-stt = { path = "../stt" }
 router = { path = "../router" }
 control_center = { path = "../control_center" }
 
-# TUI dependencies
-ratatui = "0.28"
-crossterm = "0.28"
+# Optional STT for TUI mic
+stt = { path = "../stt", optional = true }
+
+# TUI dependencies (optional)
+ratatui = { version = "0.28", optional = true }
+crossterm = { version = "0.28", optional = true }
 
 # Utilities
 lazy_static = "1.4"
@@ -36,3 +38,15 @@ lazy_static = "1.4"
 tokio-tungstenite = "0.23"
 futures-util = "0.3"
 url = "2"
+
+[features]
+# Build the full TUI by default and keep mic support to avoid regressions.
+default = ["tui", "tui-stt", "tui-input"]
+
+# Split concerns cleanly via feature flags.
+# - tui: enables terminal UI and event handling
+# - tui-stt: enables local mic + Groq transcription in the TUI
+# - tui-input: allows free-text input from the TUI
+tui = ["dep:ratatui", "dep:crossterm"]
+tui-stt = ["dep:stt"]
+tui-input = []

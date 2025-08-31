@@ -13,6 +13,7 @@ pub enum ScrollDirection {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Mode {
     Idle,
+    #[cfg(feature = "tui-stt")]
     Recording,
     PlanPending,
     #[allow(dead_code)]
@@ -22,6 +23,7 @@ pub enum Mode {
     ShowingError,  // Displaying error dialog
 }
 
+#[cfg(feature = "tui-stt")]
 pub struct RecordingState {
     pub is_active: bool,
     pub started_at: Option<Instant>,
@@ -29,6 +31,7 @@ pub struct RecordingState {
     pub last_blink: Instant,
 }
 
+#[cfg(feature = "tui-stt")]
 impl RecordingState {
     pub fn new() -> Self {
         Self {

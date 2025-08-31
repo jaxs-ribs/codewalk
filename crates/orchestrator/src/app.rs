@@ -7,7 +7,9 @@ use crate::relay_client::{self, RelayEvent};
 use control_center::{ExecutorConfig, ExecutorOutput};
 use control_center::center::ControlCenter;
 use crate::settings::AppSettings;
-use crate::types::{Mode, PlanState, RecordingState, PendingExecutor, ErrorInfo, ScrollState, ScrollDirection};
+use crate::types::{Mode, PlanState, PendingExecutor, ErrorInfo, ScrollState, ScrollDirection};
+#[cfg(feature = "tui-stt")]
+use crate::types::RecordingState;
 use crate::utils::TextWrapper;
 use control_center::ParsedLogLine;
 use router::RouterAction;
@@ -18,6 +20,7 @@ pub struct App {
     pub input: String,
     pub mode: Mode,
     pub plan: PlanState,
+    #[cfg(feature = "tui-stt")]
     pub recording: RecordingState,
     pub center: ControlCenter,
     pub settings: AppSettings,
@@ -38,6 +41,7 @@ impl App {
             input: String::new(),
             mode: Mode::Idle,
             plan: PlanState::new(),
+            #[cfg(feature = "tui-stt")]
             recording: RecordingState::new(),
             center: ControlCenter::new(),
             settings,
@@ -109,6 +113,7 @@ impl App {
         }
     }
 
+    #[cfg(feature = "tui-stt")]
     pub async fn start_recording(&mut self) -> Result<()> {
         self.mode = Mode::Recording;
         self.recording.start();
@@ -127,6 +132,7 @@ impl App {
         Ok(())
     }
 
+    #[cfg(feature = "tui-stt")]
     pub async fn stop_recording(&mut self) -> Result<()> {
         if let Err(e) = backend::record_voice(false).await {
             self.recording.stop();
@@ -168,11 +174,13 @@ impl App {
         Ok(())
     }
 
+    #[cfg(feature = "tui-stt")]
     fn handle_empty_recording(&mut self) {
         self.append_output(format!("{} {}", prefixes::ASR, messages::NO_AUDIO));
         self.mode = Mode::Idle;
     }
 
+    #[cfg(feature = "tui-stt")]
     async fn process_audio(&mut self, audio: Vec<u8>) -> Result<()> {
         let utterance = backend::voice_to_text(audio).await?;
         if !utterance.trim().is_empty() {
@@ -198,6 +206,7 @@ impl App {
                 self.plan.clear();
                 self.mode = Mode::Idle;
             }
+            #[cfg(feature = "tui-stt")]
             Mode::Recording => {
                 // Stop backend recording first
                 let _ = tokio::task::block_in_place(|| {
@@ -345,6 +354,7 @@ impl App {
         Ok(())
     }
     
+    #[cfg(feature = "tui-input")]
     pub async fn handle_text_input(&mut self) -> Result<()> {
         if !self.input.is_empty() {
             let text = self.input.clone();
@@ -355,27 +365,53 @@ impl App {
         }
         Ok(())
     }
+    
+    #[cfg(not(feature = "tui-input"))]
+    pub async fn handle_text_input(&mut self) -> Result<()> { Ok(()) }
 
+    #[cfg(feature = "tui-stt")]
     pub fn update_blink(&mut self) {
         if self.recording.last_blink.elapsed() > Duration::from_millis(constants::BLINK_INTERVAL_MS) {
             self.recording.blink_state = !self.recording.blink_state;
             self.recording.last_blink = std::time::Instant::now();
         }
     }
+    
+    #[cfg(not(feature = "tui-stt"))]
+    pub fn update_blink(&mut self) {}
 
+    #[cfg(feature = "tui-stt")]
     pub fn get_recording_time(&self) -> String {
         let elapsed = self.recording.elapsed_seconds();
         format!("{:02}:{:02}", elapsed / 60, elapsed % 60)
     }
 
+    #[cfg(not(feature = "tui-stt"))]
+    pub fn get_recording_time(&self) -> String { "00:00".to_string() }
+
+    /// Helper: whether we are currently in recording mode (feature-gated).
+    #[cfg(feature = "tui-stt")]
+    pub fn is_recording_mode(&self) -> bool { self.mode == Mode::Recording }
+    #[cfg(not(feature = "tui-stt"))]
+    pub fn is_recording_mode(&self) -> bool { false }
+
     pub fn can_edit_input(&self) -> bool {
-        self.mode == Mode::Idle
+        #[cfg(feature = "tui-input")]
+        {
+            return self.mode == Mode::Idle;
+        }
+        #[cfg(not(feature = "tui-input"))]
+        {
+            return false;
+        }
     }
 
+    #[cfg(feature = "tui-stt")]
     pub fn can_start_recording(&self) -> bool {
         self.mode == Mode::Idle && !self.recording.is_active
     }
 
+    #[cfg(feature = "tui-stt")]
     pub fn can_stop_recording(&self) -> bool {
         self.mode == Mode::Recording && self.recording.is_active
     }
@@ -406,7 +442,20 @@ impl App {
     }
     
     pub fn can_cancel(&self) -> bool {
-        matches!(self.mode, Mode::Recording | Mode::PlanPending | Mode::ExecutorRunning | Mode::ConfirmingExecutor | Mode::ShowingError)
+        #[cfg(feature = "tui-stt")]
+        {
+            return matches!(
+                self.mode,
+                Mode::Recording | Mode::PlanPending | Mode::ExecutorRunning | Mode::ConfirmingExecutor | Mode::ShowingError
+            );
+        }
+        #[cfg(not(feature = "tui-stt"))]
+        {
+            return matches!(
+                self.mode,
+                Mode::PlanPending | Mode::ExecutorRunning | Mode::ConfirmingExecutor | Mode::ShowingError
+            );
+        }
     }
     
     /// Poll for new log entries
