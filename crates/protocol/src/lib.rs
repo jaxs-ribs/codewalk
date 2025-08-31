@@ -31,7 +31,7 @@ pub struct UserText {
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>, // "phone" | "tui" | "api" | "unknown"
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(rename = "final", default, skip_serializing_if = "is_false")]
     pub final_: bool,
 }
 

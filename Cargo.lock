@@ -2324,6 +2324,8 @@ dependencies = [
  "crossterm",
  "futures-util",
  "lazy_static",
+ "orchestrator-core",
+ "protocol",
  "ratatui",
  "router",
  "serde",

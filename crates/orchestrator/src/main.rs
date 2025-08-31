@@ -10,6 +10,7 @@ mod types;
 #[cfg(feature = "tui")]
 mod ui;
 mod utils;
+mod core_bridge;
 
 use anyhow::Result;
 use app::App;
@@ -121,6 +122,8 @@ async fn run_application<B: ratatui::backend::Backend>(terminal: &mut Terminal<B
 
         // Poll relay events (if connected)
         app.poll_relay().await?;
+        // Poll headless core outbound
+        app.poll_core_outbound().await?;
         
         terminal.draw(|frame| UI::draw(frame, &app))?;
         

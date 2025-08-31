@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::time::Duration;
 
 use crate::backend;
+use crate::core_bridge;
 use crate::constants::{self, messages, prefixes};
 use crate::relay_client::{self, RelayEvent};
 use control_center::{ExecutorConfig, ExecutorOutput};
@@ -30,6 +31,8 @@ pub struct App {
     pub session_logs: Vec<ParsedLogLine>,
     pub log_scroll: ScrollState,
     pub relay_rx: Option<tokio::sync::mpsc::Receiver<RelayEvent>>,
+    pub core_in_tx: Option<tokio::sync::mpsc::Sender<protocol::Message>>,
+    pub core_out_rx: Option<tokio::sync::mpsc::Receiver<protocol::Message>>,
     // No direct receiver; logs are pulled via ControlCenter
 }
 
@@ -51,6 +54,8 @@ impl App {
             session_logs: Vec::new(),
             log_scroll: ScrollState::new(),
             relay_rx: None,
+            core_in_tx: None,
+            core_out_rx: None,
         }
     }
     
@@ -360,8 +365,11 @@ impl App {
             let text = self.input.clone();
             self.append_output(format!("{} {}", prefixes::UTTERANCE, text));
             self.input.clear();
-            // Route through LLM instead of old plan system
-            self.route_command(&text).await?;
+            // Send into headless core as user_text
+            if let Some(tx) = &self.core_in_tx {
+                let msg = protocol::Message::user_text(text, Some("tui".to_string()), true);
+                let _ = tx.send(msg).await;
+            }
         }
         Ok(())
     }
@@ -483,6 +491,10 @@ impl App {
 
     /// Attempt to connect to relay if env vars are present
     pub async fn init_relay(&mut self) {
+        // Start headless core once at initialization
+        let handles = core_bridge::start_core();
+        self.core_in_tx = Some(handles.inbound_tx);
+        self.core_out_rx = Some(handles.outbound_rx);
         match relay_client::load_config_from_env() {
             Ok(Some(cfg)) => {
                 self.append_output(format!("{} Connecting to relay...", prefixes::RELAY));
@@ -529,13 +541,53 @@ impl App {
                     RelayEvent::SessionKilled => self.append_output(format!("{} session killed", prefixes::RELAY)),
                     RelayEvent::Error(e) => self.append_output(format!("{} error: {}", prefixes::RELAY, e)),
                     RelayEvent::Frame(text) => {
+                        // Try to parse protocol message and forward to core
                         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                            let msg = v.get("text").and_then(|s| s.as_str()).unwrap_or_else(|| text.as_str());
-                            self.append_output(format!("{} {}", prefixes::RELAY, msg));
-                        } else {
-                            self.append_output(format!("{} {}", prefixes::RELAY, text));
+                            if v.get("type").and_then(|s| s.as_str()) == Some("user_text") {
+                                if let Some(tx) = &self.core_in_tx {
+                                    if let Ok(msg) = serde_json::from_value::<protocol::Message>(v.clone()) {
+                                        let _ = tx.send(msg).await;
+                                    }
+                                }
+                                continue;
+                            }
                         }
+                        // Fallback: echo relay frame
+                        self.append_output(format!("{} {}", prefixes::RELAY, text));
                     }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Poll outbound messages from headless core and reflect in UI state
+    pub async fn poll_core_outbound(&mut self) -> Result<()> {
+        if let Some(rx) = &mut self.core_out_rx {
+            // Drain into a buffer to avoid borrow conflicts
+            let mut buffered: Vec<protocol::Message> = Vec::with_capacity(50);
+            for _ in 0..50 {
+                match rx.try_recv() {
+                    Ok(msg) => buffered.push(msg),
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => { self.core_out_rx = None; break; }
+                }
+            }
+            for msg in buffered {
+                match msg {
+                    protocol::Message::Status(s) => {
+                        self.append_output(format!("{} {}", prefixes::PLAN, s.text));
+                    }
+                    protocol::Message::PromptConfirmation(pc) => {
+                        self.pending_executor = Some(PendingExecutor {
+                            prompt: pc.prompt,
+                            executor_name: self.center.executor.name().to_string(),
+                            working_dir: ExecutorConfig::default().working_dir.to_string_lossy().to_string(),
+                        });
+                        self.mode = Mode::ConfirmingExecutor;
+                        self.append_output(format!("{} Ready to launch {}. Press Enter to confirm, Escape to cancel.", prefixes::PLAN, self.center.executor.name()));
+                    }
+                    _ => {}
                 }
             }
         }
