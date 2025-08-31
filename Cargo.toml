@@ -10,6 +10,7 @@ members = [
     "relay/server",
     "relay/client-workstation",
     "relay/client-mobile",
+    "xtask",
     
 ]
 resolver = "2"

@@ -12,6 +12,10 @@ crate-type = ["cdylib", "staticlib"]
 name = "relay-phone-demo"
 path = "src/bin/phone_demo.rs"
 
+[[bin]]
+name = "relay-phone-bot"
+path = "src/bin/phone_bot.rs"
+
 [dependencies]
 tokio = { version = "1.40", features = ["rt", "net", "sync", "macros", "time"] }
 serde.workspace = true
