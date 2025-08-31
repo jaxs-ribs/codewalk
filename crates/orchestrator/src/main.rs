@@ -124,6 +124,8 @@ async fn run_application<B: ratatui::backend::Backend>(terminal: &mut Terminal<B
         app.poll_relay().await?;
         // Poll headless core outbound
         app.poll_core_outbound().await?;
+        // Poll app commands (from core executor adapter)
+        app.poll_app_commands().await?;
         
         terminal.draw(|frame| UI::draw(frame, &app))?;
         

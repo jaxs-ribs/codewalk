@@ -33,12 +33,15 @@ pub struct App {
     pub relay_rx: Option<tokio::sync::mpsc::Receiver<RelayEvent>>,
     pub core_in_tx: Option<tokio::sync::mpsc::Sender<protocol::Message>>,
     pub core_out_rx: Option<tokio::sync::mpsc::Receiver<protocol::Message>>,
+    pub cmd_tx: tokio::sync::mpsc::Sender<crate::core_bridge::AppCommand>,
+    pub cmd_rx: tokio::sync::mpsc::Receiver<crate::core_bridge::AppCommand>,
     // No direct receiver; logs are pulled via ControlCenter
 }
 
 impl App {
     pub fn new() -> Self {
         let settings = AppSettings::load();
+        let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel(100);
         Self {
             output: Vec::new(),
             input: String::new(),
@@ -56,6 +59,8 @@ impl App {
             relay_rx: None,
             core_in_tx: None,
             core_out_rx: None,
+            cmd_tx,
+            cmd_rx,
         }
     }
     
@@ -492,7 +497,8 @@ impl App {
     /// Attempt to connect to relay if env vars are present
     pub async fn init_relay(&mut self) {
         // Start headless core once at initialization
-        let handles = core_bridge::start_core();
+        let exec_adapter = crate::core_bridge::ExecutorAdapter::new(self.cmd_tx.clone());
+        let handles = crate::core_bridge::start_core_with_executor(exec_adapter);
         self.core_in_tx = Some(handles.inbound_tx);
         self.core_out_rx = Some(handles.outbound_rx);
         match relay_client::load_config_from_env() {
@@ -588,6 +594,26 @@ impl App {
                         self.append_output(format!("{} Ready to launch {}. Press Enter to confirm, Escape to cancel.", prefixes::PLAN, self.center.executor.name()));
                     }
                     _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Poll commands destined to the App (from core executor adapter)
+    pub async fn poll_app_commands(&mut self) -> Result<()> {
+        let mut buffered: Vec<crate::core_bridge::AppCommand> = Vec::with_capacity(20);
+        for _ in 0..20 {
+            match self.cmd_rx.try_recv() {
+                Ok(cmd) => buffered.push(cmd),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+            }
+        }
+        for cmd in buffered {
+            match cmd {
+                crate::core_bridge::AppCommand::LaunchExecutor { prompt } => {
+                    let _ = self.launch_executor(&prompt).await;
                 }
             }
         }

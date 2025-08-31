@@ -12,6 +12,7 @@ pub enum Message {
     Ack(Ack),
     Status(Status),
     PromptConfirmation(PromptConfirmation),
+    ConfirmResponse(ConfirmResponse),
     // Placeholders for future phases
     // ConfirmResponse(ConfirmResponse),
     // Status(Status),
@@ -84,4 +85,14 @@ pub struct PromptConfirmation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_dir: Option<String>,
     pub prompt: String,
+}
+
+/// Confirmation decision from UI/frontends
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfirmResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub v: Option<u8>,
+    #[serde(rename = "for")]
+    pub for_: String, // "executor_launch"
+    pub accept: bool,
 }

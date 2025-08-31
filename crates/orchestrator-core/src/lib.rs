@@ -9,11 +9,12 @@ pub struct OrchestratorCore<R: RouterPort, E: ExecutorPort, O: OutboundPort> {
     executor: E,
     outbound: O,
     require_confirmation: bool,
+    pending_exec_prompt: std::sync::Mutex<Option<String>>,
 }
 
 impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> {
     pub fn new(router: R, executor: E, outbound: O) -> Self {
-        Self { router, executor, outbound, require_confirmation: true }
+        Self { router, executor, outbound, require_confirmation: true, pending_exec_prompt: std::sync::Mutex::new(None) }
     }
 
     pub fn set_require_confirmation(&mut self, yes: bool) { self.require_confirmation = yes; }
@@ -25,6 +26,7 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
             protocol::Message::Ack(_) => Ok(()), // ignore inbound acks
             protocol::Message::Status(_) => Ok(()),
             protocol::Message::PromptConfirmation(_) => Ok(()),
+            protocol::Message::ConfirmResponse(cr) => self.handle_confirm(cr).await,
         }
     }
 
@@ -46,6 +48,8 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
             RouteAction::LaunchClaude => {
                 let prompt = decision.prompt.unwrap_or_else(|| text.to_string());
                 if self.require_confirmation {
+                    // store pending prompt
+                    *self.pending_exec_prompt.lock().unwrap() = Some(prompt.clone());
                     self.outbound.send(protocol::Message::PromptConfirmation(protocol::PromptConfirmation {
                         v: Some(protocol::VERSION),
                         for_: "executor_launch".to_string(),
@@ -64,6 +68,27 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
                 }
             }
         }
+    }
+
+    async fn handle_confirm(&self, cr: protocol::ConfirmResponse) -> Result<()> {
+        if cr.for_ != "executor_launch" { return Ok(()); }
+        let pending = { self.pending_exec_prompt.lock().unwrap().take() };
+        if cr.accept {
+            if let Some(prompt) = pending {
+                self.executor.launch(&prompt).await?;
+                self.outbound.send(protocol::Message::Status(protocol::Status{
+                    v: Some(protocol::VERSION), level: "info".into(), text: "executor started: Claude".into()
+                })).await?;
+            } else {
+                // No-op if nothing pending
+            }
+        } else {
+            // canceled: emit status
+            self.outbound.send(protocol::Message::Status(protocol::Status{
+                v: Some(protocol::VERSION), level: "info".into(), text: "executor launch canceled".into()
+            })).await?;
+        }
+        Ok(())
     }
 }
 

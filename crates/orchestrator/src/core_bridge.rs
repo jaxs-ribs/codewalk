@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use tokio::sync::mpsc;
 
 use orchestrator_core::ports::{RouterPort, RouteResponse, RouteAction, ExecutorPort, OutboundPort};
+use tokio::sync::mpsc::Sender;
 
 use crate::backend;
 
@@ -28,10 +29,15 @@ impl RouterPort for RouterAdapter {
 }
 
 /// For Phase 3 we only use confirmation path; launching remains in the TUI.
-pub struct NoopExecutor;
+pub enum AppCommand { LaunchExecutor { prompt: String } }
+
+pub struct ExecutorAdapter { tx: Sender<AppCommand> }
+impl ExecutorAdapter { pub fn new(tx: Sender<AppCommand>) -> Self { Self { tx } } }
 #[async_trait]
-impl ExecutorPort for NoopExecutor {
-    async fn launch(&self, _prompt: &str) -> Result<()> { Ok(()) }
+impl ExecutorPort for ExecutorAdapter {
+    async fn launch(&self, prompt: &str) -> Result<()> {
+        self.tx.send(AppCommand::LaunchExecutor { prompt: prompt.to_string() }).await.map_err(|e| anyhow::anyhow!(e.to_string()))
+    }
 }
 
 #[derive(Clone)]
@@ -48,13 +54,13 @@ pub struct CoreHandles {
     pub outbound_rx: mpsc::Receiver<protocol::Message>,
 }
 
-pub fn start_core() -> CoreHandles {
+pub fn start_core_with_executor(exec: impl ExecutorPort + Send + Sync + 'static) -> CoreHandles {
     let (in_tx, mut in_rx) = mpsc::channel::<protocol::Message>(100);
     let (out_tx, out_rx) = mpsc::channel::<protocol::Message>(100);
 
     let core = orchestrator_core::OrchestratorCore::new(
         RouterAdapter,
-        NoopExecutor,
+        exec,
         OutboundChannel(out_tx.clone()),
     );
     // Keep confirmation required; TUI will launch on confirm
@@ -70,4 +76,3 @@ pub fn start_core() -> CoreHandles {
 
     CoreHandles { inbound_tx: in_tx, outbound_rx: out_rx }
 }
-
