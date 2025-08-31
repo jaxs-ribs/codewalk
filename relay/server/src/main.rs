@@ -3,7 +3,7 @@ mod websocket;
 
 use anyhow::Result;
 use axum::{
-    extract::{Extension, Json},
+    extract::{Extension, Json, Query},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -101,6 +101,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/api/register", post(register_session))
         .route("/api/transcripts", post(ingest_transcript))
+        .route("/api/logs", get(get_logs))
         .route("/api/session/:id", axum::routing::delete(kill_session))
         .route("/health", get(health_check))
         .route("/ws", get(handle_websocket))
@@ -169,6 +170,78 @@ async fn register_session(Extension(state): Extension<AppState>) -> impl IntoRes
 
 async fn health_check() -> impl IntoResponse {
     Json(json!({ "ok": true }))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct GetLogsQuery {
+    #[serde(rename = "sid")] session_id: String,
+    #[serde(rename = "tok")] token: String,
+    #[serde(default)] limit: Option<usize>,
+}
+
+/// Request logs from the workstation over the relay channel and wait for a response.
+async fn get_logs(
+    Extension(state): Extension<AppState>,
+    Query(q): Query<GetLogsQuery>,
+) -> impl IntoResponse {
+    // Validate session
+    match Session::load(&q.session_id, &state.redis).await {
+        Ok(Some(sess)) if sess.token == q.token => {}
+        _ => return (StatusCode::FORBIDDEN, Json(json!({"error":"invalid_session"}))).into_response(),
+    }
+
+    let limit = q.limit.unwrap_or(100).max(1).min(200);
+    let corr = Uuid::new_v4().to_string();
+    let channel = format!("ch:{}", q.session_id);
+
+    // Publish a frame as if coming from the phone role
+    let frame = serde_json::json!({
+        "type": "get_logs",
+        "id": corr,
+        "limit": limit,
+    })
+    .to_string();
+    let relay_msg = RelayMessage {
+        msg_type: "frame".to_string(),
+        sid: q.session_id.clone(),
+        from_role: "phone".to_string(),
+        at: chrono::Utc::now().timestamp(),
+        frame: Some(frame),
+        b64: Some(false),
+    };
+    let payload = serde_json::to_string(&relay_msg).unwrap_or_else(|_| "{}".to_string());
+    let mut conn = state.redis.clone();
+    let _: () = conn.publish(&channel, payload).await.unwrap_or(()) ;
+
+    // Subscribe and wait for matching logs response
+    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+    let client = match redis::Client::open(redis_url) { Ok(c) => c, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error":"redis_client"}))).into_response() };
+    let mut pubsub = match client.get_async_pubsub().await { Ok(p) => p, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error":"redis_pubsub"}))).into_response() };
+    if pubsub.subscribe(&channel).await.is_err() {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error":"subscribe_failed"}))).into_response();
+    }
+
+    use futures::StreamExt;
+    use tokio::time::{timeout, Duration};
+    let deadline = Duration::from_secs(5);
+    while let Ok(Some(msg)) = timeout(deadline, pubsub.on_message().next()).await {
+        let payload: String = msg.get_payload().unwrap_or_default();
+        if let Ok(relay) = serde_json::from_str::<RelayMessage>(&payload) {
+            if relay.msg_type == "frame" && relay.frame.is_some() && relay.from_role == "workstation" {
+                if let Some(inner) = relay.frame {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&inner) {
+                        if v.get("type").and_then(|s| s.as_str()) == Some("logs") && v.get("replyTo").and_then(|s| s.as_str()) == Some(corr.as_str()) {
+                            let items = v.get("items").cloned().unwrap_or_else(|| serde_json::json!([]));
+                            // Best-effort TTL refresh
+                            let _ = Session::refresh(&state.redis, &q.session_id, state.session_idle_secs).await;
+                            return (StatusCode::OK, Json(json!({"items": items}))).into_response();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    (StatusCode::GATEWAY_TIMEOUT, Json(json!({"error":"timeout"}))).into_response()
 }
 
 #[derive(Debug, serde::Deserialize)]

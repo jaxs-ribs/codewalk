@@ -8,21 +8,21 @@ pub struct TextWrapper;
 impl TextWrapper {
     /// Wrap a single line of text to fit within MAX_LINE_WIDTH
     pub fn wrap_line(line: &str) -> Vec<String> {
-        if line.len() <= MAX_LINE_WIDTH {
+        if line.chars().count() <= MAX_LINE_WIDTH {
             return vec![line.to_string()];
         }
         
         // Check if line has a prefix we should preserve
         let (prefix, content) = Self::extract_prefix(line);
-        let prefix_len = prefix.len();
+        let prefix_len_chars = prefix.chars().count();
         
         let mut wrapped = Vec::new();
         let mut remaining = content;
         let mut is_first = true;
         
         // Calculate available width for content
-        let first_line_width = MAX_LINE_WIDTH.saturating_sub(prefix_len);
-        let continuation_width = MAX_LINE_WIDTH.saturating_sub(CONTINUATION_INDENT.len());
+        let first_line_width = MAX_LINE_WIDTH.saturating_sub(prefix_len_chars);
+        let continuation_width = MAX_LINE_WIDTH.saturating_sub(CONTINUATION_INDENT.chars().count());
         
         while !remaining.is_empty() {
             let available_width = if is_first { first_line_width } else { continuation_width };
@@ -78,29 +78,36 @@ impl TextWrapper {
     
     /// Find a good break point in the text (prefer breaking at spaces)
     fn find_break_point(text: &str, max_width: usize) -> usize {
-        if text.len() <= max_width {
+        let mut char_count = 0usize;
+        let mut fallback_end = 0usize; // byte index after the last whole char within limit
+        let mut last_space_byte: Option<usize> = None;
+        let mut last_space_chars: usize = 0;
+        let mut last_punct_byte: Option<usize> = None;
+        let mut last_punct_chars: usize = 0;
+
+        for (byte_idx, ch) in text.char_indices() {
+            let ch_len = ch.len_utf8();
+            char_count += 1;
+            let end_byte = byte_idx + ch_len;
+            if char_count <= max_width { fallback_end = end_byte; }
+            match ch {
+                ' ' => { last_space_byte = Some(byte_idx); last_space_chars = char_count; }
+                ',' | '.' | ';' | ':' | '!' | '?' | '-' | '/' | '\\' => { last_punct_byte = Some(byte_idx); last_punct_chars = char_count; }
+                _ => {}
+            }
+            if char_count >= max_width { break; }
+        }
+
+        // If the whole text fits within max_width chars
+        if text.chars().count() <= max_width {
             return text.len();
         }
-        
-        // Try to break at a space
-        if let Some(last_space) = text[..max_width].rfind(' ') {
-            // Don't break too early (at least 50% of available width)
-            if last_space > max_width / 2 {
-                return last_space + 1; // Include the space in the current line
-            }
-        }
-        
-        // Try to break at other punctuation
-        for delim in &[',', '.', ';', ':', '!', '?', '-', '/', '\\'] {
-            if let Some(pos) = text[..max_width].rfind(*delim) {
-                if pos > max_width / 2 {
-                    return pos + 1;
-                }
-            }
-        }
-        
-        // Last resort: break at max_width
-        max_width
+
+        let half = max_width / 2;
+        if let Some(b) = last_space_byte { if last_space_chars > half { return b + 1; } }
+        if let Some(b) = last_punct_byte { if last_punct_chars > half { return b + 1; } }
+        // Fallback: break at boundary after max_width-th char
+        fallback_end
     }
     
     /// Wrap multiple lines

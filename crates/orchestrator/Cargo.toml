@@ -40,6 +40,7 @@ lazy_static = "1.4"
 tokio-tungstenite = "0.23"
 futures-util = "0.3"
 url = "2"
+once_cell = "1.19"
 
 [features]
 # Build the full TUI by default and keep mic support to avoid regressions.

@@ -6,7 +6,7 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { StatusBar, Text, useColorScheme, StyleSheet, View, Platform, Pressable, TextInput, PermissionsAndroid, Alert } from 'react-native';
+import { StatusBar, Text, useColorScheme, StyleSheet, View, Platform, Pressable, TextInput, PermissionsAndroid, Alert, ScrollView } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import AudioRecorderPlayer from 'react-native-audio-recorder-player';
 
@@ -72,6 +72,11 @@ function App() {
   const [recording, setRecording] = useState<boolean>(false);
   const [transcribing, setTranscribing] = useState<boolean>(false);
   const recorderRef = useRef<AudioRecorderPlayer | null>(null);
+  const [logsLoading, setLogsLoading] = useState<boolean>(false);
+  const [logsError, setLogsError] = useState<string>('');
+  const [logs, setLogs] = useState<Array<{ ts: number; type: string; message: string }>>([]);
+  const logsReqIdRef = useRef<string | null>(null);
+  const logsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const colors = useMemo(
     () => ({
@@ -206,6 +211,21 @@ function App() {
               // Update ack if present
               if (inner && inner.type === 'ack') {
                 setLastAck(inner.text ? String(inner.text) : JSON.stringify(inner));
+              }
+              // Handle logs response
+              if (inner && inner.type === 'logs') {
+                const replyTo: string | undefined = inner?.replyTo;
+                if (!replyTo || replyTo === logsReqIdRef.current) {
+                  const items: any[] = Array.isArray(inner.items) ? inner.items : [];
+                  setLogs(items.map((it) => ({
+                    ts: Number(it?.ts) || Date.now(),
+                    type: String(it?.type || 'unknown'),
+                    message: String(it?.message || ''),
+                  })));
+                  if (logsTimeoutRef.current) { clearTimeout(logsTimeoutRef.current); logsTimeoutRef.current = null; }
+                  setLogsLoading(false);
+                  setLogsError('');
+                }
               }
               setLastPayload(typeof inner === 'string' ? inner : JSON.stringify(inner));
             } catch {
@@ -389,6 +409,31 @@ function App() {
     }
   };
 
+  const getLogs = () => {
+    if (!wsRef.current || wsState !== 'open') {
+      setLogsError('not connected');
+      return;
+    }
+    try {
+      const id = Math.random().toString(36).slice(2);
+      logsReqIdRef.current = id;
+      setLogsLoading(true);
+      setLogsError('');
+      // send request over WS like other app messages
+      const payload = { type: 'get_logs', id, limit: 200 } as any;
+      wsRef.current.send(JSON.stringify(payload));
+      // timeout safety
+      if (logsTimeoutRef.current) { clearTimeout(logsTimeoutRef.current); }
+      logsTimeoutRef.current = setTimeout(() => {
+        setLogsLoading(false);
+        setLogsError('timeout');
+      }, 6000);
+    } catch (e) {
+      setLogsLoading(false);
+      setLogsError(String(e));
+    }
+  };
+
   const pillBg = status === 'connected' ? colors.good : status === 'disconnected' ? colors.bad : colors.dim;
   const subtitle = lastCheckedAt
     ? `Last checked ${lastCheckedAt.toLocaleTimeString()}${latencyMs != null ? ` • ${latencyMs} ms` : ''}`
@@ -439,6 +484,35 @@ function App() {
         <Pressable onPress={sendNote} disabled={wsState !== 'open'} style={[styles.btn, { backgroundColor: wsState === 'open' ? '#2563eb' : '#9ca3af' }]}>
           <Text style={styles.btnText}>Send</Text>
         </Pressable>
+      </View>
+      <View style={[styles.row, { marginTop: 8 }]}> 
+        <Pressable onPress={getLogs} style={[styles.btn, { backgroundColor: '#7c3aed' }]}>
+          <Text style={styles.btnText}>{logsLoading ? 'Loading…' : 'Get Logs'}</Text>
+        </Pressable>
+      </View>
+      <View style={[styles.logsBox, { borderColor: colors.dim, backgroundColor: isDarkMode ? '#0b0b0b' : '#f8fafc' }]}> 
+        <Text style={[styles.sectionTitle, { color: colors.fg }]}>Logs</Text>
+        {logsError ? (
+          <Text style={[styles.caption, { color: colors.bad }]} numberOfLines={2}>Error: {logsError}</Text>
+        ) : null}
+        {!logsLoading && logs.length === 0 && !logsError ? (
+          <Text style={[styles.caption, { color: colors.dim }]}>no logs to display yet</Text>
+        ) : null}
+        {logs.length > 0 ? (
+          <ScrollView style={{ maxHeight: 180, marginTop: 6 }}>
+            {logs.map((l, idx) => {
+              const d = new Date(l.ts);
+              const hh = String(d.getHours()).padStart(2, '0');
+              const mm = String(d.getMinutes()).padStart(2, '0');
+              const ss = String(d.getSeconds()).padStart(2, '0');
+              return (
+                <Text key={idx} style={[styles.logLine, { color: colors.fg }]}>
+                  {hh}:{mm}:{ss} [{l.type}] {l.message}
+                </Text>
+              );
+            })}
+          </ScrollView>
+        ) : null}
       </View>
       {transcribing ? (
         <Text style={[styles.caption, { color: colors.dim, marginTop: 8 }]}>Transcribing...</Text>
@@ -570,6 +644,17 @@ const styles = StyleSheet.create({
   detailsBox: {
     marginTop: 8,
     width: '90%',
+  },
+  logsBox: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    width: '90%',
+  },
+  logLine: {
+    fontSize: 12,
+    marginVertical: 2,
   },
 });
 

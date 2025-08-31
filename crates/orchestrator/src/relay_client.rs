@@ -1,8 +1,9 @@
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, broadcast};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
+use once_cell::sync::OnceCell;
 
 #[derive(Clone, Debug)]
 pub struct RelayConfig {
@@ -25,6 +26,10 @@ pub enum RelayEvent {
 
 pub async fn start(config: RelayConfig) -> Result<mpsc::Receiver<RelayEvent>> {
     let (tx, rx) = mpsc::channel::<RelayEvent>(200);
+    // Broadcast channel for outbound frames; per-connection receivers subscribe()
+    let (out_tx, _): (broadcast::Sender<String>, broadcast::Receiver<String>) = broadcast::channel(200);
+    // Stash sender globally for simple access without changing callers
+    let _ = OUT_SENDER.set(out_tx);
     let cfg = config.clone();
 
     tokio::spawn(async move {
@@ -49,6 +54,25 @@ pub async fn start(config: RelayConfig) -> Result<mpsc::Receiver<RelayEvent>> {
                             tokio::time::sleep(std::time::Duration::from_secs(hb_secs)).await;
                             let mut guard = write_for_hb.lock().await;
                             if guard.send(Message::Text("{\"type\":\"hb\"}".to_string())).await.is_err() { break; }
+                        }
+                    });
+
+                    // Outbound sender task: forward app frames to websocket
+                    let write_for_out = write.clone();
+                    // subscribe to outbound frames for this connection
+                    let mut out_rx = OUT_SENDER.get().unwrap().subscribe();
+                    let send_task = tokio::spawn(async move {
+                        loop {
+                            match out_rx.recv().await {
+                                Ok(frame) => {
+                                    let mut guard = write_for_out.lock().await;
+                                    if guard.send(Message::Text(frame)).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                Err(broadcast::error::RecvError::Closed) => break,
+                                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                            }
                         }
                     });
 
@@ -88,6 +112,7 @@ pub async fn start(config: RelayConfig) -> Result<mpsc::Receiver<RelayEvent>> {
                         }
                     }
                     hb_task.abort();
+                    send_task.abort();
                     // fallthrough to reconnect
                 }
                 Err(e) => { let _ = tx.send(RelayEvent::Error(format!("connect failed: {}", e))).await; }
@@ -114,4 +139,13 @@ pub fn load_config_from_env() -> Result<Option<RelayConfig>> {
     };
     let hb_secs = std::env::var("RELAY_HB_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(20);
     Ok(Some(RelayConfig { ws, sid, tok, hb_secs }))
+}
+
+// Minimal global sender to emit frames over the relay socket from elsewhere in the app
+static OUT_SENDER: OnceCell<broadcast::Sender<String>> = OnceCell::new();
+
+pub fn send_frame(text: String) {
+    if let Some(tx) = OUT_SENDER.get() {
+        let _ = tx.send(text);
+    }
 }

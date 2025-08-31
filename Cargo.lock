@@ -2333,6 +2333,7 @@ dependencies = [
  "crossterm",
  "futures-util",
  "lazy_static",
+ "once_cell",
  "orchestrator-core",
  "protocol",
  "ratatui",

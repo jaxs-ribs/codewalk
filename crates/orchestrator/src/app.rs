@@ -343,6 +343,44 @@ impl App {
                 ExecutorOutput::Stdout(line) => {
                     // Structured logs are handled by log monitor. Echo line for context.
                     self.append_output(format!("{}: {}", self.center.executor.name(), line));
+                    // Attempt to parse Claude stream-json lines and convert to session logs
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                        // Map type
+                        let typ = match v.get("type").and_then(|s| s.as_str()).unwrap_or("") {
+                            "user" | "user_message" => control_center::LogType::UserMessage,
+                            "assistant" | "assistant_message" => control_center::LogType::AssistantMessage,
+                            "tool_call" | "tool_use" => control_center::LogType::ToolCall,
+                            "tool_result" | "tool_response" => control_center::LogType::ToolResult,
+                            "status" => control_center::LogType::Status,
+                            "error" => control_center::LogType::Error,
+                            _ => control_center::LogType::Unknown,
+                        };
+                        // Extract human-friendly message
+                        let msg = if let Some(m) = v.get("message").and_then(|s| s.as_str()) {
+                            m.to_string()
+                        } else if let Some(content) = v.get("content") {
+                            if let Some(s) = content.as_str() { s.to_string() } else if let Some(obj) = content.as_object() {
+                                obj.get("text").and_then(|x| x.as_str()).unwrap_or("").to_string()
+                            } else { serde_json::to_string(content).unwrap_or_default() }
+                        } else { String::new() };
+                        let log = control_center::ParsedLogLine {
+                            timestamp: std::time::SystemTime::now(),
+                            entry_type: typ,
+                            content: if msg.is_empty() { line.clone() } else { msg },
+                            raw: line.clone(),
+                        };
+                        self.session_logs.push(log);
+                        if self.log_scroll.auto_scroll {
+                            self.log_scroll.scroll_to_bottom(self.session_logs.len().saturating_sub(1));
+                        }
+                        // Trim to cap
+                        const MAX_LOGS: usize = 1000;
+                        if self.session_logs.len() > MAX_LOGS {
+                            let remove_count = self.session_logs.len() - MAX_LOGS;
+                            self.session_logs.drain(0..remove_count);
+                            if self.log_scroll.offset >= remove_count { self.log_scroll.offset -= remove_count; } else { self.log_scroll.offset = 0; }
+                        }
+                    }
                 }
                 ExecutorOutput::Stderr(line) => {
                     self.append_output(format!("{} {} error: {}", prefixes::WARN, self.center.executor.name(), line));
@@ -549,7 +587,7 @@ impl App {
                     RelayEvent::SessionKilled => self.append_output(format!("{} session killed", prefixes::RELAY)),
                     RelayEvent::Error(e) => self.append_output(format!("{} error: {}", prefixes::RELAY, e)),
                     RelayEvent::Frame(text) => {
-                        // Try to parse protocol message and forward to core
+                        // Try to parse known frames
                         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
                             if v.get("type").and_then(|s| s.as_str()) == Some("user_text") {
                                 let preview = v.get("text").and_then(|s| s.as_str()).unwrap_or("");
@@ -560,6 +598,59 @@ impl App {
                                         let _ = tx.send(msg).await;
                                     }
                                 }
+                                continue;
+                            }
+                            if v.get("type").and_then(|s| s.as_str()) == Some("get_logs") {
+                                let reply_id = v.get("id").and_then(|s| s.as_str()).unwrap_or("").to_string();
+                                let mut limit = v.get("limit").and_then(|n| n.as_u64()).unwrap_or(100);
+                                if limit == 0 { limit = 1; }
+                                if limit > 200 { limit = 200; }
+                                // Collect latest N logs from memory
+                                let mut items: Vec<serde_json::Value> = Vec::new();
+                                for log in self.session_logs.iter().rev().take(limit as usize) {
+                                    let ts_ms = match log.timestamp.duration_since(std::time::UNIX_EPOCH) {
+                                        Ok(d) => d.as_millis() as u64,
+                                        Err(_) => 0,
+                                    };
+                                    let typ = match log.entry_type {
+                                        control_center::LogType::UserMessage => "user",
+                                        control_center::LogType::AssistantMessage => "assistant",
+                                        control_center::LogType::ToolCall => "tool_call",
+                                        control_center::LogType::ToolResult => "tool_result",
+                                        control_center::LogType::Status => "status",
+                                        control_center::LogType::Error => "error",
+                                        control_center::LogType::Unknown => "unknown",
+                                    };
+                                    items.push(serde_json::json!({
+                                        "ts": ts_ms,
+                                        "type": typ,
+                                        "message": log.content,
+                                    }));
+                                }
+                                // If no logs yet, return a few placeholder entries to validate end-to-end flow
+                                if items.is_empty() {
+                                    let now_ms: u64 = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) { Ok(d) => d.as_millis() as u64, Err(_) => 0 };
+                                    let count = std::cmp::min(3usize, limit as usize);
+                                    let placeholders = [
+                                        "No logs yet — placeholder entry",
+                                        "Try launching an executor or sending a command",
+                                        "This is a test log to confirm wiring",
+                                    ];
+                                    for i in 0..count {
+                                        let msg = placeholders.get(i).unwrap_or(&"placeholder");
+                                        items.push(serde_json::json!({
+                                            "ts": now_ms.saturating_sub(((count - i) as u64) * 1000),
+                                            "type": "status",
+                                            "message": *msg,
+                                        }));
+                                    }
+                                }
+                                let resp = serde_json::json!({
+                                    "type": "logs",
+                                    "replyTo": reply_id,
+                                    "items": items,
+                                });
+                                crate::relay_client::send_frame(resp.to_string());
                                 continue;
                             }
                         }
