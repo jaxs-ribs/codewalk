@@ -26,6 +26,15 @@ async fn main() -> Result<()> {
     // wait for hello-ack
     let _ack_ok = wait_for(&mut read, |v| v.get("type").and_then(|s| s.as_str()) == Some("hello-ack"), 5).await?;
 
+    // optional wait-for-kill only
+    if std::env::var("BOT_WAIT_KILL").unwrap_or_default() == "1" {
+        eprintln!("\x1b[33m[bot]\x1b[0m waiting for session-killed…");
+        let killed = wait_for(&mut read, |v| v.get("type").and_then(|s| s.as_str()) == Some("session-killed"), 10).await?;
+        if !killed { anyhow::bail!("no session-killed"); }
+        eprintln!("\x1b[32m[bot]\x1b[0m got session-killed");
+        return Ok(());
+    }
+
     // send user_text
     let ut = json!({"type":"user_text","text":text,"final":true,"source":"phone"}).to_string();
     write.send(Message::Text(ut)).await?;
@@ -42,6 +51,7 @@ async fn main() -> Result<()> {
         false
     }, 10).await?;
     if !got_ack { anyhow::bail!("no ack from workstation"); }
+    eprintln!("\x1b[32m[bot]\x1b[0m ack received");
 
     Ok(())
 }
@@ -63,4 +73,3 @@ where
         }
     }
 }
-
