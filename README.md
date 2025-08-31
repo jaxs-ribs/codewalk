@@ -57,6 +57,21 @@ Examples
 - Headless build: `cargo build -p orchestrator --no-default-features`
 - TUI without mic: `cargo build -p orchestrator --no-default-features --features tui,tui-input`
 
+One-Command E2E
+
+For fast local verification without simulators, use the E2E runner. It launches the relay server, the headless orchestrator, and a headless phone client that sends a `user_text` and expects an `ack`.
+
+1) Ensure `./.env` has `RELAY_WS_URL`, `RELAY_SESSION_ID`, `RELAY_TOKEN`.
+2) Quick test:
+
+   cargo run -p xtask -- e2e quick --text 'build a small cli tool please'
+
+3) Full test (also kills the session):
+
+   cargo run -p xtask -- e2e full --text 'build a small cli tool please'
+
+See `xtask/README.md` and `relay/client-mobile/README.md` for details.
+
 ## Architecture
 
 The project is organized as a Rust workspace with three independent crates:
@@ -180,6 +195,12 @@ cargo test -p tui-app
 
 # Test everything
 cargo test --workspace
+```
+
+End-to-End (no simulator)
+
+```bash
+cargo run -p xtask -- e2e quick --text 'build a small cli tool please'
 ```
 
 ## License

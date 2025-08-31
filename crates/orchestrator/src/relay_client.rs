@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -12,6 +12,7 @@ pub struct RelayConfig {
     pub hb_secs: u64,
 }
 
+#[cfg_attr(not(feature = "tui"), allow(dead_code))]
 #[derive(Debug, Clone)]
 pub enum RelayEvent {
     Status(String),

@@ -104,6 +104,7 @@ impl TextWrapper {
     }
     
     /// Wrap multiple lines
+    #[allow(dead_code)]
     pub fn wrap_lines(lines: &[String]) -> Vec<String> {
         lines.iter()
             .flat_map(|line| Self::wrap_line(line))

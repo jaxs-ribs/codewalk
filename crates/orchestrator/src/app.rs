@@ -1,8 +1,8 @@
 use anyhow::Result;
+#[cfg(feature = "tui-stt")]
 use std::time::Duration;
 
 use crate::backend;
-use crate::core_bridge;
 use crate::constants::{self, messages, prefixes};
 use crate::relay_client::{self, RelayEvent};
 use control_center::{ExecutorConfig, ExecutorOutput};
@@ -92,6 +92,7 @@ impl App {
         }
     }
     
+    #[allow(dead_code)]
     pub fn show_error(&mut self, title: impl Into<String>, message: impl Into<String>) {
         self.error_info = Some(ErrorInfo::new(title, message));
         self.mode = Mode::ShowingError;
@@ -429,6 +430,7 @@ impl App {
         self.mode == Mode::Recording && self.recording.is_active
     }
 
+    #[allow(dead_code)]
     pub async fn confirm_executor(&mut self) -> Result<()> {
         if let Some(pending) = self.pending_executor.take() {
             self.append_output(format!("{} Confirmed. Launching {}...", prefixes::EXEC, pending.executor_name));

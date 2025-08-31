@@ -1,5 +1,7 @@
+#[cfg(feature = "tui-stt")]
 use std::time::Instant;
 
+#[cfg_attr(not(feature = "tui"), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
 pub enum ScrollDirection {
     Up,
@@ -10,6 +12,7 @@ pub enum ScrollDirection {
     End,
 }
 
+#[cfg_attr(not(feature = "tui"), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Mode {
     Idle,
@@ -59,11 +62,13 @@ impl RecordingState {
     }
 }
 
+#[cfg_attr(not(feature = "tui"), allow(dead_code))]
 pub struct PlanState {
     pub json: Option<String>,
     pub command: Option<String>,
 }
 
+#[cfg_attr(not(feature = "tui"), allow(dead_code))]
 #[derive(Debug, Clone)]
 pub struct PendingExecutor {
     pub prompt: String,
@@ -89,6 +94,7 @@ impl PlanState {
     }
 }
 
+#[cfg_attr(not(feature = "tui"), allow(dead_code))]
 #[derive(Debug, Clone)]
 pub struct ErrorInfo {
     pub title: String,
@@ -111,6 +117,7 @@ impl ErrorInfo {
     }
 }
 
+#[cfg_attr(not(feature = "tui"), allow(dead_code))]
 pub struct ScrollState {
     pub offset: usize,
     pub auto_scroll: bool,
