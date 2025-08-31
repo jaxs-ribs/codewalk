@@ -20,7 +20,7 @@ async fn e2e(args: &[String]) -> Result<()> {
     let mode = args.get(0).map(String::as_str).unwrap_or("quick");
     let text = args.iter().skip_while(|s| *s != "--text").nth(1).cloned().unwrap_or_else(|| "build a small cli tool please".to_string());
 
-    println!("[e2e] Building workspace (warnings as errors)…");
+    println!("\x1b[36m[e2e]\x1b[0m Building workspace (warnings as errors)…");
     let mut build = Command::new("cargo")
         .arg("build").arg("--workspace")
         .env("RUSTFLAGS", "-D warnings")
@@ -38,7 +38,7 @@ async fn e2e(args: &[String]) -> Result<()> {
     let tok = get_env(&env, "RELAY_TOKEN")?;
 
     // Spawn relay server
-    println!("[e2e] Starting relay-server at {}…", &ws);
+    println!("\x1b[36m[e2e]\x1b[0m Starting relay-server at {}…", &ws);
     let mut relay = Command::new("cargo")
         .arg("run").arg("-p").arg("relay-server")
         .stdout(Stdio::inherit()).stderr(Stdio::inherit())
@@ -46,11 +46,11 @@ async fn e2e(args: &[String]) -> Result<()> {
 
     // Wait for health
     let health = ws_to_health(&ws);
-    println!("[e2e] Waiting for relay health: {}", &health);
+    println!("\x1b[36m[e2e]\x1b[0m Waiting for relay health: {}", &health);
     wait_health(&health, Duration::from_secs(20)).await.context("relay health")?;
 
     // Spawn headless orchestrator
-    println!("[e2e] Starting orchestrator (headless)…");
+    println!("\x1b[36m[e2e]\x1b[0m Starting orchestrator (headless)…");
     let mut orch = Command::new("cargo")
         .arg("run").arg("-p").arg("orchestrator").arg("--no-default-features")
         .env("RUSTFLAGS", "-A warnings")
@@ -61,11 +61,11 @@ async fn e2e(args: &[String]) -> Result<()> {
         .spawn().context("spawn orchestrator")?;
 
     // Small delay for websocket to connect
-    println!("[e2e] Giving orchestrator time to connect…");
+    println!("\x1b[36m[e2e]\x1b[0m Giving orchestrator time to connect…");
     sleep(Duration::from_millis(700)).await;
 
     // Run phone-bot (sends user_text and waits for ack)
-    println!("[e2e] Running phone-bot with text: {}", &text);
+    println!("\x1b[36m[e2e]\x1b[0m Running phone-bot with text: {}", &text);
     let status = Command::new("cargo")
         .arg("run").arg("-p").arg("relay-client-mobile")
         .arg("--bin").arg("relay-phone-bot")
@@ -80,15 +80,29 @@ async fn e2e(args: &[String]) -> Result<()> {
     if !ok { cleanup(&mut relay, &mut orch).await; anyhow::bail!("phone-bot failed"); }
 
     if mode == "full" {
-        // Kill session and ensure bot can see session-killed: for now just hit endpoint
+        // Spawn a waiter that connects and waits for session-killed
+        println!("\x1b[36m[e2e]\x1b[0m Spawning phone-bot waiter for session-killed…");
+        let mut waiter = Command::new("cargo")
+            .arg("run").arg("-p").arg("relay-client-mobile")
+            .arg("--bin").arg("relay-phone-bot")
+            .env("RUSTFLAGS", "-A warnings")
+            .env("RELAY_WS_URL", &ws)
+            .env("RELAY_SESSION_ID", &sid)
+            .env("RELAY_TOKEN", &tok)
+            .env("BOT_WAIT_KILL", "1")
+            .stdout(Stdio::inherit()).stderr(Stdio::inherit())
+            .spawn().context("spawn waiter")?;
+        sleep(Duration::from_millis(800)).await;
         let kill_url = format!("http://{}/api/session/{}", ws_to_http_host(&ws), sid);
-        println!("[e2e] Killing session via {}", &kill_url);
+        println!("\x1b[36m[e2e]\x1b[0m Killing session via {}", &kill_url);
         let resp = reqwest::Client::new().delete(kill_url).send().await?;
         if resp.status() != 204 { eprintln!("warn: kill session status {}", resp.status()); }
+        let status = waiter.wait().await?;
+        if !status.success() { cleanup(&mut relay, &mut orch).await; anyhow::bail!("waiter did not observe session-killed"); }
     }
 
     cleanup(&mut relay, &mut orch).await;
-    println!("E2E({}) PASS", mode);
+    println!("\x1b[32mE2E({}) PASS\x1b[0m", mode);
     Ok(())
 }
 
