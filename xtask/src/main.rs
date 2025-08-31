@@ -79,6 +79,22 @@ async fn e2e(args: &[String]) -> Result<()> {
     let ok = status.success();
     if !ok { cleanup(&mut relay, &mut orch).await; anyhow::bail!("phone-bot failed"); }
 
+    // Also validate the JS mobile-core client (build + run)
+    println!("\x1b[36m[e2e]\x1b[0m Building mobile-core (TypeScript)…");
+    let status = Command::new("npm").arg("install").current_dir("packages/mobile-core").status().await?;
+    if !status.success() { cleanup(&mut relay, &mut orch).await; anyhow::bail!("npm install mobile-core failed"); }
+    let status = Command::new("npm").arg("run").arg("build").current_dir("packages/mobile-core").status().await?;
+    if !status.success() { cleanup(&mut relay, &mut orch).await; anyhow::bail!("npm build mobile-core failed"); }
+    println!("\x1b[36m[e2e]\x1b[0m Running mobile-core-bot (Node)…");
+    let status = Command::new("node")
+        .arg("tools/mobile-core-bot.mjs")
+        .env("RELAY_WS_URL", &ws)
+        .env("RELAY_SESSION_ID", &sid)
+        .env("RELAY_TOKEN", &tok)
+        .env("BOT_TEXT", &text)
+        .status().await?;
+    if !status.success() { cleanup(&mut relay, &mut orch).await; anyhow::bail!("mobile-core bot failed"); }
+
     if mode == "full" {
         // Spawn a waiter that connects and waits for session-killed
         println!("\x1b[36m[e2e]\x1b[0m Spawning phone-bot waiter for session-killed…");

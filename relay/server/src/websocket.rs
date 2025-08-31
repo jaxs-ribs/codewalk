@@ -87,7 +87,13 @@ async fn websocket_handler(socket: WebSocket, state: AppState) {
         let msg = match msg {
             Ok(msg) => msg,
             Err(e) => {
-                error!("WebSocket error: {}", e);
+                let es = e.to_string();
+                if es.contains("Connection reset without closing handshake") {
+                    // normal during tests when client exits quickly
+                    tracing::debug!("WebSocket closed abruptly (normal in tests)");
+                } else {
+                    error!("WebSocket error: {}", es);
+                }
                 break;
             }
         };

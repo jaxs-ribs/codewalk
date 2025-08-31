@@ -32,6 +32,7 @@ async fn main() -> Result<()> {
         let killed = wait_for(&mut read, |v| v.get("type").and_then(|s| s.as_str()) == Some("session-killed"), 10).await?;
         if !killed { anyhow::bail!("no session-killed"); }
         eprintln!("\x1b[32m[bot]\x1b[0m got session-killed");
+        let _ = write.send(Message::Close(None)).await;
         return Ok(());
     }
 
@@ -52,6 +53,7 @@ async fn main() -> Result<()> {
     }, 10).await?;
     if !got_ack { anyhow::bail!("no ack from workstation"); }
     eprintln!("\x1b[32m[bot]\x1b[0m ack received");
+    let _ = write.send(Message::Close(None)).await;
 
     Ok(())
 }

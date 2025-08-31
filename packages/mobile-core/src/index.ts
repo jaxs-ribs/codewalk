@@ -23,8 +23,8 @@ export type WebSocketCtor = new (url: string) => { onopen: any; onmessage: any; 
 export function connect(opts: { ws: string, sid: string, tok: string, WebSocket: WebSocketCtor }): Client {
   const { ws, sid, tok, WebSocket } = opts
   const wsock = new WebSocket(ws)
-  const handlers: { [K in keyof Events]?: Listener<any>[] } = {}
-  const emit = <K extends keyof Events>(ev: K, arg: Events[K]) => (handlers[ev] || []).forEach(fn => fn(arg))
+  const handlers: Record<string, Function[]> = {}
+  const emit = (ev: keyof Events, arg: any) => (handlers[ev as string] || []).forEach(fn => (fn as any)(arg))
 
   wsock.onopen = () => {
     emit('open', undefined as any)
@@ -51,10 +51,9 @@ export function connect(opts: { ws: string, sid: string, tok: string, WebSocket:
   wsock.onclose = () => {}
 
   return {
-    on(ev, fn) { (handlers[ev] ||= []).push(fn) },
-    off(ev, fn) { const a = handlers[ev]; if (!a) return; const i = a.indexOf(fn); if (i >= 0) a.splice(i, 1) },
+    on(ev, fn) { (handlers[ev as string] ||= []).push(fn as any) },
+    off(ev, fn) { const a = handlers[ev as string]; if (!a) return; const i = a.indexOf(fn as any); if (i >= 0) a.splice(i, 1) },
     sendUserText(text: string) { wsock.send(JSON.stringify({ type: 'user_text', text, final: true, source: 'phone' })) },
     close() { try { wsock.close() } catch {} }
   }
 }
-
