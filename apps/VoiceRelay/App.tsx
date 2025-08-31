@@ -252,7 +252,7 @@ function App() {
     if (!wsRef.current || wsState !== 'open') return;
     const msg = (input || '').trim();
     setInput(''); // clear the input immediately
-    const payload = { type: 'note', id: 'demo-p1', text: msg || 'hello-from-phone' };
+    const payload = { type: 'user_text', text: msg || 'hello-from-phone', final: true, source: 'phone' };
     try {
       wsRef.current.send(JSON.stringify(payload));
       setLastEvent('sent:note');

@@ -22,6 +22,8 @@ use uuid::Uuid;
 
 use session::{Session, SessionStore};
 use websocket::handle_websocket;
+use websocket::RelayMessage;
+use protocol as proto;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -98,6 +100,7 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .route("/api/register", post(register_session))
+        .route("/api/transcripts", post(ingest_transcript))
         .route("/api/session/:id", axum::routing::delete(kill_session))
         .route("/health", get(health_check))
         .route("/ws", get(handle_websocket))
@@ -166,6 +169,49 @@ async fn register_session(Extension(state): Extension<AppState>) -> impl IntoRes
 
 async fn health_check() -> impl IntoResponse {
     Json(json!({ "ok": true }))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct IngestTranscriptReq {
+    #[serde(rename = "sid")] pub session_id: String,
+    #[serde(rename = "tok")] pub token: String,
+    pub text: String,
+    #[serde(default)] pub final_: bool,
+    #[serde(default)] pub source: Option<String>,
+}
+
+/// Minimal HTTP ingest for transcripts; publishes a protocol::user_text frame to the session channel.
+async fn ingest_transcript(
+    Extension(state): Extension<AppState>,
+    Json(req): Json<IngestTranscriptReq>,
+) -> impl IntoResponse {
+    // Validate session/token
+    match Session::load(&req.session_id, &state.redis).await {
+        Ok(Some(sess)) if sess.token == req.token => {
+            let inner = proto::Message::user_text(
+                req.text,
+                Some(req.source.unwrap_or_else(|| "api".to_string())),
+                req.final_,
+            );
+            // Relay as a frame from the "phone" role to reach workstation
+            let relay_msg = RelayMessage {
+                msg_type: "frame".to_string(),
+                sid: req.session_id.clone(),
+                from_role: "phone".to_string(),
+                at: chrono::Utc::now().timestamp(),
+                frame: Some(serde_json::to_string(&inner).unwrap_or_else(|_| "{}".to_string())),
+                b64: Some(false),
+            };
+            let payload = serde_json::to_string(&relay_msg).unwrap_or_default();
+            let channel = format!("ch:{}", req.session_id);
+            let mut conn = state.redis.clone();
+            let _: () = conn.publish(&channel, payload).await.unwrap_or(());
+            // Refresh TTL
+            let _ = Session::refresh(&state.redis, &req.session_id, state.session_idle_secs).await;
+            (StatusCode::ACCEPTED, Json(json!({"ok": true})))
+        }
+        _ => (StatusCode::FORBIDDEN, Json(json!({"error": "invalid_session"}))),
+    }
 }
 
 async fn kill_session(

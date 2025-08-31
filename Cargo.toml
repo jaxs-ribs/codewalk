@@ -5,6 +5,7 @@ members = [
     "crates/stt", 
     "crates/router",
     "crates/llm",
+    "crates/protocol",
     "relay/server",
     "relay/client-workstation",
     "relay/client-mobile",

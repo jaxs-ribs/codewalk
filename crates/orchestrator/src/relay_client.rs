@@ -108,11 +108,8 @@ pub async fn start(config: RelayConfig) -> Result<mpsc::Receiver<RelayEvent>> {
                                             if let Some(frame_str) = v.get("frame").and_then(|s| s.as_str()) {
                                                 let _ = tx.send(RelayEvent::Frame(frame_str.to_string())).await;
                                                 if let Ok(inner) = serde_json::from_str::<Value>(frame_str) {
-                                                    if inner
-                                                        .get("type")
-                                                        .and_then(|s| s.as_str())
-                                                        == Some("note")
-                                                    {
+                                                    let inner_type = inner.get("type").and_then(|s| s.as_str());
+                                                    if matches!(inner_type, Some("note") | Some("user_text")) {
                                                         // Best-effort ack
                                                         let reply_to = inner
                                                             .get("id")

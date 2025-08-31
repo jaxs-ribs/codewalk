@@ -1,6 +1,6 @@
 VoiceRelay Mobile (React Native)
 
-Minimal React Native app that connects to the relay using a single shared .env at the repo root. It shows connectivity, opens a WebSocket, and lets you send a note to the workstation.
+Minimal React Native app that connects to the relay using a single shared .env at the repo root. It shows connectivity, opens a WebSocket, and lets you send a `user_text` message to the workstation.
 
 Unified Config (.env at repo root)
 
@@ -34,7 +34,7 @@ What You Should See
 
 - Status pill shows Connected once relay is up
 - Details panel displays WS, sid, tok from .env
-- Typing a message and pressing Send emits a `note`; the workstation replies with `ack: received`
+- Typing a message and pressing Send emits a `user_text`; the workstation replies with `ack: received`
 
 Troubleshooting
 

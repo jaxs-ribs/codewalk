@@ -71,8 +71,8 @@ Rules
     - `{ "type":"frame", "sid":"<sessionId>", "fromRole":"workstation", "at":<unix_ts>, "frame":"hi-from-workstation", "b64":false }`
 
 - Send text payloads (to workstation):
-  - Client sends plain text (e.g., `"hi-from-phone"`).
-  - Workstation receives wrapped relay frame with `fromRole:"phone"`.
+  - Preferred: send protocol JSON like `{ "type":"user_text", "text":"hello", "final":true, "source":"phone" }`.
+  - Workstation receives wrapped relay frame with `fromRole:"phone"` and the inner JSON in `frame`.
 
 - Heartbeat: send `{ "type":"hb" }` periodically; expect optional `{ "type":"hb-ack" }`.
 
@@ -128,6 +128,20 @@ Requires: Python 3, `pip install requests websockets`.
 Notes
 - curl examples cover HTTP endpoints; WebSocket messaging examples show the exact JSON frames exchanged once connected.
 - Environment: `PORT` (3001), `REDIS_URL` (redis://127.0.0.1:6379), `PUBLIC_WS_URL` (ws://localhost:PORT/ws), `SESSION_IDLE_SECS` (7200), `HEARTBEAT_INTERVAL_SECS` (30).
+
+## Transcript Ingest API (HTTP)
+
+For simple ingestion without a WebSocket client, you can POST transcripts to the relay and it will publish a `user_text` frame to the workstation side of the session.
+
+- Endpoint: `POST /api/transcripts`
+- Body (JSON): `{ "sid": "<sessionId>", "tok": "<token>", "text": "hello world", "final": true, "source": "api" }`
+- Response: `202 Accepted` with `{ "ok": true }` if accepted; `403` if invalid session/token.
+
+Example:
+
+  curl -s -X POST http://localhost:3001/api/transcripts \
+    -H 'Content-Type: application/json' \
+    -d '{"sid":"'$RELAY_SESSION_ID'","tok":"'$RELAY_TOKEN'","text":"hello from http","final":true,"source":"api"}' | jq
 
 ## Minimal Demo Pipeline
 

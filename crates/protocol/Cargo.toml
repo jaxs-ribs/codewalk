@@ -1,0 +1,14 @@
+[package]
+name = "protocol"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+schemars = { version = "0.8", features = ["derive"], optional = true }
+
+[features]
+schema = ["schemars"]
+
