@@ -31,11 +31,20 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
     }
 
     async fn handle_user_text(&self, ut: protocol::UserText) -> Result<()> {
-        let text = ut.text.trim();
-        if text.is_empty() { return Ok(()); }
+        // Simplified: treat every message as final; ignore id/partial.
+        let text_trim = ut.text.trim();
+        if text_trim.is_empty() { return Ok(()); }
 
-        // Route the text
-        let decision = self.router.route(text).await?;
+        // Route the text (send error status on failure)
+        let decision = match self.router.route(text_trim).await {
+            Ok(d) => d,
+            Err(e) => {
+                let _ = self.outbound.send(protocol::Message::Status(protocol::Status{
+                    v: Some(protocol::VERSION), level: "error".into(), text: format!("router error: {}", e)
+                })).await;
+                return Ok(());
+            }
+        };
         match decision.action {
             RouteAction::CannotParse => {
                 let reason = decision.reason.unwrap_or_else(|| "could not understand".to_string());
@@ -46,7 +55,7 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
                 })).await
             }
             RouteAction::LaunchClaude => {
-                let prompt = decision.prompt.unwrap_or_else(|| text.to_string());
+                let prompt = decision.prompt.unwrap_or_else(|| text_trim.to_string());
                 if self.require_confirmation {
                     // store pending prompt
                     *self.pending_exec_prompt.lock().unwrap() = Some(prompt.clone());

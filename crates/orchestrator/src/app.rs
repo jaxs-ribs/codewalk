@@ -550,6 +550,9 @@ impl App {
                         // Try to parse protocol message and forward to core
                         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
                             if v.get("type").and_then(|s| s.as_str()) == Some("user_text") {
+                                let preview = v.get("text").and_then(|s| s.as_str()).unwrap_or("");
+                                let preview = if preview.len() > 60 { format!("{}…", &preview[..60]) } else { preview.to_string() };
+                                self.append_output(format!("{} user_text: {}", prefixes::RELAY, preview));
                                 if let Some(tx) = &self.core_in_tx {
                                     if let Ok(msg) = serde_json::from_value::<protocol::Message>(v.clone()) {
                                         let _ = tx.send(msg).await;

@@ -178,6 +178,7 @@ struct IngestTranscriptReq {
     pub text: String,
     #[serde(default)] pub final_: bool,
     #[serde(default)] pub source: Option<String>,
+    #[serde(default)] pub id: Option<String>,
 }
 
 /// Minimal HTTP ingest for transcripts; publishes a protocol::user_text frame to the session channel.
@@ -188,11 +189,13 @@ async fn ingest_transcript(
     // Validate session/token
     match Session::load(&req.session_id, &state.redis).await {
         Ok(Some(sess)) if sess.token == req.token => {
-            let inner = proto::Message::user_text(
-                req.text,
-                Some(req.source.unwrap_or_else(|| "api".to_string())),
-                req.final_,
-            );
+            let inner = proto::Message::UserText(proto::UserText {
+                v: Some(proto::VERSION),
+                id: req.id.clone(),
+                text: req.text,
+                source: Some(req.source.unwrap_or_else(|| "api".to_string())),
+                final_: req.final_,
+            });
             // Relay as a frame from the "phone" role to reach workstation
             let relay_msg = RelayMessage {
                 msg_type: "frame".to_string(),

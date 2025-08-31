@@ -45,7 +45,21 @@ pub struct OutboundChannel(pub mpsc::Sender<protocol::Message>);
 #[async_trait]
 impl OutboundPort for OutboundChannel {
     async fn send(&self, msg: protocol::Message) -> Result<()> {
-        self.0.send(msg).await.map_err(|e| anyhow::anyhow!(e.to_string()))
+            match self.0.try_send(msg) {
+                Ok(()) => Ok(()),
+                Err(tokio::sync::mpsc::error::TrySendError::Full(m)) => {
+                    // Drop noisy Status when channel is full; ensure important prompts are delivered
+                    match &m {
+                        protocol::Message::Status(_) => Ok(()),
+                        _ => self.0.send(m).await.map_err(|e| anyhow::anyhow!(e.to_string())),
+                    }
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(m)) => {
+                    // Channel closed; treat as non-fatal
+                    let _ = m; // ignore
+                    Ok(())
+                }
+            }
     }
 }
 
