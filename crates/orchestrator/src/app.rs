@@ -14,6 +14,8 @@ use crate::types::RecordingState;
 use crate::utils::TextWrapper;
 use control_center::ParsedLogLine;
 use router::RouterAction;
+// For base64 decode on get_logs/stt frames
+use base64::Engine as _;
  
 
 pub struct App {
@@ -649,6 +651,39 @@ impl App {
                                     "type": "logs",
                                     "replyTo": reply_id,
                                     "items": items,
+                                });
+                                crate::relay_client::send_frame(resp.to_string());
+                                continue;
+                            }
+                            if v.get("type").and_then(|s| s.as_str()) == Some("stt_audio") {
+                                let reply_id = v.get("id").and_then(|s| s.as_str()).unwrap_or("").to_string();
+                                let mime = v.get("mime").and_then(|s| s.as_str()).unwrap_or("");
+                                let b64 = v.get("b64").and_then(|b| b.as_bool()).unwrap_or(true);
+                                let mut text_out = String::new();
+                                if let Some(data) = v.get("data").and_then(|s| s.as_str()) {
+                                    let audio_bytes = if b64 { base64::engine::general_purpose::STANDARD.decode(data).unwrap_or_default() } else { Vec::new() };
+                                    #[cfg(feature = "tui-stt")]
+                                    {
+                                        if !audio_bytes.is_empty() {
+                                            match crate::backend::voice_to_text(audio_bytes).await {
+                                                Ok(t) => {
+                                                    text_out = t;
+                                                    // Route the recognized text as a command, similar to TUI mic flow
+                                                    let _ = self.route_command(&text_out).await;
+                                                }
+                                                Err(e) => {
+                                                    self.append_output(format!("{} STT error: {}", prefixes::ASR, e));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                let resp = serde_json::json!({
+                                    "type": "stt_result",
+                                    "replyTo": reply_id,
+                                    "mime": mime,
+                                    "ok": !text_out.is_empty(),
+                                    "text": text_out,
                                 });
                                 crate::relay_client::send_frame(resp.to_string());
                                 continue;

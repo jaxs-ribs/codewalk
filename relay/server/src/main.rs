@@ -172,6 +172,7 @@ async fn health_check() -> impl IntoResponse {
     Json(json!({ "ok": true }))
 }
 
+
 #[derive(Debug, serde::Deserialize)]
 struct GetLogsQuery {
     #[serde(rename = "sid")] session_id: String,

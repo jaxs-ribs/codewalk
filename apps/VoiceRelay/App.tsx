@@ -6,9 +6,8 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { StatusBar, Text, useColorScheme, StyleSheet, View, Platform, Pressable, TextInput, PermissionsAndroid, Alert, ScrollView } from 'react-native';
+import { StatusBar, Text, useColorScheme, StyleSheet, View, Platform, Pressable, TextInput, ScrollView } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import AudioRecorderPlayer from 'react-native-audio-recorder-player';
 
 // Allow use of process.env via babel inline-dotenv
 declare const process: any;
@@ -69,9 +68,7 @@ function App() {
   const wsRef = useRef<WebSocket | null>(null);
   const hbRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [closeInfo, setCloseInfo] = useState<string>('');
-  const [recording, setRecording] = useState<boolean>(false);
-  const [transcribing, setTranscribing] = useState<boolean>(false);
-  const recorderRef = useRef<AudioRecorderPlayer | null>(null);
+  // Voice recording/STT removed
   const [logsLoading, setLogsLoading] = useState<boolean>(false);
   const [logsError, setLogsError] = useState<string>('');
   const [logs, setLogs] = useState<Array<{ ts: number; type: string; message: string }>>([]);
@@ -91,8 +88,7 @@ function App() {
 
   useEffect(() => {
     let mounted = true;
-    // Lazy init recorder to avoid native module overhead during cold start
-    recorderRef.current = new AudioRecorderPlayer();
+    // STT removed
 
     async function checkOnce() {
       const started = Date.now();
@@ -132,8 +128,7 @@ function App() {
     return () => {
       mounted = false;
       if (timerRef.current) clearInterval(timerRef.current);
-      // Ensure recorder is stopped if unmounting mid-recording
-      try { recorderRef.current?.stopRecorder(); } catch {}
+      // STT removed
     };
   }, []);
 
@@ -153,6 +148,8 @@ function App() {
       return u;
     }
   };
+
+  // STT removed
 
   const disconnect = () => {
     if (hbRef.current) {
@@ -293,121 +290,11 @@ function App() {
     }
   };
 
-  const sendTranscript = (text: string) => {
-    if (!wsRef.current || wsState !== 'open') return;
-    const payload = { type: 'user_text', text, final: true, source: 'phone' };
-    try {
-      wsRef.current.send(JSON.stringify(payload));
-      setLastEvent('sent:voice');
-      setLastPayload('');
-    } catch (e) {
-      setLastEvent('send:error');
-      setLastPayload(String(e));
-    }
-  };
+  // STT removed
 
-  const requestMicPermissionAndroid = async (): Promise<boolean> => {
-    if (Platform.OS !== 'android') return true;
-    try {
-      const granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-        {
-          title: 'Microphone Permission',
-          message: 'VoiceRelay needs access to your microphone to record audio.',
-          buttonPositive: 'OK',
-        }
-      );
-      return granted === PermissionsAndroid.RESULTS.GRANTED;
-    } catch (_) {
-      return false;
-    }
-  };
+  // STT removed
 
-  const startRecording = async () => {
-    if (recording || transcribing) return;
-    const ok = await requestMicPermissionAndroid();
-    if (!ok) {
-      Alert.alert('Permission required', 'Microphone access is needed to record.');
-      return;
-    }
-    try {
-      setRecording(true);
-      setLastEvent('rec:start');
-      setCloseInfo('');
-      const rec = recorderRef.current;
-      if (!rec) throw new Error('recorder not ready');
-      // Let native module pick a sensible default path/format (m4a/aac on both platforms)
-      await rec.startRecorder();
-    } catch (e) {
-      setRecording(false);
-      setLastEvent('rec:error');
-      setLastPayload(String(e));
-    }
-  };
-
-  const stopRecording = async () => {
-    if (!recording) return;
-    try {
-      const rec = recorderRef.current;
-      if (!rec) throw new Error('recorder not ready');
-      const path = await rec.stopRecorder();
-      setRecording(false);
-      setTranscribing(true);
-      setLastEvent('rec:stop');
-      await transcribeAndSend(path);
-    } catch (e) {
-      setRecording(false);
-      setTranscribing(false);
-      setLastEvent('recstop:error');
-      setLastPayload(String(e));
-    }
-  };
-
-  const transcribeAndSend = async (filePath: string) => {
-    try {
-      const apiKey: string | undefined = process.env.GROQ_API_KEY;
-      if (!apiKey) throw new Error('Missing GROQ_API_KEY');
-      // Normalize URI for FormData
-      const uri = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
-      // Heuristic MIME by extension
-      const lower = uri.toLowerCase();
-      const mime = lower.endsWith('.wav') ? 'audio/wav'
-        : lower.endsWith('.mp3') ? 'audio/mpeg'
-        : lower.endsWith('.m4a') ? 'audio/m4a'
-        : lower.endsWith('.aac') ? 'audio/aac'
-        : 'application/octet-stream';
-
-      const form = new FormData();
-      form.append('file', { uri, type: mime, name: 'audio' + (lower.match(/\.[a-z0-9]+$/)?.[0] || '.m4a') } as any);
-      form.append('model', 'whisper-large-v3-turbo');
-
-      const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          // Do not set Content-Type explicitly; let RN set correct multipart boundary
-        },
-        body: form,
-      });
-      if (!res.ok) {
-        const errText = await res.text().catch(() => '');
-        throw new Error(`groq ${res.status}: ${errText || res.statusText}`);
-      }
-      const data: any = await res.json();
-      const text: string = data?.text || '';
-      if (!text.trim()) throw new Error('Empty transcription');
-      sendTranscript(text);
-      setLastAck('');
-      setLastPayload('');
-      setTranscribing(false);
-      setLastEvent('stt:ok');
-    } catch (e) {
-      setTranscribing(false);
-      setLastEvent('stt:error');
-      setLastPayload(String(e));
-      Alert.alert('Transcription failed', String(e));
-    }
-  };
+  // STT removed
 
   const getLogs = () => {
     if (!wsRef.current || wsState !== 'open') {
@@ -474,13 +361,7 @@ function App() {
           placeholderTextColor={colors.dim}
           style={[styles.input, { color: colors.fg, borderColor: colors.dim, backgroundColor: isDarkMode ? '#111' : '#f7f7f7' }]}
         />
-        <Pressable
-          onPress={recording ? stopRecording : startRecording}
-          disabled={wsState !== 'open' || transcribing}
-          style={[styles.btn, { backgroundColor: transcribing ? '#9ca3af' : recording ? '#dc2626' : '#059669' }]}
-        >
-          <Text style={styles.btnText}>{transcribing ? '...' : recording ? 'Stop' : 'Rec'}</Text>
-        </Pressable>
+        {/* STT removed: record/stop button */}
         <Pressable onPress={sendNote} disabled={wsState !== 'open'} style={[styles.btn, { backgroundColor: wsState === 'open' ? '#2563eb' : '#9ca3af' }]}>
           <Text style={styles.btnText}>Send</Text>
         </Pressable>
@@ -514,9 +395,7 @@ function App() {
           </ScrollView>
         ) : null}
       </View>
-      {transcribing ? (
-        <Text style={[styles.caption, { color: colors.dim, marginTop: 8 }]}>Transcribing...</Text>
-      ) : null}
+      {/* STT removed: transcribing indicator */}
       {lastAck ? <Text style={[styles.caption, { color: colors.dim, marginTop: 8 }]}>Ack: {lastAck}</Text> : null}
 
       <Pressable onPress={() => setShowDetails((v) => !v)} style={[styles.linkBtn]}>
@@ -532,6 +411,7 @@ function App() {
           {token ? <Text style={[styles.caption, { color: colors.dim }]}>tok: {token}</Text> : null}
           {lastEvent ? <Text style={[styles.caption, { color: colors.dim }]}>Last: {lastEvent}</Text> : null}
           {closeInfo ? <Text style={[styles.caption, { color: colors.dim }]}>Close: {closeInfo}</Text> : null}
+          {/* STT removed */}
           {lastPayload ? <Text style={[styles.caption, { color: colors.dim }]} numberOfLines={3}>Payload: {lastPayload}</Text> : null}
 
           <View style={styles.row}>
