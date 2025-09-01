@@ -74,6 +74,7 @@ pub struct PendingExecutor {
     pub prompt: String,
     pub executor_name: String,
     pub working_dir: String,
+    pub confirmation_id: Option<String>,
 }
 
 impl PlanState {

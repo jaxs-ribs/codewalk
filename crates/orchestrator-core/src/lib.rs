@@ -9,12 +9,17 @@ pub struct OrchestratorCore<R: RouterPort, E: ExecutorPort, O: OutboundPort> {
     executor: E,
     outbound: O,
     require_confirmation: bool,
-    pending_exec_prompt: std::sync::Mutex<Option<String>>,
+    pending_confirmation: std::sync::Mutex<Option<PendingConfirmation>>,
+}
+
+struct PendingConfirmation {
+    id: String,
+    prompt: String,
 }
 
 impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> {
     pub fn new(router: R, executor: E, outbound: O) -> Self {
-        Self { router, executor, outbound, require_confirmation: true, pending_exec_prompt: std::sync::Mutex::new(None) }
+        Self { router, executor, outbound, require_confirmation: true, pending_confirmation: std::sync::Mutex::new(None) }
     }
 
     pub fn set_require_confirmation(&mut self, yes: bool) { self.require_confirmation = yes; }
@@ -57,10 +62,21 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
             RouteAction::LaunchClaude => {
                 let prompt = decision.prompt.unwrap_or_else(|| text_trim.to_string());
                 if self.require_confirmation {
-                    // store pending prompt
-                    *self.pending_exec_prompt.lock().unwrap() = Some(prompt.clone());
+                    // Generate unique confirmation ID
+                    let confirmation_id = format!("confirm_{}", std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis());
+                    
+                    // Store pending confirmation
+                    *self.pending_confirmation.lock().unwrap() = Some(PendingConfirmation {
+                        id: confirmation_id.clone(),
+                        prompt: prompt.clone(),
+                    });
+                    
                     self.outbound.send(protocol::Message::PromptConfirmation(protocol::PromptConfirmation {
                         v: Some(protocol::VERSION),
+                        id: Some(confirmation_id),
                         for_: "executor_launch".to_string(),
                         executor: "Claude".to_string(),
                         working_dir: None,
@@ -81,15 +97,28 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
 
     async fn handle_confirm(&self, cr: protocol::ConfirmResponse) -> Result<()> {
         if cr.for_ != "executor_launch" { return Ok(()); }
-        let pending = { self.pending_exec_prompt.lock().unwrap().take() };
+        
+        let pending = {
+            let mut guard = self.pending_confirmation.lock().unwrap();
+            // Only process if the confirmation ID matches (or no ID for backward compat)
+            if let Some(ref pending) = *guard {
+                if cr.id.is_none() || cr.id.as_ref() == Some(&pending.id) {
+                    guard.take()
+                } else {
+                    // Confirmation ID doesn't match - ignore
+                    return Ok(());
+                }
+            } else {
+                None
+            }
+        };
+        
         if cr.accept {
-            if let Some(prompt) = pending {
-                self.executor.launch(&prompt).await?;
+            if let Some(pending) = pending {
+                self.executor.launch(&pending.prompt).await?;
                 self.outbound.send(protocol::Message::Status(protocol::Status{
                     v: Some(protocol::VERSION), level: "info".into(), text: "executor started: Claude".into()
                 })).await?;
-            } else {
-                // No-op if nothing pending
             }
         } else {
             // canceled: emit status

@@ -106,6 +106,22 @@ struct ContentView: View {
     .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
       connect()
     }
+    .alert("Confirm Executor Launch", isPresented: .constant(ws.pendingConfirmation != nil)) {
+      Button("Cancel", role: .cancel) {
+        if let details = ws.pendingConfirmation {
+          ws.sendConfirmResponse(id: details.id, accept: false)
+        }
+      }
+      Button("Confirm") {
+        if let details = ws.pendingConfirmation {
+          ws.sendConfirmResponse(id: details.id, accept: true)
+        }
+      }
+    } message: {
+      if let details = ws.pendingConfirmation {
+        Text("Launch \(details.executor) with prompt:\n\n\(details.prompt)")
+      }
+    }
   }
   
   private var connectionStatusCard: some View {

@@ -24,10 +24,12 @@ final class RelayWebSocket: NSObject, ObservableObject {
   @Published var lastAck: String = ""
   @Published var closeInfo: String = ""
   @Published var logs: [(Date, String, String)] = []
+  @Published var pendingConfirmation: (id: String?, executor: String, prompt: String)? = nil
 
   var onStateChange: ((State)->Void)?
   var onLogs: (([(Date,String,String)])->Void)?
   var onAck: ((String)->Void)?
+  var onConfirmation: ((String?, String, String)->Void)?
 
   func normalizeWs(_ raw: String) -> URL? {
     guard var comp = URLComponents(string: raw) else { return nil }
@@ -108,6 +110,19 @@ final class RelayWebSocket: NSObject, ObservableObject {
     let id = UUID().uuidString.replacingOccurrences(of: "-", with: "")
     send(json: ["type":"get_logs","id":id,"limit":limit])
   }
+  
+  func sendConfirmResponse(id: String?, accept: Bool) {
+    var payload: [String: Any] = [
+      "type": "confirm_response",
+      "for": "executor_launch",
+      "accept": accept
+    ]
+    if let id = id {
+      payload["id"] = id
+    }
+    send(json: payload)
+    pendingConfirmation = nil
+  }
 
   private func receiveLoop() {
     task?.receive { [weak self] result in
@@ -134,24 +149,42 @@ final class RelayWebSocket: NSObject, ObservableObject {
     guard let data = s.data(using: .utf8), let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
       lastPayload = s; return
     }
+    
+    // Check if this is a wrapped frame message
     if let t = obj["type"] as? String, t == "frame", let frame = obj["frame"] as? String, obj["b64"] as? Bool == false {
       if let fd = frame.data(using: .utf8), let inner = try? JSONSerialization.jsonObject(with: fd) as? [String:Any] {
-        if inner["type"] as? String == "ack" {
-          let ackText = (inner["text"] as? String) ?? "ack"
-          lastAck = ackText
-          onAck?(ackText)
-        } else if inner["type"] as? String == "logs", let items = inner["items"] as? [[String: Any]] {
-          let mapped: [(Date,String,String)] = items.map { it in
-            let ts = (it["ts"] as? Double ?? Date().timeIntervalSince1970) / 1000.0
-            let type = it["type"] as? String ?? ""
-            let message = it["message"] as? String ?? ""
-            return (Date(timeIntervalSince1970: ts), type, message)
-          }
-          logs = mapped
-          onLogs?(mapped)
-        }
+        processInnerMessage(inner)
         lastPayload = String(data: fd, encoding: .utf8) ?? ""
       }
+    } else {
+      // Handle direct messages (not wrapped in frame)
+      processInnerMessage(obj)
+      lastPayload = s
+    }
+  }
+  
+  private func processInnerMessage(_ msg: [String: Any]) {
+    if msg["type"] as? String == "ack" {
+      let ackText = (msg["text"] as? String) ?? "ack"
+      lastAck = ackText
+      onAck?(ackText)
+    } else if msg["type"] as? String == "prompt_confirmation" {
+      let id = msg["id"] as? String
+      let executor = (msg["executor"] as? String) ?? "Claude"
+      let prompt = (msg["prompt"] as? String) ?? ""
+      pendingConfirmation = (id: id, executor: executor, prompt: prompt)
+      print("DEBUG: Received prompt_confirmation - id: \(id ?? "nil"), executor: \(executor), prompt: \(prompt)")
+      print("DEBUG: onConfirmation callback is \(onConfirmation != nil ? "set" : "nil")")
+      onConfirmation?(id, executor, prompt)
+    } else if msg["type"] as? String == "logs", let items = msg["items"] as? [[String: Any]] {
+      let mapped: [(Date,String,String)] = items.map { it in
+        let ts = (it["ts"] as? Double ?? Date().timeIntervalSince1970) / 1000.0
+        let type = it["type"] as? String ?? ""
+        let message = it["message"] as? String ?? ""
+        return (Date(timeIntervalSince1970: ts), type, message)
+      }
+      logs = mapped
+      onLogs?(mapped)
     }
   }
 }

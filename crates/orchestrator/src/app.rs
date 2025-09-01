@@ -287,6 +287,7 @@ impl App {
                             prompt: prompt.clone(),
                             executor_name: self.center.executor.name().to_string(),
                             working_dir: config.working_dir.to_string_lossy().to_string(),
+                            confirmation_id: None,  // This path doesn't use core, so no ID
                         });
                         self.mode = Mode::ConfirmingExecutor;
                         self.append_output(format!("{} Ready to launch {}. Press Enter to confirm, Escape to cancel.", 
@@ -591,13 +592,31 @@ impl App {
                     RelayEvent::Frame(text) => {
                         // Try to parse known frames
                         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                            if v.get("type").and_then(|s| s.as_str()) == Some("user_text") {
+                            let msg_type = v.get("type").and_then(|s| s.as_str());
+                            
+                            if msg_type == Some("user_text") {
                                 let preview = v.get("text").and_then(|s| s.as_str()).unwrap_or("");
                                 let preview = if preview.len() > 60 { format!("{}…", &preview[..60]) } else { preview.to_string() };
                                 self.append_output(format!("{} user_text: {}", prefixes::RELAY, preview));
                                 if let Some(tx) = &self.core_in_tx {
                                     if let Ok(msg) = serde_json::from_value::<protocol::Message>(v.clone()) {
                                         let _ = tx.send(msg).await;
+                                    }
+                                }
+                                continue;
+                            }
+                            
+                            if msg_type == Some("confirm_response") {
+                                // Handle confirmation response from mobile
+                                self.append_output(format!("{} Mobile confirmation received", prefixes::RELAY));
+                                if let Some(tx) = &self.core_in_tx {
+                                    if let Ok(msg) = serde_json::from_value::<protocol::Message>(v.clone()) {
+                                        let _ = tx.send(msg).await;
+                                        // Dismiss the TUI confirmation dialog if mobile confirmed
+                                        if self.mode == Mode::ConfirmingExecutor {
+                                            self.pending_executor = None;
+                                            self.mode = Mode::Idle;
+                                        }
                                     }
                                 }
                                 continue;
@@ -715,11 +734,16 @@ impl App {
                     protocol::Message::Status(s) => {
                         self.append_output(format!("{} {}", prefixes::PLAN, s.text));
                     }
-                    protocol::Message::PromptConfirmation(pc) => {
+                    protocol::Message::PromptConfirmation(ref pc) => {
+                        // Forward confirmation request to mobile via relay
+                        let confirmation_json = serde_json::to_string(&msg).unwrap_or_default();
+                        relay_client::send_frame(confirmation_json);
+                        
                         self.pending_executor = Some(PendingExecutor {
-                            prompt: pc.prompt,
+                            prompt: pc.prompt.clone(),
                             executor_name: self.center.executor.name().to_string(),
                             working_dir: ExecutorConfig::default().working_dir.to_string_lossy().to_string(),
+                            confirmation_id: pc.id.clone(),
                         });
                         self.mode = Mode::ConfirmingExecutor;
                         self.append_output(format!("{} Ready to launch {}. Press Enter to confirm, Escape to cancel.", prefixes::PLAN, self.center.executor.name()));

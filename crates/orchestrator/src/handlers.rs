@@ -102,7 +102,14 @@ impl InputHandler {
             Mode::ConfirmingExecutor => {
                 // Send confirm to core; it will trigger launch via adapter
                 if let Some(tx) = &app.core_in_tx {
-                    let msg = protocol::Message::ConfirmResponse(protocol::ConfirmResponse{ v: Some(protocol::VERSION), for_: "executor_launch".into(), accept: true });
+                    let confirmation_id = app.pending_executor.as_ref()
+                        .and_then(|p| p.confirmation_id.clone());
+                    let msg = protocol::Message::ConfirmResponse(protocol::ConfirmResponse{ 
+                        v: Some(protocol::VERSION), 
+                        id: confirmation_id,
+                        for_: "executor_launch".into(), 
+                        accept: true 
+                    });
                     let _ = tx.send(msg).await;
                 }
                 app.pending_executor = None;
@@ -118,7 +125,14 @@ impl InputHandler {
         if app.can_cancel() {
             if app.mode == Mode::ConfirmingExecutor {
                 if let Some(tx) = &app.core_in_tx {
-                    let msg = protocol::Message::ConfirmResponse(protocol::ConfirmResponse{ v: Some(protocol::VERSION), for_: "executor_launch".into(), accept: false });
+                    let confirmation_id = app.pending_executor.as_ref()
+                        .and_then(|p| p.confirmation_id.clone());
+                    let msg = protocol::Message::ConfirmResponse(protocol::ConfirmResponse{ 
+                        v: Some(protocol::VERSION), 
+                        id: confirmation_id,
+                        for_: "executor_launch".into(), 
+                        accept: false 
+                    });
                     let _ = tx.try_send(msg);
                 }
                 app.cancel_executor_confirmation();

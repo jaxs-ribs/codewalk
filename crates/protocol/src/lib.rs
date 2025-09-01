@@ -79,6 +79,8 @@ pub struct Status {
 pub struct PromptConfirmation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub v: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>, // Unique ID for this confirmation request
     #[serde(rename = "for")]
     pub for_: String, // "executor_launch"
     pub executor: String,
@@ -92,6 +94,8 @@ pub struct PromptConfirmation {
 pub struct ConfirmResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub v: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>, // ID of the confirmation being responded to
     #[serde(rename = "for")]
     pub for_: String, // "executor_launch"
     pub accept: bool,
