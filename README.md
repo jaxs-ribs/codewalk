@@ -1,35 +1,17 @@
 # CodeWalk
 
-CodeWalk connects a phone and a workstation through a relay. The phone sends text (or speech→text); the workstation routes it and can start a coding session. This repo contains all pieces and a one‑command end‑to‑end test.
+The overarching goal of this project is to allow knowledge workers to spend as much productive time outside of their house by interfacing with their machine at home via voice. With the rise of agents (and computer using agents (CUAs)), voice interfaces are becoming increasingly viable. What is missing right now is the proper stack and interfaces built by people that actually use them. 
 
-Apps
+Just start this app on your computer, install the app for your phone, link them up via a QR code scan, and you will be having access to your work station while out and about. The end goal is to be able to have a conversation with an orchestrator agent that will help you spec things out, and give you real time narration of the progress of different agents. 
 
-- `apps/VoiceRelay` — React Native mobile client (original)
-- `apps/VoiceRelaySwiftUI` — Native Swift/SwiftUI iOS client (rewrite)
-
-Get Started
-
-1) Create `.env` at the repo root:
-
-   RELAY_WS_URL=ws://127.0.0.1:3001/ws
-   RELAY_SESSION_ID=devsession0001
-   RELAY_TOKEN=devtoken0001x
-
-2) Run the end‑to‑end check (starts server + workstation + headless phone):
-
-   cargo run -p xtask -- e2e quick --text 'build a small cli tool please'
-
-You’ll see colored steps, then “E2E(quick) PASS”. For a slightly longer run that also kills the session, use `full` instead of `quick`.
-
-Next
-
-- Workstation UI: `cargo run -p orchestrator --bin codewalk`
-- Relay docs: `relay/server/README.md`
-- Headless phone: `relay/client-mobile/README.md`
+Over time, we will add means of inspectability: 
+- Showing recordings of the app you're building
+- Selective inspection, like showing code snippets
+- Verifier agents and heavy QA testing pipelines
 
 Manual Test (multiple terminals)
 
-1) Prepare `.env` at repo root with `RELAY_WS_URL`, `RELAY_SESSION_ID`, `RELAY_TOKEN`.
+1) Prepare `.env` at repo root with `RELAY_WS_URL`, `RELAY_SESSION_ID`, `RELAY_TOKEN` and your groq api key.
 
 2) Terminal A — Relay server
 
@@ -40,28 +22,12 @@ Manual Test (multiple terminals)
 
    cargo run -p orchestrator --bin codewalk
 
-4) Terminal C — Metro (React Native)
+4) Terminal C — App
 
-   cd apps/VoiceRelay
-   nvm use 22 && npm install && npm start
+   cd apps/VoiceRelaySwiftUI
+   ./run-sim.sh
 
-5) Terminal D — Simulator
-
-   iOS: cd apps/VoiceRelay && npm run ios -- --simulator="iPhone 16 Pro"
-   Android: cd apps/VoiceRelay && npm run android
-
-6) Send a message from the app
+5) Send a message from the app
 
    Type text and press Send. The app shows “Ack: received”. The TUI prints a `RELAY> user_text: ...` line.
 
-Optional: HTTP ingest from a fifth terminal
-
-   curl -s -X POST http://localhost:3001/api/transcripts \
-     -H 'Content-Type: application/json' \
-     -d '{"sid":"RELAY_SESSION_ID","tok":"RELAY_TOKEN","text":"build a small cli tool please","final":true,"source":"api"}'
-
-Native iOS rewrite (SwiftUI)
-
-If you prefer not to use React Native, see:
-
-- `apps/VoiceRelaySwiftUI/README.md` — how to create the Xcode project, bundle `.env`, and run on Simulator.
