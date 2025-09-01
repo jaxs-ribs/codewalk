@@ -25,3 +25,43 @@ apps/VoiceRelay/android/.cxx/
 **/node_modules/
 **/dist/
 packages/mobile-core/package-lock.json
+
+# SwiftUI/Xcode artifacts
+apps/VoiceRelaySwiftUI/build/
+apps/VoiceRelaySwiftUI/DerivedData/
+apps/VoiceRelaySwiftUI/**/*.xcodeproj/xcuserdata/
+apps/VoiceRelaySwiftUI/**/*.xcodeproj/project.xcworkspace/xcuserdata/
+apps/VoiceRelaySwiftUI/**/*.xcworkspace/xcuserdata/
+apps/VoiceRelaySwiftUI/**/*.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+apps/VoiceRelaySwiftUI/**/*.playground/playground.xcworkspace/
+apps/VoiceRelaySwiftUI/**/*.playground/timeline.xctimeline
+apps/VoiceRelaySwiftUI/**/*.playgroundpage/timeline.xctimeline
+apps/VoiceRelaySwiftUI/**/xcshareddata/WorkspaceSettings.xcsettings
+
+# Swift Package Manager
+apps/VoiceRelaySwiftUI/.build/
+apps/VoiceRelaySwiftUI/.swiftpm/
+apps/VoiceRelaySwiftUI/Package.resolved
+apps/VoiceRelaySwiftUI/*.xcodeproj
+
+# CocoaPods (if used)
+apps/VoiceRelaySwiftUI/Pods/
+apps/VoiceRelaySwiftUI/Podfile.lock
+
+# Carthage (if used)
+apps/VoiceRelaySwiftUI/Carthage/Build/
+apps/VoiceRelaySwiftUI/Carthage/Checkouts
+
+# fastlane (if used)
+apps/VoiceRelaySwiftUI/fastlane/report.xml
+apps/VoiceRelaySwiftUI/fastlane/Preview.html
+apps/VoiceRelaySwiftUI/fastlane/screenshots/**/*.png
+apps/VoiceRelaySwiftUI/fastlane/test_output
+
+# Code Injection
+apps/VoiceRelaySwiftUI/**/*.xcodeproj/xcshareddata/
+
+# Accidental file storage
+apps/VoiceRelaySwiftUI/**/*.ipa
+apps/VoiceRelaySwiftUI/**/*.dSYM.zip
+apps/VoiceRelaySwiftUI/**/*.dSYM
