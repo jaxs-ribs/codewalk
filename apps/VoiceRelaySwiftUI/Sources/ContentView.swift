@@ -565,9 +565,13 @@ struct ContentView: View {
       switch result {
       case .success(let url):
         stt = .uploading(url)
-        if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path), let size = attrs[.size] as? NSNumber, size.intValue > 25*1024*1024 {
-          showError("Too large", "Audio exceeds 25 MB free-tier limit.")
-          resetStt(); return
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path), let size = attrs[.size] as? NSNumber {
+          let sizeInMB = Double(size.intValue) / (1024.0 * 1024.0)
+          print("Audio file size: \(String(format: "%.2f", sizeInMB)) MB (\(size.intValue) bytes)")
+          if size.intValue > 25*1024*1024 {
+            showError("Too large", "Audio exceeds 25 MB free-tier limit.")
+            resetStt(); return
+          }
         }
         stt = .transcribing
         STTUploader.transcribe(fileURL: url, apiKey: env.groqApiKey) { res in
@@ -606,6 +610,15 @@ struct ContentView: View {
     recordMs = 0
     timer?.invalidate(); timer = nil
     stt = .idle
+    // Clean up old audio files in cache asynchronously
+    DispatchQueue.global(qos: .background).async {
+      let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+      if let files = try? FileManager.default.contentsOfDirectory(at: caches, includingPropertiesForKeys: nil) {
+        for file in files where file.lastPathComponent.hasPrefix("sound-") && file.pathExtension == "wav" {
+          try? FileManager.default.removeItem(at: file)
+        }
+      }
+    }
   }
 
   private func showError(_ title: String, _ msg: String) {

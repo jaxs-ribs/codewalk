@@ -45,10 +45,16 @@ final class STTUploader {
 
       URLSession.shared.uploadTask(with: req, fromFile: tmp) { data, resp, err in
         defer { try? FileManager.default.removeItem(at: tmp) }
-        if let err = err { return completion(.failure(err)) }
+        if let err = err { 
+          print("STT Upload error: \(err)")
+          return completion(.failure(err)) 
+        }
         guard let http = resp as? HTTPURLResponse else { return completion(.failure(STTError.http(-1, "no response"))) }
         let body = String(data: data ?? Data(), encoding: .utf8) ?? ""
-        if http.statusCode != 200 { return completion(.failure(STTError.http(http.statusCode, String(body.prefix(300))))) }
+        if http.statusCode != 200 { 
+          print("STT API error \(http.statusCode): \(body)")
+          return completion(.failure(STTError.http(http.statusCode, String(body.prefix(300))))) 
+        }
         // Parse json
         if responseFormat == "json" {
           if let d = data, let parsed = try? JSONDecoder().decode(STTResponse.self, from: d), let t = parsed.text, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
