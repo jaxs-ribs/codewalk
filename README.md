@@ -2,6 +2,11 @@
 
 CodeWalk connects a phone and a workstation through a relay. The phone sends text (or speech→text); the workstation routes it and can start a coding session. This repo contains all pieces and a one‑command end‑to‑end test.
 
+Apps
+
+- `apps/VoiceRelay` — React Native mobile client (original)
+- `apps/VoiceRelaySwiftUI` — Native Swift/SwiftUI iOS client (rewrite)
+
 Get Started
 
 1) Create `.env` at the repo root:
@@ -54,3 +59,9 @@ Optional: HTTP ingest from a fifth terminal
    curl -s -X POST http://localhost:3001/api/transcripts \
      -H 'Content-Type: application/json' \
      -d '{"sid":"RELAY_SESSION_ID","tok":"RELAY_TOKEN","text":"build a small cli tool please","final":true,"source":"api"}'
+
+Native iOS rewrite (SwiftUI)
+
+If you prefer not to use React Native, see:
+
+- `apps/VoiceRelaySwiftUI/README.md` — how to create the Xcode project, bundle `.env`, and run on Simulator.
