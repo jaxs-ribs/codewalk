@@ -21,10 +21,18 @@ struct ContentView: View {
   @State private var recordMs: Double = 0
   @State private var timer: Timer? = nil
   @FocusState private var inputFocused: Bool
+  @State private var logSummary: String = ""
+  @State private var isSummarizingLogs: Bool = false
+  private let logSummarizer: LogSummarizer
 
   /// Recording/transcription state machine
   enum STTState: Equatable { case idle, recording(started: Date), uploading(URL), transcribing, sending, error(String) }
   @State private var stt: STTState = .idle
+  
+  init() {
+    let env = EnvConfig.load()
+    self.logSummarizer = LogSummarizer(groqApiKey: env.groqApiKey)
+  }
 
   var body: some View {
     NavigationStack {
@@ -77,7 +85,7 @@ struct ContentView: View {
       .navigationBarTitleDisplayMode(.large)
       .toolbar {
         ToolbarItemGroup(placement: .navigationBarTrailing) {
-          Button(action: { ws.requestLogs() }) {
+          Button(action: { fetchAndSummarizeLogs() }) {
             Image(systemName: "list.bullet.rectangle.fill")
               .foregroundColor(.white)
               .font(.system(size: 18))
@@ -258,44 +266,44 @@ struct ContentView: View {
   
   private var logsCard: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Label("Activity Log", systemImage: "list.bullet.rectangle")
-        .font(.system(size: 16, weight: .semibold, design: .rounded))
-        .foregroundColor(.white)
+      HStack {
+        Label("Activity Summary", systemImage: "list.bullet.rectangle")
+          .font(.system(size: 16, weight: .semibold, design: .rounded))
+          .foregroundColor(.white)
+        
+        Spacer()
+        
+        if isSummarizingLogs {
+          ProgressView()
+            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+            .scaleEffect(0.7)
+        }
+      }
       
       ScrollView {
         VStack(alignment: .leading, spacing: 8) {
-          if ws.logs.isEmpty {
+          if !logSummary.isEmpty {
+            Text(logSummary)
+              .font(.system(size: 14, weight: .regular, design: .rounded))
+              .foregroundColor(.white.opacity(0.9))
+              .padding(12)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .background(Color.black.opacity(0.2))
+              .cornerRadius(8)
+          } else if ws.logs.isEmpty {
             Text("No activity yet")
               .font(.system(size: 13, weight: .regular, design: .monospaced))
               .foregroundColor(.white.opacity(0.4))
               .italic()
-          } else {
-            ForEach(Array(ws.logs.enumerated()), id: \.offset) { _, item in
-              HStack(alignment: .top, spacing: 8) {
-                Text(timeStr(item.0))
-                  .font(.system(size: 11, weight: .regular, design: .monospaced))
-                  .foregroundColor(.white.opacity(0.4))
-                
-                Text("[\(item.1)]")
-                  .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                  .foregroundColor(logColor(for: item.1))
-                
-                Text(item.2)
-                  .font(.system(size: 12, weight: .regular, design: .monospaced))
-                  .foregroundColor(.white.opacity(0.8))
-                  .lineLimit(2)
-                
-                Spacer()
-              }
-              .padding(.vertical, 4)
-              .padding(.horizontal, 8)
-              .background(Color.black.opacity(0.2))
-              .cornerRadius(6)
-            }
+          } else if !isSummarizingLogs {
+            Text("Tap the logs button to fetch activity summary")
+              .font(.system(size: 13, weight: .regular, design: .monospaced))
+              .foregroundColor(.white.opacity(0.4))
+              .italic()
           }
         }
       }
-      .frame(maxHeight: 200)
+      .frame(maxHeight: 400)
     }
     .padding(16)
     .background(
@@ -612,4 +620,26 @@ struct ContentView: View {
       .first { $0.isKeyWindow }
   }
   #endif
+  
+  private func fetchAndSummarizeLogs() {
+    isSummarizingLogs = true
+    logSummary = ""
+    
+    // First fetch the logs
+    ws.requestLogs()
+    
+    // Set up observer to wait for logs response
+    ws.onLogs = { logs in
+      // Now summarize the logs
+      self.logSummarizer.summarizeLogs(logs) { result in
+        self.isSummarizingLogs = false
+        switch result {
+        case .success(let summary):
+          self.logSummary = summary
+        case .failure(let error):
+          self.logSummary = "Failed to summarize: \(error.localizedDescription)"
+        }
+      }
+    }
+  }
 }
