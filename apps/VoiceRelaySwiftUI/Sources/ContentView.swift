@@ -394,7 +394,6 @@ struct ContentView: View {
             .autocorrectionDisabled(true)
             .submitLabel(.send)
             .onSubmit(onSend)
-            .disabled(ws.state != .open)
             .focused($inputFocused)
             .accentColor(.blue)
           

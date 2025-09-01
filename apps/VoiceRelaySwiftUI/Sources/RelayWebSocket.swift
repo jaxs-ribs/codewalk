@@ -17,6 +17,8 @@ final class RelayWebSocket: NSObject, ObservableObject {
   private var shouldReconnect: Bool = false
   private var reconnectDelay: TimeInterval = 1
   private var reconnectWorkItem: DispatchWorkItem?
+  private var isConnecting: Bool = false
+  private var lastConnectionAttempt: Date = Date(timeIntervalSince1970: 0)
 
   @Published var state: State = .idle
   @Published var lastEvent: String = ""
@@ -39,19 +41,41 @@ final class RelayWebSocket: NSObject, ObservableObject {
   }
 
   func connect(url: String, sid: String, tok: String) {
+    // Prevent multiple simultaneous connection attempts
+    guard !isConnecting else { 
+      print("Already connecting, skipping duplicate attempt")
+      return 
+    }
+    
+    // Throttle connection attempts - wait at least 2 seconds between attempts
+    let timeSinceLastAttempt = Date().timeIntervalSince(lastConnectionAttempt)
+    guard timeSinceLastAttempt > 2.0 else {
+      print("Too soon since last connection attempt, skipping")
+      return
+    }
+    
     guard let u = normalizeWs(url) else { return }
+    
     // Persist for reconnect and hello
     self.connectURL = url
     self.sid = sid
     self.tok = tok
     self.shouldReconnect = true
-    self.reconnectDelay = 1
+    // Don't reset reconnectDelay here - keep exponential backoff
     reconnectWorkItem?.cancel(); reconnectWorkItem = nil
-
+    
+    // Mark as connecting
+    isConnecting = true
+    lastConnectionAttempt = Date()
+    
     // Reset/establish session
     disconnect(userInitiated: false)
-    state = .connecting
+    // Only update state if not already connecting (to avoid UI rebuilds)
+    if state != .connecting {
+      state = .connecting
+    }
     let cfg = URLSessionConfiguration.default
+    cfg.timeoutIntervalForRequest = 10 // Add timeout
     session = URLSession(configuration: cfg, delegate: self, delegateQueue: .main)
     task = session.webSocketTask(with: u)
     task?.resume()
@@ -61,10 +85,17 @@ final class RelayWebSocket: NSObject, ObservableObject {
   func disconnect(userInitiated: Bool = true) {
     heartbeatTimer?.invalidate(); heartbeatTimer = nil
     reconnectWorkItem?.cancel(); reconnectWorkItem = nil
-    if userInitiated { shouldReconnect = false }
+    if userInitiated { 
+      shouldReconnect = false
+      reconnectDelay = 1 // Reset delay only on user-initiated disconnect
+    }
     task?.cancel(with: .normalClosure, reason: nil)
     task = nil
-    if state != .idle { state = .closed }
+    isConnecting = false
+    // Only update state if user-initiated or if we're not about to reconnect
+    if userInitiated && state != .idle { 
+      state = .closed 
+    }
   }
 
   private func startHeartbeat() {
@@ -81,15 +112,23 @@ final class RelayWebSocket: NSObject, ObservableObject {
 
   private func scheduleReconnect() {
     guard shouldReconnect, let url = connectURL else { return }
+    
+    // Cancel any existing reconnect work
     reconnectWorkItem?.cancel()
+    
+    print("Scheduling reconnect in \(reconnectDelay) seconds")
+    
     let work = DispatchWorkItem { [weak self] in
       guard let self = self else { return }
+      // Reset connection state before attempting
+      self.isConnecting = false
       self.connect(url: url, sid: self.sid, tok: self.tok)
     }
     reconnectWorkItem = work
     DispatchQueue.main.asyncAfter(deadline: .now() + reconnectDelay, execute: work)
-    // exp backoff up to 30s
-    reconnectDelay = min(reconnectDelay * 2, 30)
+    
+    // Exponential backoff up to 60s (better for mobile)
+    reconnectDelay = min(reconnectDelay * 2, 60)
   }
 
   func send(json: [String: Any]) {
@@ -139,6 +178,7 @@ final class RelayWebSocket: NSObject, ObservableObject {
         self.state = .error
         self.closeInfo = err.localizedDescription
         self.heartbeatTimer?.invalidate(); self.heartbeatTimer = nil
+        self.isConnecting = false
         self.scheduleReconnect()
       }
     }
@@ -193,6 +233,8 @@ extension RelayWebSocket: URLSessionWebSocketDelegate {
   func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
     state = .open
     lastEvent = "ws:open"
+    isConnecting = false
+    reconnectDelay = 1 // Reset backoff on successful connection
     // Send hello and start heartbeats now that we are open
     sendHello()
   }
@@ -201,6 +243,7 @@ extension RelayWebSocket: URLSessionWebSocketDelegate {
     state = .closed
     closeInfo = "code=\(closeCode.rawValue)"
     heartbeatTimer?.invalidate(); heartbeatTimer = nil
+    isConnecting = false
     scheduleReconnect()
   }
 }
