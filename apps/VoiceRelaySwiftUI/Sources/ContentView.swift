@@ -24,105 +24,453 @@ struct ContentView: View {
 
   var body: some View {
     NavigationStack {
-      ScrollView {
-        VStack(spacing: 12) {
-          Text(pillText)
-            .foregroundColor(.white)
-            .padding(.horizontal, 12).padding(.vertical, 6)
-            .background(pillColor).cornerRadius(999)
-          if let at = lastCheckedAt { Text("Last checked \(timeStr(at))\(healthLatency != nil ? " • \(healthLatency!) ms" : "")").font(.caption).foregroundColor(.gray) }
-
-          if case .recording = stt {
-            HStack(spacing: 8) {
-              Text("Recording… \(String(format: "%.1f", recordMs/1000))s").font(.caption).foregroundColor(.gray)
-              Button("Cancel", action: cancelRecording).buttonStyle(.bordered)
+      ZStack {
+        LinearGradient(gradient: Gradient(colors: [Color(red: 0.05, green: 0.05, blue: 0.15), Color(red: 0.1, green: 0.1, blue: 0.2)]), startPoint: .top, endPoint: .bottom)
+          .ignoresSafeArea(.all)
+        
+        ScrollView {
+          VStack(spacing: 20) {
+            connectionStatusCard
+            
+            if case .recording = stt {
+              recordingCard
+            } else if case .uploading = stt {
+              statusCard(icon: "arrow.up.circle.fill", text: "Uploading…", color: .blue)
+            } else if case .transcribing = stt {
+              statusCard(icon: "waveform", text: "Transcribing…", color: .purple)
+            } else if case .sending = stt {
+              statusCard(icon: "paperplane.fill", text: "Sending…", color: .green)
+            } else if case .error(let msg) = stt {
+              errorCard(msg)
             }
-          } else if case .uploading = stt {
-            HStack(spacing: 8) { ProgressView().scaleEffect(0.7); Text("Uploading…").font(.caption).foregroundColor(.gray) }
-          } else if case .transcribing = stt {
-            HStack(spacing: 8) { ProgressView().scaleEffect(0.7); Text("Transcribing…").font(.caption).foregroundColor(.gray) }
-          } else if case .sending = stt {
-            HStack(spacing: 8) { ProgressView().scaleEffect(0.7); Text("Sending…").font(.caption).foregroundColor(.gray) }
-          } else if case .error(let msg) = stt {
-            Text("Error: \(msg)").font(.caption).foregroundColor(.red)
-          }
-
-          if !transcript.isEmpty { Text("Transcript: \(transcript)").font(.caption).foregroundColor(.gray).lineLimit(2) }
-
-          GroupBox(label: Text("Logs").font(.headline)) {
-            if ws.logs.isEmpty { Text("no logs to display yet").font(.caption).foregroundColor(.gray) }
-            ForEach(Array(ws.logs.enumerated()), id: \.offset) { _, item in
-              Text("\(timeStr(item.0)) [\(item.1)] \(item.2)").font(.footnote)
+            
+            if !transcript.isEmpty {
+              transcriptCard
             }
-          }
-
-          if showDetails {
-            GroupBox(label: Text("Debug").font(.headline)) {
-              VStack(alignment: .leading, spacing: 4) {
-                Text("State: \(ws.state.rawValue)").font(.caption).foregroundColor(.gray)
-                Text("WS: \(normalizedWs() ?? "(invalid)")").font(.caption).foregroundColor(.gray).textSelection(.enabled)
-                Text("sid: \(env.sessionId)").font(.caption).foregroundColor(.gray).textSelection(.enabled)
-                Text("tok: \(env.token)").font(.caption).foregroundColor(.gray).textSelection(.enabled)
-                if !ws.lastEvent.isEmpty { Text("Last: \(ws.lastEvent)").font(.caption).foregroundColor(.gray) }
-                if !ws.closeInfo.isEmpty { Text("Close: \(ws.closeInfo)").font(.caption).foregroundColor(.gray) }
-                if !ws.lastAck.isEmpty { Text("Ack: \(ws.lastAck)").font(.caption).foregroundColor(.gray) }
-                if !ws.lastPayload.isEmpty { Text("Payload: \(ws.lastPayload)").font(.caption).foregroundColor(.gray).lineLimit(3) }
-              }
+            
+            logsCard
+            
+            if showDetails {
+              debugCard
             }
+            
+            Button(action: { showDetails.toggle() }) {
+              Label(showDetails ? "Hide Details" : "Show Details", systemImage: showDetails ? "chevron.up.circle.fill" : "chevron.down.circle.fill")
+                .font(.system(size: 16, weight: .medium, design: .rounded))
+                .foregroundColor(.white.opacity(0.8))
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(Color.white.opacity(0.1))
+                .cornerRadius(20)
+            }
+            .padding(.bottom, 100)
           }
-          Button(showDetails ? "Hide details" : "Show details") { showDetails.toggle() }
-        }.padding()
-      }
-      .navigationTitle("VoiceRelay")
-      .toolbar {
-        // Top-right quick actions
-        ToolbarItemGroup(placement: .navigationBarTrailing) {
-          Button { ws.requestLogs() } label: { Label("Logs", systemImage: "list.bullet.rectangle") }
-          Button { ws.disconnect() } label: { Label("Disconnect", systemImage: "bolt.slash") }
+          .padding(.horizontal)
+          .padding(.top, 20)
         }
-        // Bottom bar input + actions
-        ToolbarItemGroup(placement: .bottomBar) {
+      }
+      .navigationTitle("Voice Relay")
+      .navigationBarTitleDisplayMode(.large)
+      .toolbar {
+        ToolbarItemGroup(placement: .navigationBarTrailing) {
+          Button(action: { ws.requestLogs() }) {
+            Image(systemName: "list.bullet.rectangle.fill")
+              .foregroundColor(.white)
+              .font(.system(size: 18))
+          }
+          Button(action: { ws.disconnect() }) {
+            Image(systemName: "bolt.slash.fill")
+              .foregroundColor(.white)
+              .font(.system(size: 18))
+          }
+        }
+      }
+      .safeAreaInset(edge: .bottom) {
+        inputBar
+      }
+    }
+    .preferredColorScheme(.dark)
+    .onAppear(perform: onAppear)
+    .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+      connect()
+    }
+  }
+  
+  private var connectionStatusCard: some View {
+    HStack(spacing: 12) {
+      Circle()
+        .fill(healthStatus == "connected" ? Color.green : healthStatus == "disconnected" ? Color.red : Color.orange)
+        .frame(width: 12, height: 12)
+        .overlay(
+          Circle()
+            .stroke(Color.white.opacity(0.3), lineWidth: 2)
+            .scaleEffect(healthStatus == "checking" ? 2 : 1)
+            .opacity(healthStatus == "checking" ? 0 : 1)
+            .animation(.easeOut(duration: 1).repeatForever(autoreverses: false), value: healthStatus)
+        )
+      
+      VStack(alignment: .leading, spacing: 2) {
+        Text(healthStatus == "connected" ? "Connected" : healthStatus == "disconnected" ? "Disconnected" : "Connecting…")
+          .font(.system(size: 16, weight: .semibold, design: .rounded))
+          .foregroundColor(.white)
+        
+        if let at = lastCheckedAt {
+          Text("Last checked \(timeStr(at))\(healthLatency != nil ? " • \(healthLatency!) ms" : "")")
+            .font(.system(size: 12, weight: .regular, design: .monospaced))
+            .foregroundColor(.white.opacity(0.6))
+        }
+      }
+      
+      Spacer()
+    }
+    .padding(16)
+    .background(
+      RoundedRectangle(cornerRadius: 16)
+        .fill(Color.white.opacity(0.1))
+        .overlay(
+          RoundedRectangle(cornerRadius: 16)
+            .stroke(Color.white.opacity(0.2), lineWidth: 1)
+        )
+    )
+  }
+  
+  private var recordingCard: some View {
+    HStack(spacing: 16) {
+      ZStack {
+        Circle()
+          .fill(Color.red)
+          .frame(width: 20, height: 20)
+        Circle()
+          .stroke(Color.red, lineWidth: 3)
+          .frame(width: 30, height: 30)
+          .scaleEffect(1.5)
+          .opacity(0.3)
+          .animation(.easeInOut(duration: 1).repeatForever(autoreverses: true), value: recordMs)
+      }
+      
+      Text("Recording… \(String(format: "%.1f", recordMs/1000))s")
+        .font(.system(size: 16, weight: .medium, design: .rounded))
+        .foregroundColor(.white)
+      
+      Spacer()
+      
+      Button(action: cancelRecording) {
+        Text("Cancel")
+          .font(.system(size: 14, weight: .semibold, design: .rounded))
+          .foregroundColor(.white)
+          .padding(.horizontal, 16)
+          .padding(.vertical, 8)
+          .background(Color.red.opacity(0.3))
+          .cornerRadius(12)
+      }
+    }
+    .padding(16)
+    .background(
+      RoundedRectangle(cornerRadius: 16)
+        .fill(Color.red.opacity(0.1))
+        .overlay(
+          RoundedRectangle(cornerRadius: 16)
+            .stroke(Color.red.opacity(0.3), lineWidth: 1)
+        )
+    )
+  }
+  
+  private func statusCard(icon: String, text: String, color: Color) -> some View {
+    HStack(spacing: 12) {
+      Image(systemName: icon)
+        .font(.system(size: 20))
+        .foregroundColor(color)
+      
+      Text(text)
+        .font(.system(size: 16, weight: .medium, design: .rounded))
+        .foregroundColor(.white)
+      
+      Spacer()
+      
+      ProgressView()
+        .progressViewStyle(CircularProgressViewStyle(tint: color))
+        .scaleEffect(0.8)
+    }
+    .padding(16)
+    .background(
+      RoundedRectangle(cornerRadius: 16)
+        .fill(color.opacity(0.1))
+        .overlay(
+          RoundedRectangle(cornerRadius: 16)
+            .stroke(color.opacity(0.3), lineWidth: 1)
+        )
+    )
+  }
+  
+  private func errorCard(_ message: String) -> some View {
+    HStack(spacing: 12) {
+      Image(systemName: "exclamationmark.triangle.fill")
+        .font(.system(size: 20))
+        .foregroundColor(.red)
+      
+      Text("Error: \(message)")
+        .font(.system(size: 14, weight: .medium, design: .rounded))
+        .foregroundColor(.white)
+        .lineLimit(2)
+      
+      Spacer()
+    }
+    .padding(16)
+    .background(
+      RoundedRectangle(cornerRadius: 16)
+        .fill(Color.red.opacity(0.1))
+        .overlay(
+          RoundedRectangle(cornerRadius: 16)
+            .stroke(Color.red.opacity(0.3), lineWidth: 1)
+        )
+    )
+  }
+  
+  private var transcriptCard: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Label("Transcript", systemImage: "text.quote")
+        .font(.system(size: 14, weight: .semibold, design: .rounded))
+        .foregroundColor(.white.opacity(0.7))
+      
+      Text(transcript)
+        .font(.system(size: 14, weight: .regular, design: .rounded))
+        .foregroundColor(.white)
+        .lineLimit(3)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.black.opacity(0.3))
+        .cornerRadius(8)
+    }
+    .padding(16)
+    .background(
+      RoundedRectangle(cornerRadius: 16)
+        .fill(Color.white.opacity(0.05))
+        .overlay(
+          RoundedRectangle(cornerRadius: 16)
+            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+        )
+    )
+  }
+  
+  private var logsCard: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Label("Activity Log", systemImage: "list.bullet.rectangle")
+        .font(.system(size: 16, weight: .semibold, design: .rounded))
+        .foregroundColor(.white)
+      
+      ScrollView {
+        VStack(alignment: .leading, spacing: 8) {
+          if ws.logs.isEmpty {
+            Text("No activity yet")
+              .font(.system(size: 13, weight: .regular, design: .monospaced))
+              .foregroundColor(.white.opacity(0.4))
+              .italic()
+          } else {
+            ForEach(Array(ws.logs.enumerated()), id: \.offset) { _, item in
+              HStack(alignment: .top, spacing: 8) {
+                Text(timeStr(item.0))
+                  .font(.system(size: 11, weight: .regular, design: .monospaced))
+                  .foregroundColor(.white.opacity(0.4))
+                
+                Text("[\(item.1)]")
+                  .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                  .foregroundColor(logColor(for: item.1))
+                
+                Text(item.2)
+                  .font(.system(size: 12, weight: .regular, design: .monospaced))
+                  .foregroundColor(.white.opacity(0.8))
+                  .lineLimit(2)
+                
+                Spacer()
+              }
+              .padding(.vertical, 4)
+              .padding(.horizontal, 8)
+              .background(Color.black.opacity(0.2))
+              .cornerRadius(6)
+            }
+          }
+        }
+      }
+      .frame(maxHeight: 200)
+    }
+    .padding(16)
+    .background(
+      RoundedRectangle(cornerRadius: 16)
+        .fill(Color.white.opacity(0.05))
+        .overlay(
+          RoundedRectangle(cornerRadius: 16)
+            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+        )
+    )
+  }
+  
+  private var debugCard: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Label("Debug Information", systemImage: "ant.circle")
+        .font(.system(size: 16, weight: .semibold, design: .rounded))
+        .foregroundColor(.white)
+      
+      VStack(alignment: .leading, spacing: 8) {
+        debugRow("State", ws.state.rawValue)
+        debugRow("WebSocket", normalizedWs() ?? "(invalid)")
+        debugRow("Session ID", String(env.sessionId.prefix(12)) + "...")
+        debugRow("Token", String(env.token.prefix(12)) + "...")
+        if !ws.lastEvent.isEmpty { debugRow("Last Event", ws.lastEvent) }
+        if !ws.closeInfo.isEmpty { debugRow("Close Info", ws.closeInfo) }
+        if !ws.lastAck.isEmpty { debugRow("Last Ack", ws.lastAck) }
+        if !ws.lastPayload.isEmpty { debugRow("Payload", ws.lastPayload, lineLimit: 2) }
+      }
+      .padding(12)
+      .background(Color.black.opacity(0.3))
+      .cornerRadius(8)
+    }
+    .padding(16)
+    .background(
+      RoundedRectangle(cornerRadius: 16)
+        .fill(Color.white.opacity(0.05))
+        .overlay(
+          RoundedRectangle(cornerRadius: 16)
+            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+        )
+    )
+  }
+  
+  private func debugRow(_ label: String, _ value: String, lineLimit: Int = 1) -> some View {
+    HStack(alignment: .top) {
+      Text(label + ":")
+        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+        .foregroundColor(.white.opacity(0.5))
+        .frame(width: 80, alignment: .leading)
+      
+      Text(value)
+        .font(.system(size: 12, weight: .regular, design: .monospaced))
+        .foregroundColor(.white.opacity(0.8))
+        .lineLimit(lineLimit)
+        .textSelection(.enabled)
+      
+      Spacer()
+    }
+  }
+  
+  private var inputBar: some View {
+    VStack(spacing: 0) {
+      Divider()
+        .background(Color.white.opacity(0.2))
+      
+      HStack(spacing: 12) {
+        HStack {
           TextField("Type a message…", text: $input)
-            .textFieldStyle(.roundedBorder)
+            .font(.system(size: 16, weight: .regular, design: .rounded))
+            .foregroundColor(.white)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled(true)
             .submitLabel(.send)
             .onSubmit(onSend)
             .disabled(ws.state != .open)
             .focused($inputFocused)
-          Button(action: onRecordOrStop) {
-            if case .recording = stt { Label("Stop", systemImage: "stop.circle.fill") }
-            else { Label("Rec", systemImage: "mic.circle.fill") }
+            .accentColor(.blue)
+          
+          if !input.isEmpty {
+            Button(action: { input = "" }) {
+              Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 16))
+                .foregroundColor(.white.opacity(0.5))
+            }
           }
-          .disabled({ if case .uploading = stt { return true }; if case .transcribing = stt { return true }; if case .sending = stt { return true }; return false }())
-          Button(action: onSend) { Label("Send", systemImage: "paperplane.fill") }
-            .disabled(ws.state != .open || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color.white.opacity(0.1))
+        .cornerRadius(24)
+        
+        Button(action: onRecordOrStop) {
+          ZStack {
+            Circle()
+              .fill(sttButtonColor)
+              .frame(width: 44, height: 44)
+            
+            Image(systemName: sttButtonIcon)
+              .font(.system(size: 20, weight: .semibold))
+              .foregroundColor(.white)
+          }
+        }
+        .disabled(sttButtonDisabled)
+        
+        Button(action: onSend) {
+          ZStack {
+            Circle()
+              .fill(sendButtonColor)
+              .frame(width: 44, height: 44)
+            
+            Image(systemName: "paperplane.fill")
+              .font(.system(size: 18, weight: .semibold))
+              .foregroundColor(.white)
+          }
+        }
+        .disabled(ws.state != .open || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
       }
-    }
-    .onAppear(perform: onAppear)
-    .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
-      connect()
+      .padding(.horizontal, 16)
+      .padding(.vertical, 12)
+      .background(
+        Color(red: 0.08, green: 0.08, blue: 0.12)
+          .overlay(
+            LinearGradient(gradient: Gradient(colors: [Color.white.opacity(0.05), Color.clear]), startPoint: .top, endPoint: .bottom)
+          )
+      )
     }
   }
-
-  private var pillText: String { healthStatus == "connected" ? "Connected" : healthStatus == "disconnected" ? "Disconnected" : "Checking…" }
-  private var pillColor: Color { healthStatus == "connected" ? .green : healthStatus == "disconnected" ? .red : .gray }
+  
+  private var sttButtonIcon: String {
+    if case .recording = stt { return "stop.fill" }
+    return "mic.fill"
+  }
+  
+  private var sttButtonColor: Color {
+    if case .recording = stt { return Color.red }
+    if sttButtonDisabled { return Color.white.opacity(0.2) }
+    return Color.blue
+  }
+  
+  private var sttButtonDisabled: Bool {
+    if case .uploading = stt { return true }
+    if case .transcribing = stt { return true }
+    if case .sending = stt { return true }
+    return false
+  }
+  
+  private var sendButtonColor: Color {
+    ws.state != .open || input.isEmpty ? Color.white.opacity(0.2) : Color.green
+  }
+  
+  private func logColor(for level: String) -> Color {
+    switch level.lowercased() {
+    case "error": return .red
+    case "warn": return .orange
+    case "info": return .blue
+    case "debug": return .purple
+    default: return .white.opacity(0.6)
+    }
+  }
 
   private func onAppear() {
     healthCheck()
     connect()
   }
-  private func timeStr(_ d: Date) -> String { let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f.string(from: d) }
+  
+  private func timeStr(_ d: Date) -> String {
+    let f = DateFormatter()
+    f.dateFormat = "HH:mm:ss"
+    return f.string(from: d)
+  }
+  
   private func normalizedWs() -> String? {
     guard var u = URL(string: env.relayWsUrl) else { return nil }
-    u.deleteLastPathComponent(); // ensure path base
+    u.deleteLastPathComponent()
     return u.absoluteString.hasSuffix("/ws") ? u.absoluteString : (URL(string: env.relayWsUrl)?.absoluteString ?? env.relayWsUrl)
   }
 
   private func healthCheck() {
     guard var comp = URLComponents(string: env.relayWsUrl) else { return }
-    // derive http health
     comp.scheme = "http"
     comp.path = comp.path.hasSuffix("/ws") ? String(comp.path.dropLast(3)) : comp.path
     var url = comp.url
@@ -190,7 +538,6 @@ struct ContentView: View {
       switch result {
       case .success(let url):
         stt = .uploading(url)
-        // size guard
         if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path), let size = attrs[.size] as? NSNumber, size.intValue > 25*1024*1024 {
           showError("Too large", "Audio exceeds 25 MB free-tier limit.")
           resetStt(); return

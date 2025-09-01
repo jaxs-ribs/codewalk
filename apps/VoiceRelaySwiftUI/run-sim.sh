@@ -59,7 +59,7 @@ INFO_PLIST="$APP_PATH/Info.plist"
 if [[ -f "$INFO_PLIST" ]]; then
   if ! /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$INFO_PLIST" >/dev/null 2>&1; then
     echo "[run] NSMicrophoneUsageDescription missing; adding default message"
-    /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string We use the microphone to capture voice commands for transcription." "$INFO_PLIST" || true
+    /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'We use the microphone to capture voice commands for transcription.'" "$INFO_PLIST" || true
   fi
   # Looser ATS for local dev and ws/http on 127.0.0.1
   if ! /usr/libexec/PlistBuddy -c "Print :NSAppTransportSecurity" "$INFO_PLIST" >/dev/null 2>&1; then
@@ -71,6 +71,16 @@ if [[ -f "$INFO_PLIST" ]]; then
     /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSExceptionDomains:api.groq.com dict" "$INFO_PLIST" || true
     /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSExceptionDomains:api.groq.com:NSIncludesSubdomains bool YES" "$INFO_PLIST" || true
     /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSExceptionDomains:api.groq.com:NSTemporaryExceptionMinimumTLSVersion string TLSv1.2" "$INFO_PLIST" || true
+  fi
+  # Add fullscreen and UI settings
+  if ! /usr/libexec/PlistBuddy -c "Print :UIRequiresFullScreen" "$INFO_PLIST" >/dev/null 2>&1; then
+    echo "[run] Adding fullscreen and UI settings"
+    /usr/libexec/PlistBuddy -c "Add :UIRequiresFullScreen bool YES" "$INFO_PLIST" || true
+    /usr/libexec/PlistBuddy -c "Add :UIStatusBarStyle string UIStatusBarStyleLightContent" "$INFO_PLIST" || true
+    /usr/libexec/PlistBuddy -c "Add :UIViewControllerBasedStatusBarAppearance bool NO" "$INFO_PLIST" || true
+    /usr/libexec/PlistBuddy -c "Add :UILaunchScreen dict" "$INFO_PLIST" || true
+    /usr/libexec/PlistBuddy -c "Add :UISupportedInterfaceOrientations array" "$INFO_PLIST" || true
+    /usr/libexec/PlistBuddy -c "Add :UISupportedInterfaceOrientations:0 string UIInterfaceOrientationPortrait" "$INFO_PLIST" || true
   fi
 fi
 
