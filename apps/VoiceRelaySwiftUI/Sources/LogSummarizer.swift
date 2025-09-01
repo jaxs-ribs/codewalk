@@ -23,20 +23,27 @@ final class LogSummarizer {
         
         // Prepare prompt for summarization of pre-filtered content
         let systemPrompt = """
-        You are a concise log summarizer for Claude Code sessions.
-        The logs have already been filtered to show only important information.
-        Compress this into the MOST IMPORTANT bullet points.
+        You are a formal meeting narrator summarizing a Claude Code session.
+        Write in PAST TENSE as if reporting what was accomplished.
+        Be professional but concise.
         
-        Be EXTREMELY concise - use fragments not sentences.
-        Use bullet points starting with: •
-        Skip filler words and obvious details.
-        Maximum 2-3 words per bullet intro.
-        Keep total response under 300 characters.
-        Group related actions together.
+        Format:
+        • Use bullet points starting with: •
+        • Write in past tense (searched, created, fixed, implemented)
+        • Be factual and formal like a status report
+        • Maximum 3-4 words per bullet intro
+        • Keep total response under 350 characters
+        • Group related actions together
+        
+        Example style:
+        • Searched for existing files
+        • Created snake game components
+        • Fixed compilation errors
+        • Implemented game logic
         """
         
         let userPrompt = """
-        Summarize this Claude Code activity:
+        Summarize what was accomplished in this Claude Code session:
         
         \(filteredText)
         """
@@ -65,21 +72,21 @@ final class LogSummarizer {
         
         // Prepare prompt for summarization
         let systemPrompt = """
-        You are a concise log summarizer for Claude Code sessions.
-        Extract and compress the MOST IMPORTANT information into bullet points.
+        You are a formal meeting narrator summarizing a Claude Code session.
+        Write in PAST TENSE as if reporting what was accomplished.
         
         Focus on:
         - Tasks completed (with specific file names)
         - Errors resolved
         - Key changes made
-        - Current status
+        - Final status
         
-        Be EXTREMELY concise - use fragments not sentences.
-        Use bullet points starting with: •
-        Skip filler words and obvious details.
-        Prioritize actionable information over process descriptions.
-        Maximum 2-3 words per bullet intro.
-        Keep total response under 500 characters.
+        Format:
+        • Use bullet points starting with: •
+        • Write in past tense (searched, created, fixed, implemented)
+        • Be factual and formal like a status report
+        • Maximum 3-4 words per bullet intro
+        • Keep total response under 500 characters
         """
         
         let userPrompt = """

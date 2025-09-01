@@ -22,7 +22,10 @@ struct ContentView: View {
   @State private var timer: Timer? = nil
   @FocusState private var inputFocused: Bool
   @State private var logSummary: String = ""
+  @State private var rawFilteredLogs: String = ""
+  @State private var showRawLogs: Bool = false
   @State private var isSummarizingLogs: Bool = false
+  @State private var isFetchingRawLogs: Bool = false
   private let logSummarizer: LogSummarizer
 
   /// Recording/transcription state machine
@@ -83,20 +86,6 @@ struct ContentView: View {
       }
       .navigationTitle("Voice Relay")
       .navigationBarTitleDisplayMode(.large)
-      .toolbar {
-        ToolbarItemGroup(placement: .navigationBarTrailing) {
-          Button(action: { fetchAndSummarizeLogs() }) {
-            Image(systemName: "list.bullet.rectangle.fill")
-              .foregroundColor(.white)
-              .font(.system(size: 18))
-          }
-          Button(action: { ws.disconnect() }) {
-            Image(systemName: "bolt.slash.fill")
-              .foregroundColor(.white)
-              .font(.system(size: 18))
-          }
-        }
-      }
       .safeAreaInset(edge: .bottom) {
         inputBar
       }
@@ -289,16 +278,57 @@ struct ContentView: View {
         
         Spacer()
         
-        if isSummarizingLogs {
+        if isSummarizingLogs || isFetchingRawLogs {
           ProgressView()
             .progressViewStyle(CircularProgressViewStyle(tint: .white))
             .scaleEffect(0.7)
         }
       }
       
+      // Buttons for fetching summary and raw logs
+      HStack(spacing: 12) {
+        Button(action: { fetchAndSummarizeLogs() }) {
+          Label("Fetch Summary", systemImage: "doc.text.magnifyingglass")
+            .font(.system(size: 14, weight: .medium, design: .rounded))
+            .foregroundColor(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Color.blue.opacity(0.3))
+            .cornerRadius(10)
+        }
+        .disabled(isSummarizingLogs || isFetchingRawLogs)
+        
+        Button(action: { fetchRawFilteredLogs() }) {
+          Label("Fetch Raw", systemImage: "doc.plaintext")
+            .font(.system(size: 14, weight: .medium, design: .rounded))
+            .foregroundColor(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Color.green.opacity(0.3))
+            .cornerRadius(10)
+        }
+        .disabled(isSummarizingLogs || isFetchingRawLogs)
+        
+        Spacer()
+      }
+      
       ScrollView {
         VStack(alignment: .leading, spacing: 8) {
-          if !logSummary.isEmpty {
+          if showRawLogs && !rawFilteredLogs.isEmpty {
+            // Show raw filtered logs
+            Text("Raw Filtered Logs:")
+              .font(.system(size: 13, weight: .bold, design: .rounded))
+              .foregroundColor(.white.opacity(0.7))
+            
+            Text(rawFilteredLogs)
+              .font(.system(size: 12, weight: .regular, design: .monospaced))
+              .foregroundColor(.white.opacity(0.85))
+              .padding(12)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .background(Color.green.opacity(0.1))
+              .cornerRadius(8)
+          } else if !logSummary.isEmpty {
+            // Show summary
             Text(logSummary)
               .font(.system(size: 14, weight: .regular, design: .rounded))
               .foregroundColor(.white.opacity(0.9))
@@ -311,15 +341,15 @@ struct ContentView: View {
               .font(.system(size: 13, weight: .regular, design: .monospaced))
               .foregroundColor(.white.opacity(0.4))
               .italic()
-          } else if !isSummarizingLogs {
-            Text("Tap the logs button to fetch activity summary")
+          } else {
+            Text("Tap a button above to fetch logs")
               .font(.system(size: 13, weight: .regular, design: .monospaced))
               .foregroundColor(.white.opacity(0.4))
               .italic()
           }
         }
       }
-      .frame(maxHeight: 400)
+      .frame(maxHeight: 250)
     }
     .padding(16)
     .background(
@@ -652,6 +682,7 @@ struct ContentView: View {
   private func fetchAndSummarizeLogs() {
     isSummarizingLogs = true
     logSummary = ""
+    showRawLogs = false  // Hide raw logs when fetching summary
     
     // Request filtered logs optimized for summarization
     ws.requestFilteredLogs()
@@ -671,6 +702,23 @@ struct ContentView: View {
           self.logSummary = "Failed to summarize: \(error.localizedDescription)"
         }
       }
+    }
+  }
+  
+  private func fetchRawFilteredLogs() {
+    isFetchingRawLogs = true
+    rawFilteredLogs = ""
+    showRawLogs = true  // Show raw logs view
+    logSummary = ""  // Clear summary
+    
+    // Request filtered logs
+    ws.requestFilteredLogs()
+    
+    // Set up observer to wait for filtered logs response
+    ws.onFilteredLogs = { filteredItems in
+      // Display the raw filtered logs
+      self.rawFilteredLogs = filteredItems.joined(separator: "\n")
+      self.isFetchingRawLogs = false
     }
   }
 }
