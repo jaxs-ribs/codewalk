@@ -11,6 +11,40 @@ final class LogSummarizer {
         self.session = URLSession(configuration: .default)
     }
     
+    /// Summarizes pre-filtered text from Claude Code session
+    /// - Parameters:
+    ///   - filteredText: Pre-filtered and formatted log text
+    ///   - completion: Callback with summarized text or error
+    func summarizeFilteredText(_ filteredText: String, completion: @escaping (Result<String, Error>) -> Void) {
+        guard !filteredText.isEmpty else {
+            completion(.success("No activity to summarize"))
+            return
+        }
+        
+        // Prepare prompt for summarization of pre-filtered content
+        let systemPrompt = """
+        You are a concise log summarizer for Claude Code sessions.
+        The logs have already been filtered to show only important information.
+        Compress this into the MOST IMPORTANT bullet points.
+        
+        Be EXTREMELY concise - use fragments not sentences.
+        Use bullet points starting with: •
+        Skip filler words and obvious details.
+        Maximum 2-3 words per bullet intro.
+        Keep total response under 300 characters.
+        Group related actions together.
+        """
+        
+        let userPrompt = """
+        Summarize this Claude Code activity:
+        
+        \(filteredText)
+        """
+        
+        // Call Groq API
+        callGroqAPI(systemPrompt: systemPrompt, userPrompt: userPrompt, completion: completion)
+    }
+    
     /// Summarizes activity logs from Claude Code session
     /// - Parameters:
     ///   - logs: Array of log entries (Date, level, message)

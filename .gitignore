@@ -67,3 +67,4 @@ apps/VoiceRelaySwiftUI/**/*.dSYM.zip
 apps/VoiceRelaySwiftUI/**/*.dSYM
 
 apps/VoiceRelaySwiftUI/app_debug.log
+artifacts/*

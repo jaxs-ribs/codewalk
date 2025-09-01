@@ -653,13 +653,16 @@ struct ContentView: View {
     isSummarizingLogs = true
     logSummary = ""
     
-    // First fetch the logs
-    ws.requestLogs()
+    // Request filtered logs optimized for summarization
+    ws.requestFilteredLogs()
     
-    // Set up observer to wait for logs response
-    ws.onLogs = { logs in
-      // Now summarize the logs
-      self.logSummarizer.summarizeLogs(logs) { result in
+    // Set up observer to wait for filtered logs response
+    ws.onFilteredLogs = { filteredItems in
+      // Convert filtered strings to a format the summarizer can use
+      let formattedText = filteredItems.joined(separator: "\n")
+      
+      // Use the summarizer with pre-filtered content
+      self.logSummarizer.summarizeFilteredText(formattedText) { result in
         self.isSummarizingLogs = false
         switch result {
         case .success(let summary):

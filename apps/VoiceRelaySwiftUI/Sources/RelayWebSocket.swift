@@ -30,6 +30,7 @@ final class RelayWebSocket: NSObject, ObservableObject {
 
   var onStateChange: ((State)->Void)?
   var onLogs: (([(Date,String,String)])->Void)?
+  var onFilteredLogs: (([String])->Void)?
   var onAck: ((String)->Void)?
   var onConfirmation: ((String?, String, String)->Void)?
 
@@ -150,6 +151,11 @@ final class RelayWebSocket: NSObject, ObservableObject {
     send(json: ["type":"get_logs","id":id,"limit":limit])
   }
   
+  func requestFilteredLogs(limit: Int = 100) {
+    let id = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+    send(json: ["type":"get_filtered_logs","id":id,"limit":limit])
+  }
+  
   func sendConfirmResponse(id: String?, accept: Bool) {
     var payload: [String: Any] = [
       "type": "confirm_response",
@@ -225,6 +231,9 @@ final class RelayWebSocket: NSObject, ObservableObject {
       }
       logs = mapped
       onLogs?(mapped)
+    } else if msg["type"] as? String == "filtered_logs", let items = msg["items"] as? [String] {
+      // Handle pre-filtered logs for summarization
+      onFilteredLogs?(items)
     }
   }
 }

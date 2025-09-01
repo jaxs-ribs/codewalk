@@ -35,6 +35,8 @@ crossterm = { version = "0.28", optional = true }
 
 # Utilities
 lazy_static = "1.4"
+chrono = "0.4"
+rand = "0.8"
 
 # Relay client deps
 tokio-tungstenite = "0.23"
