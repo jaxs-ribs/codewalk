@@ -14,19 +14,19 @@ Manual Test (multiple terminals)
 1) Prepare `.env` at repo root with `RELAY_WS_URL`, `RELAY_SESSION_ID`, `RELAY_TOKEN` and your groq api key.
 
 2) Terminal A — Relay server
-
+```
    cd relay/server
    cargo run --release --bin relay-server
-
+```
 3) Terminal B — Workstation (TUI)
-
+```
    cargo run -p orchestrator --bin codewalk
-
+```
 4) Terminal C — App
-
+```
    cd apps/VoiceRelaySwiftUI
    ./run-sim.sh
-
+```
 5) Send a message from the app
 
    Type text and press Send. The app shows “Ack: received”. The TUI prints a `RELAY> user_text: ...` line.
