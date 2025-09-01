@@ -1,5 +1,7 @@
 import Foundation
 
+/// Loads configuration from .env file (bundled in app) or environment variables.
+/// Required: GROQ_API_KEY, RELAY_WS_URL, RELAY_SESSION_ID, RELAY_TOKEN
 struct EnvConfig {
   var groqApiKey: String = ""
   var relayWsUrl: String = ""

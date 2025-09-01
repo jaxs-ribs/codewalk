@@ -1,6 +1,8 @@
 import Foundation
 import Combine
 
+/// Manages WebSocket connection to relay server. Handles reconnection and message routing.
+/// Protocol: JSON messages with type field. Sends user_text, receives various event types.
 final class RelayWebSocket: NSObject, ObservableObject {
   enum State: String { case idle, connecting, open, closed, error }
 

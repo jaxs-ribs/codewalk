@@ -1,5 +1,6 @@
 import SwiftUI
 
+/// Entry point. Sets up dark theme and navigation bar appearance.
 @main
 struct VoiceRelaySwiftUIApp: App {
   init() {

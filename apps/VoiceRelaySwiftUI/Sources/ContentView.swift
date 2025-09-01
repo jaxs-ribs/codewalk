@@ -3,6 +3,9 @@ import SwiftUI
 import UIKit
 #endif
 
+/// Main UI. Manages WebSocket connection, audio recording, and STT transcription.
+/// Architecture: ContentView -> RelayWebSocket -> Server
+///                        -> Recorder -> STTUploader -> Groq API
 struct ContentView: View {
   @State private var env = EnvConfig.load()
   @State private var healthStatus: String = "checking"
@@ -19,6 +22,7 @@ struct ContentView: View {
   @State private var timer: Timer? = nil
   @FocusState private var inputFocused: Bool
 
+  /// Recording/transcription state machine
   enum STTState: Equatable { case idle, recording(started: Date), uploading(URL), transcribing, sending, error(String) }
   @State private var stt: STTState = .idle
 

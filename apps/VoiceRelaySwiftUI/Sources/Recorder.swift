@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 
+/// Records audio to WAV files (16kHz, mono, 16-bit PCM) for STT transcription.
 final class Recorder: NSObject, AVAudioRecorderDelegate {
   private var recorder: AVAudioRecorder?
   private(set) var fileURL: URL?

@@ -1,108 +1,90 @@
-VoiceRelay SwiftUI (iOS)
+# VoiceRelay SwiftUI
 
-This is a native Swift/SwiftUI rewrite of the VoiceRelay mobile client. It preserves the original functionality with a cleaner, modern UI:
+iOS voice transcription client with WebSocket relay connectivity.
 
-- Health check to your relay server
-- WebSocket connect/hello/heartbeats
-- Send text messages to the relay (`user_text`)
-- Press-to-record voice → upload to Groq Whisper → send transcript to relay
-- Logs request over the same WebSocket path
+## Architecture
 
-It does not depend on React Native. Build and run directly in Xcode.
+```
+ContentView (UI)
+    ├── RelayWebSocket → Relay Server (WebSocket JSON)
+    ├── Recorder → WAV files (16kHz mono PCM)  
+    └── STTUploader → Groq Whisper API
+```
 
+## Core Components
 
-Requirements
-- Xcode 15+
-- iOS 15+ Simulator or device
-- A running relay server (see repo’s `relay/server`)
-- Top-level `.env` with:
-  - `GROQ_API_KEY`
-  - `RELAY_WS_URL` (e.g., `ws://127.0.0.1:3001/ws` or base URL; the app normalizes it)
-  - `RELAY_SESSION_ID`
-  - `RELAY_TOKEN`
+**ContentView** - Main UI with dark glassmorphic design. Manages recording state machine and displays connection status/logs.
 
+**RelayWebSocket** - WebSocket client with auto-reconnect, heartbeat (30s), and typed message routing. Sends `hello` on connect.
 
-Project setup
-1) Create the Xcode project (one-time)
-   - In Xcode: File → New → Project… → iOS → App
-   - Product Name: VoiceRelaySwiftUI
-   - Interface: SwiftUI; Language: Swift
-   - Save inside repo at `apps/VoiceRelaySwiftUI/`
+**Recorder** - AVAudioRecorder wrapper producing 16kHz WAV files optimized for Whisper.
 
-2) Add the provided source files
-   - Drag these files into the app target (tick “Copy items if needed”):
-     - `apps/VoiceRelaySwiftUI/Sources/VoiceRelaySwiftUIApp.swift`
-     - `apps/VoiceRelaySwiftUI/Sources/ContentView.swift`
-     - `apps/VoiceRelaySwiftUI/Sources/EnvConfig.swift`
-     - `apps/VoiceRelaySwiftUI/Sources/RelayWebSocket.swift`
-     - `apps/VoiceRelaySwiftUI/Sources/Recorder.swift`
-     - `apps/VoiceRelaySwiftUI/Sources/STTUploader.swift`
+**STTUploader** - Multipart form uploader to Groq's transcription endpoint. Low-memory streaming.
 
-3) Configure Info.plist (or replace with the provided one)
-   - Add the following keys (or use the provided `apps/VoiceRelaySwiftUI/Info.plist`):
-     - `NSMicrophoneUsageDescription` = "We use the microphone to capture voice commands for transcription."
-     - `NSAppTransportSecurity` →
-       - `NSAllowsLocalNetworking` = YES
-       - `NSAllowsArbitraryLoads` = YES (dev only; remove when you host relay over TLS)
-       - `NSExceptionDomains` → `api.groq.com` (TLS min v1.2)
+**EnvConfig** - Loads `.env` from bundle or environment variables.
 
-4) Bundle .env (for simulator convenience)
-   - Add a Run Script Build Phase (after “Compile Sources”):
-     - Script:
-       
-       cp -f "${PROJECT_DIR}/../../.env" "${TARGET_BUILD_DIR}/${PRODUCT_NAME}.app/.env" || true
-       
-     - This makes the app load the top-level `.env` automatically when built from this repo.
+## Quick Start
 
-5) Build & run on Simulator
-   - Start relay:
-     - Terminal A:
-       - `cd relay/server`
-       - `cargo run --release --bin relay-server`
-   - Ensure `.env` is configured at the repo root (same values used by server & app)
-   - In Xcode: select a Simulator → Run.
+```bash
+# Terminal A - Start relay server
+cd relay/server && cargo run --release --bin relay-server
 
+# Terminal B - Run iOS app  
+cd apps/VoiceRelaySwiftUI && ./run-sim.sh
+```
 
-Usage
-- The app reads `.env` from the app bundle. Config fields are not shown in the UI (no secrets on screen). For dev, edit the repo `.env` and re-run `./run-sim.sh`.
-- On launch (and when returning to foreground) the app automatically connects to the relay and sends `hello`.
-- Use the bottom toolbar to type a message and Send. The input disables until the socket is open.
-- Tap Rec to start; tap Stop to upload to Groq STT and auto-send the transcript. The recording/transcription flow is a typed state machine to avoid stuck states.
-- Use the toolbar action to fetch Logs. A Disconnect action is available for debugging.
-- Debug details (state/last events/close codes) are available via the “Show details” toggle.
+## Setup
 
+1. **Environment** - Create `.env` at repo root:
+```
+GROQ_API_KEY=your_key
+RELAY_WS_URL=ws://127.0.0.1:3001
+RELAY_SESSION_ID=your_session
+RELAY_TOKEN=your_token
+```
 
-Troubleshooting
-- Microphone permission denied: the app will show a prompt to open Settings.
-- Empty transcript: check the Upload/Transcribe logs; try a longer utterance and minimal background noise. The app records WAV 16kHz mono (or M4A fallback) and uploads via URLSession.
-- Can’t connect to relay on Simulator: ensure you’re using `ws://127.0.0.1:3001/ws` (not `localhost`). The run script injects ATS allowances for local dev automatically.
+2. **Dependencies**:
+- Xcode 15+, iOS 16+
+- `brew install xcodegen`
 
-Terminal-only quick run
+3. **Run**: `./run-sim.sh` handles everything (project generation, build, simulator launch)
 
-Run everything from the terminal without opening Xcode.
+## Protocol
 
-Prereqs:
-- Xcode installed and selected: `xcode-select -p`
-- Homebrew tools: `brew install xcodegen`
+**Send:**
+```json
+{"type": "hello", "session_id": "...", "token": "..."}
+{"type": "user_text", "text": "...", "final": true, "source": "stt"}
+{"type": "request_logs"}
+```
 
-Steps:
-- Terminal A — start relay server
-  - `cd relay/server`
-  - `cargo run --release --bin relay-server`
+**Receive:**
+```json
+{"type": "event", "event": "...", "payload": {...}}
+{"type": "ack", "id": "..."}
+{"type": "logs", "logs": [...]}
+```
 
-- Terminal B — build and launch the iOS app on Simulator
-  - `cd apps/VoiceRelaySwiftUI`
-  - `chmod +x run-sim.sh` (first time only)
-  - `./run-sim.sh`
+## Recording Flow
 
-What the script does:
-- Generates the Xcode project from `project.yml` via XcodeGen
-- Copies the repo’s top-level `.env` into the built `.app` bundle
-- Boots (or reuses) an iOS Simulator (defaults to iPhone 16 Pro if available)
-- Builds the app into a local DerivedData directory
-- Installs and launches the app on the Simulator
-- Adds microphone privacy text and ATS overrides for local networking to the built Info.plist
+```
+idle → recording → uploading → transcribing → sending → idle
+                ↘ cancel ↗
+```
 
-Environment
-- The app reads `.env` at runtime from the app bundle (copied by build).
-- Edit the repo’s `.env` and rerun `./run-sim.sh` to pick up changes.
+## Files
+
+- `ContentView.swift` - UI and state management
+- `RelayWebSocket.swift` - WebSocket connection logic
+- `Recorder.swift` - Audio recording
+- `STTUploader.swift` - Groq API integration  
+- `EnvConfig.swift` - Configuration loader
+- `project.yml` - XcodeGen project definition
+- `run-sim.sh` - Build and launch script
+
+## Troubleshooting
+
+- **Black screen**: Simulator needs reboot
+- **Can't connect**: Use `127.0.0.1` not `localhost`
+- **No transcript**: Speak clearly, check Groq API key
+- **Mic permission**: App prompts for Settings access

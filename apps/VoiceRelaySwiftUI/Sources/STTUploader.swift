@@ -2,6 +2,7 @@ import Foundation
 
 struct STTResponse: Decodable { let text: String?; let segments: [Segment]?; struct Segment: Decodable { let text: String? } }
 
+/// Uploads audio files to Groq API for Whisper transcription. Uses multipart/form-data.
 final class STTUploader {
   enum STTError: Error { case http(Int, String); case empty; case io }
 
