@@ -117,16 +117,26 @@ final class ElevenLabsTTS {
         print("[TTS] playAudio called with URL: \(url.path)")
         
         do {
-            // Configure audio session for playback
+            // Configure audio session for playback with maximum volume
             let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.playback, mode: .default)
+            try audioSession.setCategory(.playback, mode: .default, options: [.defaultToSpeaker])
             try audioSession.setActive(true)
+            
+            // Set the audio session volume to maximum (if available on iOS 16+)
+            if #available(iOS 16.0, *) {
+                try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+            }
+            
             print("[TTS] Audio session configured for playback")
             
             player = try AVAudioPlayer(contentsOf: url)
             player?.prepareToPlay()
+            player?.volume = 1.0  // Set volume to maximum (1.0 = 100%)
+            player?.enableRate = true
+            player?.rate = 1.0  // Normal playback speed
+            
             let isPlaying = player?.play() ?? false
-            print("[TTS] Audio player started: \(isPlaying), duration: \(player?.duration ?? 0) seconds")
+            print("[TTS] Audio player started: \(isPlaying), volume: \(player?.volume ?? 0), duration: \(player?.duration ?? 0) seconds")
             
             // Clean up the temporary file after a delay
             DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 10) {

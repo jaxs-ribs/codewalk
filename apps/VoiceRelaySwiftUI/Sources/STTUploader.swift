@@ -12,7 +12,11 @@ final class STTUploader: NSObject {
     config.timeoutIntervalForRequest = 120
     config.timeoutIntervalForResource = 300
     // Force HTTP/2 over TCP instead of HTTP/3 QUIC to avoid message size limits
-    // Note: assumesHTTP3Capable was removed, HTTP/2 will be used by default
+    config.multipathServiceType = .none
+    // Disable HTTP/3 by using older protocol versions
+    if #available(iOS 15.0, *) {
+      config.requiresDNSSECValidation = false
+    }
     return URLSession(configuration: config)
   }()
 
@@ -23,6 +27,8 @@ final class STTUploader: NSObject {
     req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
     req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
     req.setValue("application/json", forHTTPHeaderField: "Accept")
+    // Try to force HTTP/2
+    req.assumesHTTP3Capable = false
     
     // Build multipart body with streaming support
     let streamingBody = StreamingMultipartBody(boundary: boundary, fileURL: fileURL, responseFormat: responseFormat)
