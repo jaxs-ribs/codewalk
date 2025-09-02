@@ -124,22 +124,31 @@ private class StreamingMultipartBody {
 private class CompositeInputStream: InputStream {
   private var streams: [InputStream]
   private var currentIndex = 0
+  private var _streamStatus: Stream.Status = .notOpen
+  private var _streamError: Error?
   
   init(streams: [InputStream]) {
     self.streams = streams
-    super.init(data: Data())
+    super.init(data: Data()) // Note: This is a dummy initialization
+  }
+  
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
   }
   
   override func open() {
+    _streamStatus = .opening
     for stream in streams {
       stream.open()
     }
+    _streamStatus = .open
   }
   
   override func close() {
     for stream in streams {
       stream.close()
     }
+    _streamStatus = .closed
   }
   
   override func read(_ buffer: UnsafeMutablePointer<UInt8>, maxLength len: Int) -> Int {
@@ -158,8 +167,14 @@ private class CompositeInputStream: InputStream {
         currentIndex += 1
       } else {
         // Error occurred
+        _streamError = stream.streamError
+        _streamStatus = .error
         return bytesRead
       }
+    }
+    
+    if currentIndex >= streams.count && totalBytesRead == 0 {
+      _streamStatus = .atEnd
     }
     
     return totalBytesRead
@@ -168,6 +183,31 @@ private class CompositeInputStream: InputStream {
   override var hasBytesAvailable: Bool {
     guard currentIndex < streams.count else { return false }
     return streams[currentIndex].hasBytesAvailable || currentIndex < streams.count - 1
+  }
+  
+  override var streamStatus: Stream.Status {
+    return _streamStatus
+  }
+  
+  override var streamError: Error? {
+    return _streamError
+  }
+  
+  override var delegate: StreamDelegate? {
+    get { return nil }
+    set { /* Ignore delegate setting */ }
+  }
+  
+  override func schedule(in aRunLoop: RunLoop, forMode mode: RunLoop.Mode) {
+    for stream in streams {
+      stream.schedule(in: aRunLoop, forMode: mode)
+    }
+  }
+  
+  override func remove(from aRunLoop: RunLoop, forMode mode: RunLoop.Mode) {
+    for stream in streams {
+      stream.remove(from: aRunLoop, forMode: mode)
+    }
   }
 }
 
