@@ -9,8 +9,14 @@ SCHEME="VoiceAgent"
 APP_NAME="VoiceAgent"
 BUNDLE_ID="com.example.voiceagent"
 CONFIG="Debug"
+LOG_DIR="$APP_DIR/logs"
+LOG_FILE="$LOG_DIR/VoiceAgent_$(date +%Y%m%d_%H%M%S).log"
 
 echo "[run] Using project at: $APP_DIR"
+
+# Create logs directory
+mkdir -p "$LOG_DIR"
+echo "[run] Logs will be saved to: $LOG_FILE"
 
 command -v xcodegen >/dev/null 2>&1 || { echo "[run] Install XcodeGen: brew install xcodegen"; exit 1; }
 command -v xcodebuild >/dev/null 2>&1 || { echo "[run] xcodebuild not found (install Xcode)."; exit 1; }
@@ -61,11 +67,34 @@ xcodebuild \
 APP_PATH="$DERIVED/Build/Products/$CONFIG-iphonesimulator/$APP_NAME.app"
 if [[ ! -d "$APP_PATH" ]]; then echo "[run] App not found at $APP_PATH"; exit 1; fi
 
+echo "[run] Verifying Info.plist privacy keys..."
+INFO_PLIST="$APP_PATH/Info.plist"
+if [[ -f "$INFO_PLIST" ]]; then
+  if ! /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$INFO_PLIST" >/dev/null 2>&1; then
+    echo "[run] Adding NSMicrophoneUsageDescription..."
+    /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'VoiceAgent needs microphone access for voice recording.'" "$INFO_PLIST" || true
+  fi
+fi
+
 echo "[run] Installing app to simulator..."
 xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 xcrun simctl uninstall "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 xcrun simctl install "$UDID" "$APP_PATH"
 
-echo "[run] Launching app..."
-xcrun simctl launch "$UDID" "$BUNDLE_ID" || true
-echo "[run] Done. The app should now be running in Simulator."
+echo "[run] Launching app with logging..."
+xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" 2>&1 | tee "$LOG_FILE" &
+LOG_PID=$!
+
+echo ""
+echo "=========================================="
+echo "App is running!"
+echo "Logs are being saved to: $LOG_FILE"
+echo "Press Ctrl+C to stop"
+echo "=========================================="
+echo ""
+
+# Keep script running and forward Ctrl+C to terminate app
+trap "echo '[run] Stopping app...'; xcrun simctl terminate '$UDID' '$BUNDLE_ID' 2>/dev/null || true; kill $LOG_PID 2>/dev/null || true; exit 0" INT
+
+# Wait for log process
+wait $LOG_PID

@@ -27,6 +27,12 @@ targets:
         UISupportedInterfaceOrientations: 
           - UIInterfaceOrientationPortrait
         UILaunchScreen: {}
+        NSMicrophoneUsageDescription: VoiceAgent needs microphone access for voice recording
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.voiceagent
+    preBuildScripts:
+      - name: Copy .env file
+        script: |
+          cp -f "${PROJECT_DIR}/.env" "${TARGET_BUILD_DIR}/${PRODUCT_NAME}.app/.env" 2>/dev/null || true
+        basedOnDependencyAnalysis: false

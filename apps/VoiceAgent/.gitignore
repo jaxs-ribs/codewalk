@@ -39,6 +39,7 @@ fastlane/test_output
 
 # Logs
 *.log
+logs/
 
 # Temporary files
 *.tmp
