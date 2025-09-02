@@ -1,9 +1,10 @@
 import Foundation
 
 /// Loads configuration from .env file (bundled in app) or environment variables.
-/// Required: GROQ_API_KEY, RELAY_WS_URL, RELAY_SESSION_ID, RELAY_TOKEN
+/// Required: GROQ_API_KEY, RELAY_WS_URL, RELAY_SESSION_ID, RELAY_TOKEN, ELEVENLABS_KEY
 struct EnvConfig {
   var groqApiKey: String = ""
+  var elevenLabsKey: String = ""
   var relayWsUrl: String = ""
   var sessionId: String = ""
   var token: String = ""
@@ -18,6 +19,7 @@ struct EnvConfig {
     let env = ProcessInfo.processInfo.environment
     var c = EnvConfig()
     c.groqApiKey = env["GROQ_API_KEY"] ?? ""
+    c.elevenLabsKey = env["ELEVENLABS_KEY"] ?? ""
     c.relayWsUrl = env["RELAY_WS_URL"] ?? ""
     c.sessionId = env["RELAY_SESSION_ID"] ?? ""
     c.token = env["RELAY_TOKEN"] ?? ""
@@ -34,6 +36,7 @@ struct EnvConfig {
       let value = String(line[line.index(after: eq)...]).trimmingCharacters(in: .whitespaces)
       switch key {
       case "GROQ_API_KEY": c.groqApiKey = value
+      case "ELEVENLABS_KEY": c.elevenLabsKey = value
       case "RELAY_WS_URL": c.relayWsUrl = value
       case "RELAY_SESSION_ID": c.sessionId = value
       case "RELAY_TOKEN": c.token = value

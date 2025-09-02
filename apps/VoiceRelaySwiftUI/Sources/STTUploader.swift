@@ -12,7 +12,7 @@ final class STTUploader: NSObject {
     config.timeoutIntervalForRequest = 120
     config.timeoutIntervalForResource = 300
     // Force HTTP/2 over TCP instead of HTTP/3 QUIC to avoid message size limits
-    config.assumesHTTP3Capable = false
+    // Note: assumesHTTP3Capable was removed, HTTP/2 will be used by default
     return URLSession(configuration: config)
   }()
 
@@ -69,12 +69,13 @@ private class StreamingMultipartBody {
   let boundary: String
   let fileURL: URL
   let responseFormat: String
-  let contentLength: Int
+  var contentLength: Int
   
   init(boundary: String, fileURL: URL, responseFormat: String) {
     self.boundary = boundary
     self.fileURL = fileURL
     self.responseFormat = responseFormat
+    self.contentLength = 0 // Initialize first
     
     // Calculate content length
     let fileSize = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? Int) ?? 0

@@ -16,7 +16,9 @@ final class LogSummarizer {
     ///   - filteredText: Pre-filtered and formatted log text
     ///   - completion: Callback with summarized text or error
     func summarizeFilteredText(_ filteredText: String, completion: @escaping (Result<String, Error>) -> Void) {
+        print("[TTS] summarizeFilteredText called with text length: \(filteredText.count)")
         guard !filteredText.isEmpty else {
+            print("[TTS] Filtered text is empty, returning placeholder")
             completion(.success("No activity to summarize"))
             return
         }
@@ -49,6 +51,7 @@ final class LogSummarizer {
         """
         
         // Call Groq API
+        print("[TTS] Calling Groq API for summarization")
         callGroqAPI(systemPrompt: systemPrompt, userPrompt: userPrompt, completion: completion)
     }
     
@@ -96,6 +99,7 @@ final class LogSummarizer {
         """
         
         // Call Groq API
+        print("[TTS] Calling Groq API for summarization")
         callGroqAPI(systemPrompt: systemPrompt, userPrompt: userPrompt, completion: completion)
     }
     

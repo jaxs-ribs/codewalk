@@ -26,7 +26,9 @@ struct ContentView: View {
   @State private var showRawLogs: Bool = false
   @State private var isSummarizingLogs: Bool = false
   @State private var isFetchingRawLogs: Bool = false
+  @State private var isSpeakingSummary: Bool = false
   private let logSummarizer: LogSummarizer
+  private let ttsService: ElevenLabsTTS
 
   /// Recording/transcription state machine
   enum STTState: Equatable { case idle, recording(started: Date), uploading(URL), transcribing, sending, error(String) }
@@ -35,6 +37,8 @@ struct ContentView: View {
   init() {
     let env = EnvConfig.load()
     self.logSummarizer = LogSummarizer(groqApiKey: env.groqApiKey)
+    self.ttsService = ElevenLabsTTS(apiKey: env.elevenLabsKey)
+    print("[TTS] ContentView initialized with ElevenLabs key: \(String(env.elevenLabsKey.prefix(10)))...")
   }
 
   var body: some View {
@@ -278,7 +282,7 @@ struct ContentView: View {
         
         Spacer()
         
-        if isSummarizingLogs || isFetchingRawLogs {
+        if isSummarizingLogs || isFetchingRawLogs || isSpeakingSummary {
           ProgressView()
             .progressViewStyle(CircularProgressViewStyle(tint: .white))
             .scaleEffect(0.7)
@@ -296,7 +300,7 @@ struct ContentView: View {
             .background(Color.blue.opacity(0.3))
             .cornerRadius(10)
         }
-        .disabled(isSummarizingLogs || isFetchingRawLogs)
+        .disabled(isSummarizingLogs || isFetchingRawLogs || isSpeakingSummary)
         
         Button(action: { fetchRawFilteredLogs() }) {
           Label("Fetch Raw", systemImage: "doc.plaintext")
@@ -307,7 +311,7 @@ struct ContentView: View {
             .background(Color.green.opacity(0.3))
             .cornerRadius(10)
         }
-        .disabled(isSummarizingLogs || isFetchingRawLogs)
+        .disabled(isSummarizingLogs || isFetchingRawLogs || isSpeakingSummary)
         
         Spacer()
       }
@@ -680,25 +684,35 @@ struct ContentView: View {
   #endif
   
   private func fetchAndSummarizeLogs() {
+    print("[TTS] fetchAndSummarizeLogs called")
     isSummarizingLogs = true
     logSummary = ""
     showRawLogs = false  // Hide raw logs when fetching summary
     
     // Request filtered logs optimized for summarization
+    print("[TTS] Requesting filtered logs from WebSocket")
     ws.requestFilteredLogs()
     
     // Set up observer to wait for filtered logs response
     ws.onFilteredLogs = { filteredItems in
+      print("[TTS] Received \(filteredItems.count) filtered log items")
       // Convert filtered strings to a format the summarizer can use
       let formattedText = filteredItems.joined(separator: "\n")
+      print("[TTS] Formatted text length: \(formattedText.count) characters")
       
       // Use the summarizer with pre-filtered content
+      print("[TTS] Calling logSummarizer.summarizeFilteredText")
       self.logSummarizer.summarizeFilteredText(formattedText) { result in
         self.isSummarizingLogs = false
         switch result {
         case .success(let summary):
+          print("[TTS] Summary received: '\(summary)'")
           self.logSummary = summary
+          // Speak the summary using ElevenLabs TTS
+          print("[TTS] Calling speakSummary with summary")
+          self.speakSummary(summary)
         case .failure(let error):
+          print("[TTS] Summary failed: \(error.localizedDescription)")
           self.logSummary = "Failed to summarize: \(error.localizedDescription)"
         }
       }
@@ -719,6 +733,28 @@ struct ContentView: View {
       // Display the raw filtered logs
       self.rawFilteredLogs = filteredItems.joined(separator: "\n")
       self.isFetchingRawLogs = false
+    }
+  }
+  
+  private func speakSummary(_ summary: String) {
+    print("[TTS] speakSummary called with: '\(summary)'")
+    guard !summary.isEmpty else {
+      print("[TTS] Summary is empty, skipping TTS")
+      return
+    }
+    
+    print("[TTS] Starting TTS synthesis")
+    isSpeakingSummary = true
+    ttsService.synthesizeAndPlay(text: summary) { result in
+      DispatchQueue.main.async {
+        self.isSpeakingSummary = false
+        switch result {
+        case .success:
+          print("[TTS] TTS playback completed successfully")
+        case .failure(let error):
+          print("[TTS] TTS playback failed: \(error.localizedDescription)")
+        }
+      }
     }
   }
 }
