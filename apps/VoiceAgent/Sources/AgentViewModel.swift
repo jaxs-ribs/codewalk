@@ -12,6 +12,7 @@ class AgentViewModel: ObservableObject {
     private var audioTimer: Timer?
     private var recorder: Recorder?
     private var sttUploader: STTUploader?
+    private var ttsService: ElevenLabsTTS?
     private var recordingStartTime: Date?
     private var recordingTimer: Timer?
     
@@ -27,6 +28,15 @@ class AgentViewModel: ObservableObject {
         
         // Load environment config
         let env = EnvConfig.load()
+        
+        // Initialize TTS service with ElevenLabs API
+        if !env.elevenLabsKey.isEmpty {
+            ttsService = ElevenLabsTTS(apiKey: env.elevenLabsKey)
+            print("[VoiceAgent] ElevenLabs TTS service initialized")
+        } else {
+            print("[VoiceAgent] WARNING: No ElevenLabs API key found in .env")
+        }
+        
         sttUploader = STTUploader(groqApiKey: env.groqApiKey)
         print("[VoiceAgent] STTUploader initialized")
     }
@@ -43,8 +53,8 @@ class AgentViewModel: ObservableObject {
             // Can't interrupt transcription, wait for it to complete
             print("[VoiceAgent] Transcription in progress, please wait...")
         case .talking:
-            // In future, will interrupt TTS here
-            transitionTo(.recording)
+            // INTERRUPT TTS and start recording immediately
+            interruptAndRecord()
         }
     }
     
@@ -133,7 +143,9 @@ class AgentViewModel: ObservableObject {
                     
                     // Reset for next recording
                     self.recordingDuration = 0
-                    transitionTo(.idle)
+                    
+                    // NOW SPEAK THE TRANSCRIPTION BACK (placeholder for AI response)
+                    self.speakResponse(transcript)
                 }
                 
                 // Clean up temp file
@@ -147,6 +159,52 @@ class AgentViewModel: ObservableObject {
                 }
             }
         }
+    }
+    
+    private func speakResponse(_ text: String) {
+        print("[VoiceAgent] Speaking response: \(text)")
+        
+        guard let ttsService = ttsService else {
+            print("[VoiceAgent] ERROR: TTS service not initialized")
+            transitionTo(.idle)
+            return
+        }
+        
+        // Transition to talking state
+        transitionTo(.talking)
+        
+        // Start simulated audio levels for visual feedback
+        simulateAudioLevels()
+        
+        // Speak the text
+        ttsService.speak(text: text) { [weak self] completed in
+            Task { @MainActor in
+                if completed {
+                    print("[VoiceAgent] TTS completed normally")
+                } else {
+                    print("[VoiceAgent] TTS was interrupted")
+                }
+                
+                // Only go to idle if we're still in talking state (not interrupted)
+                if self?.currentState == .talking {
+                    self?.transitionTo(.idle)
+                }
+            }
+        }
+    }
+    
+    private func interruptAndRecord() {
+        print("[VoiceAgent] Interrupting TTS and starting recording")
+        
+        // Stop audio level simulation FIRST for instant visual feedback
+        audioTimer?.invalidate()
+        audioLevel = 0
+        
+        // Start recording IMMEDIATELY (before stopping TTS for zero visual delay)
+        startRecording()
+        
+        // Stop TTS after recording has started (audio will cut instantly anyway)
+        ttsService?.stop()
     }
     
     func transitionTo(_ newState: AgentState) {
@@ -166,11 +224,9 @@ class AgentViewModel: ObservableObject {
             generator.notificationOccurred(.warning)
         }
         
-        audioTimer?.invalidate()
-        
-        if newState == .talking {
-            simulateAudioLevels()
-        } else {
+        // Stop audio timer if not talking
+        if newState != .talking {
+            audioTimer?.invalidate()
             withAnimation(.easeOut(duration: 0.2)) {
                 audioLevel = 0.0
             }
@@ -180,6 +236,7 @@ class AgentViewModel: ObservableObject {
     }
     
     private func simulateAudioLevels() {
+        audioTimer?.invalidate()
         audioTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
             Task { @MainActor in
                 let targetLevel = Float.random(in: 0.1...0.9)
