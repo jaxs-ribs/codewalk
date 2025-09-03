@@ -3,6 +3,7 @@ pub mod types;
 pub mod providers;
 pub mod extractors;
 pub mod memory;
+pub mod confirmation;
 
 pub use traits::{LLMProvider, PlanExtractor};
 pub use types::{CommandPlan, PlanStep, PlanStatus, PlanConfidence, RouterResponse, RouterAction};

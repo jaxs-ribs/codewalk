@@ -30,6 +30,31 @@ impl ExecutorFactory {
         }
     }
     
+    /// Create a new executor session with resume support
+    pub async fn create_with_resume(
+        executor_type: ExecutorType,
+        prompt: &str,
+        resume_session_id: &str,
+        config: Option<ExecutorConfig>,
+    ) -> Result<Box<dyn ExecutorSession>> {
+        let config = config.unwrap_or_default();
+        
+        match executor_type {
+            ExecutorType::Claude => {
+                ClaudeExecutor::launch_with_resume(prompt, resume_session_id, config).await
+            }
+            ExecutorType::Devin => {
+                Err(anyhow::anyhow!("Devin executor does not support resume"))
+            }
+            ExecutorType::Codex => {
+                Err(anyhow::anyhow!("Codex executor does not support resume"))
+            }
+            ExecutorType::Custom(name) => {
+                Err(anyhow::anyhow!("Custom executor '{}' does not support resume", name))
+            }
+        }
+    }
+    
     /// Get the default executor type
     pub fn default_executor() -> ExecutorType {
         ExecutorType::Claude

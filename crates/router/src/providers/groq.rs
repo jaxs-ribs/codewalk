@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use crate::traits::LLMProvider;
 use crate::types::RouterResponse;
 use crate::memory::ConversationMemory;
+use crate::confirmation;
 
 pub struct GroqProvider {
     client: Option<llm::Client>,
@@ -41,6 +42,16 @@ impl LLMProvider for GroqProvider {
     }
     
     async fn text_to_plan(&mut self, text: &str) -> Result<String> {
+        // Check if this appears to be a confirmation response based on recent history
+        if self.is_confirmation_context() {
+            // Use the confirmation analyzer for short responses
+            if text.split_whitespace().count() <= 5 {
+                let action = confirmation::analyze_confirmation_response(text);
+                let response = confirmation::create_confirmation_response(action);
+                return Ok(serde_json::to_string(&response)?);
+            }
+        }
+        
         let client = self.client.as_ref()
             .ok_or_else(|| anyhow::anyhow!("GroqProvider not initialized"))?;
         
@@ -144,6 +155,21 @@ Return JSON: {"action": "launch_claude" or "cannot_parse", "prompt": "user reque
             crate::types::RouterAction::CannotParse => {
                 format!("Cannot parse: {}", parsed.reason.as_ref().unwrap_or(&"unclear command".to_string()))
             }
+            crate::types::RouterAction::ContinuePrevious => {
+                "User wants to continue previous session".to_string()
+            }
+            crate::types::RouterAction::StartNew => {
+                "User wants to start a new session".to_string()
+            }
+            crate::types::RouterAction::DeclineSession => {
+                "User declined to start a session".to_string()
+            }
+            crate::types::RouterAction::AmbiguousConfirmation => {
+                "User gave ambiguous confirmation, needs clarification".to_string()
+            }
+            crate::types::RouterAction::UnintelligibleResponse => {
+                "Could not understand user's response".to_string()
+            }
         };
         self.memory.add_assistant_message(decision_summary);
         
@@ -157,5 +183,21 @@ Return JSON: {"action": "launch_claude" or "cannot_parse", "prompt": "user reque
     
     fn is_ready(&self) -> bool {
         self.ready
+    }
+}
+
+impl GroqProvider {
+    /// Check if the last message in memory suggests we're waiting for a confirmation
+    fn is_confirmation_context(&self) -> bool {
+        self.memory.get_last_assistant_message()
+            .map(|msg| {
+                let lower = msg.to_lowercase();
+                lower.contains("should i start") || 
+                lower.contains("do you want") ||
+                lower.contains("continue previous") ||
+                lower.contains("start new") ||
+                lower.contains("would you like")
+            })
+            .unwrap_or(false)
     }
 }

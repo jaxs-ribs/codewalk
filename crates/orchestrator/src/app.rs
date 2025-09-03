@@ -56,6 +56,7 @@ pub struct App {
     // Session history
     pub last_session_summary: Option<String>,
     pub last_session_time: Option<std::time::Instant>,
+    pub last_completed_session_id: Option<String>,  // For resumption
     // Summary caching
     pub cached_summary: Option<String>,
     pub cached_summary_time: Option<std::time::Instant>,
@@ -80,7 +81,7 @@ impl App {
         let mut log_summarizer = crate::log_summarizer::LogSummarizer::new();
         let _ = log_summarizer.initialize(); // Initialize Groq client
         
-        Self {
+        let mut app = Self {
             output: Vec::new(),
             input: String::new(),
             mode: Mode::Idle,
@@ -109,9 +110,17 @@ impl App {
             log_summarizer,
             last_session_summary: None,
             last_session_time: None,
+            last_completed_session_id: None,
             cached_summary: None,
             cached_summary_time: None,
-        }
+        };
+        
+        // Load previous session info from disk
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(app.load_previous_session())
+        });
+        
+        app
     }
     
     /// Clean up any running executor sessions before exit
@@ -123,7 +132,7 @@ impl App {
         let _ = self.center.terminate().await;
     }
 
-    pub fn append_output(&mut self, line: String) {
+    pub(crate) fn append_output(&mut self, line: String) {
         // Wrap long lines before adding to output
         let wrapped = TextWrapper::wrap_line(&line);
         for wrapped_line in wrapped {
@@ -310,6 +319,11 @@ impl App {
     }
 
     async fn route_command(&mut self, text: &str) -> Result<()> {
+        // If we're in confirmation mode, handle the response differently
+        if self.mode == Mode::ConfirmingExecutor {
+            return self.handle_confirmation_response(text).await;
+        }
+        
         self.append_output(format!("{} Routing command...", prefixes::PLAN));
         
         // Get router response from LLM
@@ -350,10 +364,25 @@ impl App {
                             executor_name: self.center.executor.name().to_string(),
                             working_dir: config.working_dir.to_string_lossy().to_string(),
                             confirmation_id: None,  // This path doesn't use core, so no ID
+                            is_initial_prompt: true,
+                            session_action: None,
                         });
                         self.mode = Mode::ConfirmingExecutor;
-                        self.append_output(format!("{} Ready to launch {}. Press Enter to confirm, Escape to cancel.", 
-                                                 prefixes::PLAN, self.center.executor.name()));
+                        
+                        // Show better message based on whether we have a previous session
+                        let confirmation_msg = if self.last_completed_session_id.is_some() {
+                            if let Some(summary) = &self.last_session_summary {
+                                format!("{} Should I start Claude for: {}?\n   Previous: {}\n   Say 'continue', 'new', or 'no'", 
+                                    prefixes::PLAN, prompt, summary)
+                            } else {
+                                format!("{} Should I start Claude for: {}?\n   Say 'continue previous', 'start new', or 'no'", 
+                                    prefixes::PLAN, prompt)
+                            }
+                        } else {
+                            format!("{} Should I start Claude for: {}?\n   Say 'yes' or 'no'", 
+                                prefixes::PLAN, prompt)
+                        };
+                        self.append_output(confirmation_msg);
                     } else {
                         // Launch immediately without confirmation
                         self.append_output(format!("{} Launching {} with: {}", prefixes::EXEC, self.center.executor.name(), prompt));
@@ -369,12 +398,62 @@ impl App {
                 self.append_output(format!("{} {}", prefixes::PLAN, reason));
                 self.mode = Mode::Idle;
             }
+            // These should only appear in confirmation context, not normal routing
+            RouterAction::ContinuePrevious | RouterAction::StartNew | 
+            RouterAction::DeclineSession | RouterAction::AmbiguousConfirmation | 
+            RouterAction::UnintelligibleResponse => {
+                self.append_output(format!("{} Unexpected confirmation response in normal routing context", prefixes::PLAN));
+                self.mode = Mode::Idle;
+            }
         }
         
         Ok(())
     }
     
-    async fn launch_executor(&mut self, prompt: &str) -> Result<()> {
+    pub(crate) async fn launch_executor_with_resume(&mut self, prompt: &str, resume_session_id: &str) -> Result<()> {
+        // Don't generate new ID, we're resuming
+        self.start_new_session(resume_session_id.to_string());
+        
+        self.append_output(format!("{} Resuming {} session {}...", prefixes::EXEC, self.center.executor.name(), &resume_session_id[..8.min(resume_session_id.len())]));
+
+        // Create a config with default settings
+        let config = ExecutorConfig::default();
+        
+        match self.center.launch_with_resume(prompt, resume_session_id, Some(config.clone())).await {
+            Ok(()) => {
+                self.mode = Mode::ExecutorRunning;
+                
+                // Store active executor session information
+                self.active_executor_type = Some(self.center.executor.clone());
+                self.active_executor_started_at = Some(std::time::Instant::now());
+                self.active_executor_session_id = Some(resume_session_id.to_string());
+                
+                // Notify core that a session has resumed
+                if let Some(core) = &self.core {
+                    core.set_active_session(self.center.executor.name().to_string());
+                }
+                
+                self.append_output(format!("{} Resumed {} session", prefixes::EXEC, self.center.executor.name()));
+                self.append_output(format!("Working directory: {:?}", config.working_dir));
+                self.append_output(format!("Continuing with: {}", prompt));
+                
+                // Save resumed session info to disk
+                self.save_session_status(resume_session_id, "Resumed session", "active");
+                Ok(())
+            }
+            Err(e) => {
+                self.show_error_with_details(
+                    "Failed to resume executor",
+                    &format!("Could not resume {} session", self.center.executor.name()),
+                    format!("Error: {}\n\nYou may want to start a fresh session instead.", e)
+                );
+                self.mode = Mode::Idle;
+                Err(e)
+            }
+        }
+    }
+    
+    pub(crate) async fn launch_executor(&mut self, prompt: &str) -> Result<()> {
         // Generate new session ID
         let session_id = self.generate_session_id();
         self.start_new_session(session_id.clone());
@@ -434,7 +513,12 @@ impl App {
                         if self.active_executor_session_id.is_none() {
                             if let Some(sid) = v.get("session_id").and_then(|s| s.as_str()) {
                                 self.active_executor_session_id = Some(sid.to_string());
+                                self.active_executor_started_at = Some(std::time::Instant::now());
+                                self.active_executor_type = Some(control_center::ExecutorType::Claude);
                                 self.append_output(format!("{} Captured Claude session ID: {}", prefixes::EXEC, sid));
+                                
+                                // Save initial session status
+                                self.save_session_status(sid, "Session started", "active");
                             }
                         }
                         // Map type
@@ -500,6 +584,14 @@ impl App {
                     }
                 ).await {
                     Ok(summary) => {
+                        // Save session completion details
+                        if let Some(session_id) = &self.active_executor_session_id {
+                            self.save_session_status(session_id, &summary, "completed");
+                            crate::logger::log_event("SESSION", &format!("Session {} completed with summary: {}", session_id, summary));
+                            // Store the session ID for potential resumption
+                            self.last_completed_session_id = Some(session_id.clone());
+                        }
+                        
                         self.last_session_summary = Some(summary);
                         self.last_session_time = Some(std::time::Instant::now());
                         crate::logger::log_event("SESSION", "Saved last session summary");
@@ -915,6 +1007,8 @@ impl App {
                             executor_name: self.center.executor.name().to_string(),
                             working_dir: ExecutorConfig::default().working_dir.to_string_lossy().to_string(),
                             confirmation_id: pc.id.clone(),
+                            is_initial_prompt: true,
+                            session_action: None,
                         });
                         self.mode = Mode::ConfirmingExecutor;
                         self.append_output(format!("{} Ready to launch {}. Press Enter to confirm, Escape to cancel.", prefixes::PLAN, self.center.executor.name()));
@@ -958,21 +1052,27 @@ impl App {
         if self.active_executor_session_id.is_none() {
             crate::logger::log_event("SUMMARY", "No active session");
             
-            // Check if we have a last session to talk about
+            // First check in-memory last session
             if let Some(ref last_summary) = self.last_session_summary {
                 if let Some(last_time) = self.last_session_time {
                     let elapsed = last_time.elapsed();
                     if elapsed.as_secs() < 300 { // Within 5 minutes
-                        return format!("No active session. In the last session, {}", last_summary);
+                        return format!("Previous session completed {} seconds ago: {}", elapsed.as_secs(), last_summary);
                     } else if elapsed.as_secs() < 3600 { // Within an hour
                         let mins = elapsed.as_secs() / 60;
-                        return format!("No active session. {} minutes ago, {}", mins, last_summary);
+                        return format!("Previous session completed {} minutes ago: {}", mins, last_summary);
                     }
                 }
-                return format!("No active session. Previously, {}", last_summary);
+                return format!("Previous session: {}", last_summary);
             }
             
-            return "No active Claude session running".to_string();
+            // Try to load from disk if not in memory
+            if let Some((session_id, summary)) = self.load_previous_session().await {
+                crate::logger::log_event("SUMMARY", &format!("Loaded previous session {} from disk", session_id));
+                return format!("Previous session: {}", summary);
+            }
+            
+            return "No active session. No previous sessions found.".to_string();
         }
         
         // Check cache (valid for 10 seconds)
@@ -1006,19 +1106,36 @@ impl App {
             return msg;
         }
         
-        // Get summary from log summarizer
+        // Get summary from log summarizer  
         match self.log_summarizer.summarize_logs(&logs).await {
             Ok(summary) => {
-                crate::logger::log_event("SUMMARY", &format!("Generated summary: {}", summary));
+                let session_info = if let Some(session_id) = &self.active_executor_session_id {
+                    let duration = self.active_executor_started_at
+                        .map(|t| t.elapsed().as_secs())
+                        .unwrap_or(0);
+                    format!("Current session (ID: {}, running for {}s): {}", 
+                        &session_id[..8], // Show first 8 chars of session ID
+                        duration, 
+                        summary)
+                } else {
+                    format!("Current session: {}", summary)
+                };
+                
+                crate::logger::log_event("SUMMARY", &format!("Generated summary: {}", session_info));
                 // Cache the summary
-                self.cached_summary = Some(summary.clone());
+                self.cached_summary = Some(session_info.clone());
                 self.cached_summary_time = Some(std::time::Instant::now());
-                summary
+                session_info
             },
             Err(e) => {
                 crate::logger::log_error("SUMMARY", &format!("Failed to summarize: {}", e));
                 // Fallback to basic message
-                let msg = format!("Claude is working on your request. {} events logged so far.", logs.len());
+                let msg = if let Some(session_id) = &self.active_executor_session_id {
+                    format!("Current session (ID: {}) is active. {} events logged.", 
+                        &session_id[..8], logs.len())
+                } else {
+                    format!("Session is active. {} events logged.", logs.len())
+                };
                 self.cached_summary = Some(msg.clone());
                 self.cached_summary_time = Some(std::time::Instant::now());
                 msg
@@ -1151,5 +1268,74 @@ impl App {
             let remove_count = self.session_logs.len() - MAX_LOGS;
             self.session_logs.drain(0..remove_count);
         }
+    }
+    
+    pub fn save_session_status(&self, session_id: &str, summary: &str, status: &str) {
+        let session_dir = self.artifacts_dir.join(format!("session_{}", session_id));
+        if !session_dir.exists() {
+            let _ = fs::create_dir_all(&session_dir);
+        }
+        
+        // Check if this is a resumed session
+        let is_resumed = self.last_completed_session_id.as_ref()
+            .map(|id| id == session_id)
+            .unwrap_or(false);
+        
+        let metadata = serde_json::json!({
+            "session_id": session_id,
+            "status": status,
+            "summary": summary,
+            "completed_at": chrono::Utc::now().to_rfc3339(),
+            "executor_type": self.active_executor_type.as_ref().map(|t| format!("{:?}", t)),
+            "duration_secs": self.active_executor_started_at.map(|t| t.elapsed().as_secs()),
+            "is_resumed": is_resumed,
+            "resumed_from": if is_resumed { self.last_completed_session_id.clone() } else { None },
+        });
+        
+        let metadata_path = session_dir.join("metadata.json");
+        if let Ok(mut file) = fs::File::create(&metadata_path) {
+            let _ = file.write_all(serde_json::to_string_pretty(&metadata).unwrap().as_bytes());
+        }
+    }
+    
+    pub async fn load_previous_session(&mut self) -> Option<(String, String)> {
+        // Look for the most recent session in artifacts directory
+        let mut sessions = Vec::new();
+        
+        if let Ok(entries) = fs::read_dir(&self.artifacts_dir) {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                            if name.starts_with("session_") {
+                                let metadata_path = path.join("metadata.json");
+                                if metadata_path.exists() {
+                                    if let Ok(content) = fs::read_to_string(&metadata_path) {
+                                        if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&content) {
+                                            sessions.push((
+                                                meta["completed_at"].as_str().unwrap_or("").to_string(),
+                                                meta["summary"].as_str().unwrap_or("").to_string(),
+                                                meta["session_id"].as_str().unwrap_or("").to_string(),
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Sort by completion time and return the most recent
+        sessions.sort_by(|a, b| b.0.cmp(&a.0));
+        
+        // Also update last_completed_session_id if we found one
+        if let Some((_, _, id)) = sessions.first() {
+            self.last_completed_session_id = Some(id.clone());
+        }
+        
+        sessions.first().map(|(_, summary, id)| (id.clone(), summary.clone()))
     }
 }

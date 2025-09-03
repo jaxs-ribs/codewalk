@@ -113,6 +113,13 @@ impl ConversationMemory {
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty()
     }
+    
+    pub fn get_last_assistant_message(&self) -> Option<&str> {
+        self.messages.iter()
+            .rev()
+            .find(|msg| matches!(msg.role, MessageRole::Assistant))
+            .map(|msg| msg.content.as_str())
+    }
 }
 
 impl Default for ConversationMemory {

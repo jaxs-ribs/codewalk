@@ -1,6 +1,7 @@
 mod app;
 mod backend;
 mod config;
+mod confirmation_handler;
 mod constants;
 #[cfg(feature = "tui")]
 mod handlers;
@@ -13,6 +14,7 @@ mod utils;
 mod core_bridge;
 mod log_summarizer;
 mod logger;
+mod session_history;
 
 use anyhow::Result;
 use app::App;

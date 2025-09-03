@@ -54,6 +54,8 @@ impl RouterPort for RouterAdapter {
                             RouteAction::CannotParse
                         }
                     }
+                    // Confirmation responses shouldn't appear in normal routing
+                    _ => RouteAction::CannotParse
                 }
             }
         } else {
@@ -71,6 +73,8 @@ impl RouterPort for RouterAdapter {
                         RouteAction::CannotParse
                     }
                 }
+                // Confirmation responses shouldn't appear in normal routing
+                _ => RouteAction::CannotParse
             }
         };
         

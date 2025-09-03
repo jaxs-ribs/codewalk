@@ -33,6 +33,19 @@ impl ControlCenter {
         }
         Ok(())
     }
+    
+    /// Launch an editor session with resume flag
+    pub async fn launch_with_resume(&mut self, prompt: &str, resume_session_id: &str, config: Option<ExecutorConfig>) -> Result<()> {
+        let session = ExecutorFactory::create_with_resume(self.executor.clone(), prompt, resume_session_id, config.clone()).await?;
+        self.session = Some(session);
+
+        // Attach logging if requested
+        if let Some(cfg) = config {
+            let rx = spawn_log_monitor(Some(&cfg.working_dir));
+            self.log_rx = Some(rx);
+        }
+        Ok(())
+    }
 
     /// Attach a log monitor for a working directory (without launching)
     pub fn attach_logs(&mut self, working_dir: &Path) {

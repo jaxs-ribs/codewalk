@@ -75,6 +75,15 @@ pub struct PendingExecutor {
     pub executor_name: String,
     pub working_dir: String,
     pub confirmation_id: Option<String>,
+    pub is_initial_prompt: bool,  // true for first prompt, false for re-prompt
+    pub session_action: Option<SessionAction>,  // What the user wants to do
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SessionAction {
+    ContinuePrevious,
+    StartNew,
+    Declined,
 }
 
 impl PlanState {

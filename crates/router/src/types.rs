@@ -13,6 +13,12 @@ pub struct RouterResponse {
 pub enum RouterAction {
     LaunchClaude,
     CannotParse,
+    // Session confirmation responses
+    ContinuePrevious,
+    StartNew,
+    DeclineSession,
+    AmbiguousConfirmation,
+    UnintelligibleResponse,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

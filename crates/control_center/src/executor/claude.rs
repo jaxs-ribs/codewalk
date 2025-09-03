@@ -19,6 +19,51 @@ pub struct ClaudeExecutor {
 }
 
 impl ClaudeExecutor {
+    pub async fn launch_with_resume(prompt: &str, resume_session_id: &str, config: ExecutorConfig) -> Result<Box<dyn ExecutorSession>> {
+        // Ensure working directory exists
+        let working_dir = Self::ensure_dir(&config.working_dir)?;
+        
+        // Build the Claude command with resume flag
+        let mut cmd = TokioCommand::new("claude");
+        
+        // Core arguments for headless mode with resume
+        cmd.arg("-p")
+           .arg("--resume")
+           .arg(resume_session_id)
+           .arg(prompt);
+        
+        // Add streaming JSON output for better logging
+        cmd.arg("--output-format")
+           .arg("stream-json");
+        
+        // Set working directory
+        cmd.current_dir(&working_dir);
+        
+        // Configure stdio
+        cmd.stdin(Stdio::null())
+           .stdout(Stdio::piped())
+           .stderr(Stdio::piped());
+        
+        eprintln!("[ClaudeExecutor] Launching with resume: claude -p --resume {} \"{}\"", resume_session_id, prompt);
+        eprintln!("[ClaudeExecutor] Working directory: {}", working_dir.display());
+        
+        // Spawn the process
+        let mut child = cmd.spawn()?;
+        
+        let stdout = child.stdout.take()
+            .ok_or_else(|| anyhow::anyhow!("Failed to capture stdout"))?;
+        let stderr = child.stderr.take()
+            .ok_or_else(|| anyhow::anyhow!("Failed to capture stderr"))?;
+        
+        Ok(Box::new(ClaudeExecutor {
+            child,
+            stdout_reader: BufReader::new(stdout).lines(),
+            stderr_reader: BufReader::new(stderr).lines(),
+            config,
+            session_id: Some(resume_session_id.to_string()), // We know the session ID
+        }))
+    }
+    
     /// Expand tilde in path to home directory
     fn expand_tilde(path: &PathBuf) -> PathBuf {
         if let Some(path_str) = path.to_str() {
