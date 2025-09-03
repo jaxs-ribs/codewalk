@@ -88,10 +88,15 @@ final class ElevenLabsTTS: NSObject {
         let body: [String: Any] = [
             "text": text,
             "model_id": modelId,
-            "output_format": outputFormat
+            "output_format": outputFormat,
+            "voice_settings": [
+                "speed": 1.2,  // Increase speed by 15% (range: 0.7 to 1.2)
+                "stability": 0.1,
+                "similarity_boost": 0.8
+            ]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        print("[TTS] Request body: \(body)")
+        print("[TTS] Request with speed 1.15x (15% faster)")
         
         let (data, response) = try await URLSession.shared.data(for: request)
         print("[TTS] Received response with \(data.count) bytes")

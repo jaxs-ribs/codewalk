@@ -146,8 +146,8 @@ class AgentViewModel: ObservableObject {
             // Can't interrupt transcription, wait for it to complete
             print("[VoiceAgent] Transcription in progress, please wait...")
         case .talking:
-            // INTERRUPT TTS and start recording immediately
-            interruptAndRecord()
+            // INTERRUPT TTS and go to idle
+            interruptAndGoIdle()
         }
     }
     
@@ -294,18 +294,18 @@ class AgentViewModel: ObservableObject {
         }
     }
     
-    private func interruptAndRecord() {
-        print("[VoiceAgent] Interrupting TTS and starting recording")
+    private func interruptAndGoIdle() {
+        print("[VoiceAgent] Interrupting TTS and going to idle")
         
         // Stop audio level simulation FIRST for instant visual feedback
         audioTimer?.invalidate()
         audioLevel = 0
         
-        // Start recording IMMEDIATELY (before stopping TTS for zero visual delay)
-        startRecording()
-        
-        // Stop TTS after recording has started (audio will cut instantly anyway)
+        // Stop TTS immediately
         ttsService?.stop()
+        
+        // Transition to idle state instead of recording
+        transitionTo(.idle)
     }
     
     func transitionTo(_ newState: AgentState) {
