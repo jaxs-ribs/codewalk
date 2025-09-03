@@ -68,3 +68,8 @@ apps/VoiceRelaySwiftUI/**/*.dSYM
 
 apps/VoiceRelaySwiftUI/app_debug.log
 artifacts/*
+
+# Log files
+logs/
+*.log
+apps/VoiceAgent/logs/

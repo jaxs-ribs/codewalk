@@ -45,6 +45,20 @@ pub struct App {
     pub current_session_id: Option<String>,
     pub session_logs_map: HashMap<String, Vec<ParsedLogLine>>,
     pub artifacts_dir: PathBuf,
+    // Active executor session tracking
+    pub active_executor_session_id: Option<String>,
+    pub active_executor_type: Option<control_center::ExecutorType>,
+    pub active_executor_started_at: Option<std::time::Instant>,
+    // Core reference for session notifications
+    pub core: Option<std::sync::Arc<orchestrator_core::OrchestratorCore<crate::core_bridge::RouterAdapter, crate::core_bridge::ExecutorAdapter, crate::core_bridge::OutboundChannel>>>,
+    // Log summarizer for session status queries
+    pub log_summarizer: crate::log_summarizer::LogSummarizer,
+    // Session history
+    pub last_session_summary: Option<String>,
+    pub last_session_time: Option<std::time::Instant>,
+    // Summary caching
+    pub cached_summary: Option<String>,
+    pub cached_summary_time: Option<std::time::Instant>,
 }
 
 impl App {
@@ -62,6 +76,9 @@ impl App {
         let initial_session_id = Self::generate_session_id_static();
         let mut session_logs_map = HashMap::new();
         session_logs_map.insert(initial_session_id.clone(), Vec::new());
+        
+        let mut log_summarizer = crate::log_summarizer::LogSummarizer::new();
+        let _ = log_summarizer.initialize(); // Initialize Groq client
         
         Self {
             output: Vec::new(),
@@ -85,6 +102,15 @@ impl App {
             current_session_id: Some(initial_session_id),
             session_logs_map,
             artifacts_dir,
+            active_executor_session_id: None,
+            active_executor_type: None,
+            active_executor_started_at: None,
+            core: None,
+            log_summarizer,
+            last_session_summary: None,
+            last_session_time: None,
+            cached_summary: None,
+            cached_summary_time: None,
         }
     }
     
@@ -264,6 +290,12 @@ impl App {
                 let _ = tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current().block_on(self.center.terminate())
                 });
+                
+                // Notify core that the session has ended
+                if let Some(core) = &self.core {
+                    core.clear_active_session();
+                }
+                
                 self.append_output(format!("{} Executor session terminated by user", prefixes::EXEC));
                 self.mode = Mode::Idle;
             }
@@ -353,6 +385,19 @@ impl App {
         match self.center.launch(prompt, Some(config.clone())).await {
             Ok(()) => {
                 self.mode = Mode::ExecutorRunning;
+                
+                // Store active executor session information
+                self.active_executor_type = Some(self.center.executor.clone());
+                self.active_executor_started_at = Some(std::time::Instant::now());
+                
+                // Session ID will be captured from executor output
+                self.active_executor_session_id = None;
+                
+                // Notify core that a session has started
+                if let Some(core) = &self.core {
+                    core.set_active_session(self.center.executor.name().to_string());
+                }
+                
                 self.append_output(format!("{} {} session started", prefixes::EXEC, self.center.executor.name()));
                 self.append_output(format!("Working directory: {:?}", config.working_dir));
                 self.append_output(format!("Prompt: {}", prompt));
@@ -385,6 +430,13 @@ impl App {
                     self.append_output(format!("{}: {}", self.center.executor.name(), line));
                     // Attempt to parse Claude stream-json lines and convert to session logs
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                        // Capture session_id if we haven't yet
+                        if self.active_executor_session_id.is_none() {
+                            if let Some(sid) = v.get("session_id").and_then(|s| s.as_str()) {
+                                self.active_executor_session_id = Some(sid.to_string());
+                                self.append_output(format!("{} Captured Claude session ID: {}", prefixes::EXEC, sid));
+                            }
+                        }
                         // Map type
                         let typ = match v.get("type").and_then(|s| s.as_str()).unwrap_or("") {
                             "user" | "user_message" => control_center::LogType::UserMessage,
@@ -429,6 +481,49 @@ impl App {
         
         if session_ended {
             self.append_output(format!("{} {} session completed", prefixes::EXEC, self.center.executor.name()));
+            
+            // Log the session ID that was captured
+            if let Some(sid) = &self.active_executor_session_id {
+                self.append_output(format!("{} Claude session ID was: {}", prefixes::EXEC, sid));
+            }
+            
+            // Generate and save last session summary before clearing
+            if !self.session_logs.is_empty() || (self.current_session_id.is_some() && 
+                self.session_logs_map.get(self.current_session_id.as_ref().unwrap())
+                    .map(|logs| !logs.is_empty()).unwrap_or(false)) {
+                // Generate summary for the ending session
+                match self.log_summarizer.summarize_logs(
+                    if let Some(session_id) = &self.current_session_id {
+                        self.session_logs_map.get(session_id).map(|v| v.as_slice()).unwrap_or(&[])
+                    } else {
+                        &self.session_logs
+                    }
+                ).await {
+                    Ok(summary) => {
+                        self.last_session_summary = Some(summary);
+                        self.last_session_time = Some(std::time::Instant::now());
+                        crate::logger::log_event("SESSION", "Saved last session summary");
+                    },
+                    Err(e) => {
+                        crate::logger::log_error("SESSION", &format!("Failed to save last session summary: {}", e));
+                    }
+                }
+            }
+            
+            // Clear cache since session is ending
+            self.cached_summary = None;
+            self.cached_summary_time = None;
+            
+            // Notify core that the session has ended
+            if let Some(core) = &self.core {
+                core.clear_active_session();
+            }
+            
+            // Clear active executor session info
+            self.active_executor_session_id = None;
+            self.active_executor_type = None;
+            self.active_executor_started_at = None;
+            
             // Save session logs to disk when session ends
             if let Some(session_id) = &self.current_session_id {
                 self.save_session_logs_to_disk(session_id);
@@ -565,9 +660,10 @@ impl App {
     pub async fn init_relay(&mut self) {
         // Start headless core once at initialization
         let exec_adapter = crate::core_bridge::ExecutorAdapter::new(self.cmd_tx.clone());
-        let handles = crate::core_bridge::start_core_with_executor(exec_adapter);
-        self.core_in_tx = Some(handles.inbound_tx);
-        self.core_out_rx = Some(handles.outbound_rx);
+        let system = crate::core_bridge::start_core_with_executor(exec_adapter);
+        self.core_in_tx = Some(system.handles.inbound_tx);
+        self.core_out_rx = Some(system.handles.outbound_rx);
+        self.core = Some(system.core);
         match relay_client::load_config_from_env() {
             Ok(Some(cfg)) => {
                 self.append_output(format!("{} Connecting to relay...", prefixes::RELAY));
@@ -802,8 +898,12 @@ impl App {
             }
             for msg in buffered {
                 match msg {
-                    protocol::Message::Status(s) => {
+                    protocol::Message::Status(ref s) => {
                         self.append_output(format!("{} {}", prefixes::PLAN, s.text));
+                        // Forward status message to mobile via relay
+                        let status_json = serde_json::to_string(&msg).unwrap_or_default();
+                        self.append_output(format!("DEBUG: Sending Status to relay: {}", status_json));
+                        relay_client::send_frame(status_json);
                     }
                     protocol::Message::PromptConfirmation(ref pc) => {
                         // Forward confirmation request to mobile via relay
@@ -841,9 +941,89 @@ impl App {
                 crate::core_bridge::AppCommand::LaunchExecutor { prompt } => {
                     let _ = self.launch_executor(&prompt).await;
                 }
+                crate::core_bridge::AppCommand::QueryExecutorStatus { reply_tx } => {
+                    let summary = self.get_session_summary().await;
+                    let _ = reply_tx.send(summary);
+                }
             }
         }
         Ok(())
+    }
+    
+    /// Get a summary of the current session's activity
+    pub async fn get_session_summary(&mut self) -> String {
+        crate::logger::log_event("SUMMARY", "get_session_summary called");
+        
+        // Check if there's an active executor session
+        if self.active_executor_session_id.is_none() {
+            crate::logger::log_event("SUMMARY", "No active session");
+            
+            // Check if we have a last session to talk about
+            if let Some(ref last_summary) = self.last_session_summary {
+                if let Some(last_time) = self.last_session_time {
+                    let elapsed = last_time.elapsed();
+                    if elapsed.as_secs() < 300 { // Within 5 minutes
+                        return format!("No active session. In the last session, {}", last_summary);
+                    } else if elapsed.as_secs() < 3600 { // Within an hour
+                        let mins = elapsed.as_secs() / 60;
+                        return format!("No active session. {} minutes ago, {}", mins, last_summary);
+                    }
+                }
+                return format!("No active session. Previously, {}", last_summary);
+            }
+            
+            return "No active Claude session running".to_string();
+        }
+        
+        // Check cache (valid for 10 seconds)
+        if let Some(ref cached) = self.cached_summary {
+            if let Some(cached_time) = self.cached_summary_time {
+                if cached_time.elapsed().as_secs() < 10 {
+                    crate::logger::log_event("SUMMARY", "Returning cached summary");
+                    return cached.clone();
+                }
+            }
+        }
+        
+        // Get session logs
+        let logs = if let Some(session_id) = &self.current_session_id {
+            if let Some(session_logs) = self.session_logs_map.get(session_id) {
+                session_logs.clone()
+            } else {
+                Vec::new()
+            }
+        } else {
+            self.session_logs.clone()
+        };
+        
+        crate::logger::log_event("SUMMARY", &format!("Found {} logs to summarize", logs.len()));
+        
+        // If no logs yet, return generic message
+        if logs.is_empty() {
+            let msg = "Claude is starting to work on your request".to_string();
+            self.cached_summary = Some(msg.clone());
+            self.cached_summary_time = Some(std::time::Instant::now());
+            return msg;
+        }
+        
+        // Get summary from log summarizer
+        match self.log_summarizer.summarize_logs(&logs).await {
+            Ok(summary) => {
+                crate::logger::log_event("SUMMARY", &format!("Generated summary: {}", summary));
+                // Cache the summary
+                self.cached_summary = Some(summary.clone());
+                self.cached_summary_time = Some(std::time::Instant::now());
+                summary
+            },
+            Err(e) => {
+                crate::logger::log_error("SUMMARY", &format!("Failed to summarize: {}", e));
+                // Fallback to basic message
+                let msg = format!("Claude is working on your request. {} events logged so far.", logs.len());
+                self.cached_summary = Some(msg.clone());
+                self.cached_summary_time = Some(std::time::Instant::now());
+                msg
+            }
+        }
     }
     
     // Session management methods

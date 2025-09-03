@@ -15,6 +15,7 @@ pub struct ClaudeExecutor {
     stderr_reader: tokio::io::Lines<BufReader<tokio::process::ChildStderr>>,
     #[allow(dead_code)]
     config: ExecutorConfig,
+    session_id: Option<String>,
 }
 
 impl ClaudeExecutor {
@@ -46,6 +47,10 @@ impl ClaudeExecutor {
 impl ExecutorSession for ClaudeExecutor {
     fn executor_type(&self) -> ExecutorType {
         ExecutorType::Claude
+    }
+    
+    fn session_id(&self) -> Option<String> {
+        self.session_id.clone()
     }
     
     async fn launch(prompt: &str, config: ExecutorConfig) -> Result<Box<dyn ExecutorSession>> {
@@ -99,6 +104,7 @@ impl ExecutorSession for ClaudeExecutor {
             stdout_reader: BufReader::new(stdout).lines(),
             stderr_reader: BufReader::new(stderr).lines(),
             config,
+            session_id: None, // Will be extracted from Claude's output
         }))
     }
     
@@ -106,6 +112,15 @@ impl ExecutorSession for ClaudeExecutor {
         // Try to read from stdout first
         match tokio::time::timeout(Duration::from_millis(10), self.stdout_reader.next_line()).await {
             Ok(Ok(Some(line))) if !line.trim().is_empty() => {
+                // Try to extract session_id from JSON output if we don't have it yet
+                if self.session_id.is_none() {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
+                        if let Some(sid) = json.get("session_id").and_then(|s| s.as_str()) {
+                            self.session_id = Some(sid.to_string());
+                            eprintln!("[ClaudeExecutor] Captured session_id: {}", sid);
+                        }
+                    }
+                }
                 return Ok(Some(ExecutorOutput::Stdout(line)));
             }
             _ => {}

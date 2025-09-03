@@ -11,6 +11,8 @@ mod types;
 mod ui;
 mod utils;
 mod core_bridge;
+mod log_summarizer;
+mod logger;
 
 use anyhow::Result;
 use app::App;
@@ -33,6 +35,11 @@ use ui::UI;
 #[cfg(feature = "tui")]
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialize logging
+    logger::init_logging()?;
+    // Don't log events until after TUI is setup
+    // logger::log_event("STARTUP", "Orchestrator starting");
+    
     // Load .env unconditionally so RELAY_* config is available without exports
     config::load_dotenv();
     // Try to load API key; if missing, run in reduced mode (no audio/LLM)

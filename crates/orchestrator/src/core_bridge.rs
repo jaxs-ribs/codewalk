@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
-use orchestrator_core::ports::{RouterPort, RouteResponse, RouteAction, ExecutorPort, OutboundPort};
+use orchestrator_core::ports::{RouterPort, RouteResponse, RouteAction, RouterContext, ExecutorPort, OutboundPort};
 use tokio::sync::mpsc::Sender;
 
 use crate::backend;
@@ -11,14 +11,69 @@ pub struct RouterAdapter;
 
 #[async_trait]
 impl RouterPort for RouterAdapter {
-    async fn route(&self, text: &str) -> Result<RouteResponse> {
-        // Use existing backend LLM routing and map to core types
-        let json = backend::text_to_llm_cmd(text).await?;
-        let resp = backend::parse_router_response(&json).await?;
-        let action = match resp.action {
-            router::RouterAction::LaunchClaude => RouteAction::LaunchClaude,
-            router::RouterAction::CannotParse => RouteAction::CannotParse,
+    async fn route(&self, text: &str, context: Option<RouterContext>) -> Result<RouteResponse> {
+        // Use LLM-based routing with context awareness
+        let context_str = if let Some(ctx) = &context {
+            if ctx.has_active_session {
+                format!("ACTIVE_SESSION: {} is currently running", ctx.session_type.as_deref().unwrap_or("Claude Code"))
+            } else {
+                "NO_ACTIVE_SESSION".to_string()
+            }
+        } else {
+            "NO_ACTIVE_SESSION".to_string()
         };
+        
+        // Pass context to the LLM router
+        let enhanced_text = format!("[{}] {}", context_str, text);
+        let json = backend::text_to_llm_cmd(&enhanced_text).await?;
+        let resp = backend::parse_router_response(&json).await?;
+        
+        // Log router response
+        crate::logger::log_event("ROUTER", &format!("Response: action={:?}, reason={:?}", resp.action, resp.reason));
+        
+        // Map router response, checking for status queries first
+        let action = if context.is_some() && context.as_ref().unwrap().has_active_session {
+            // If session is active and response suggests checking status
+            if resp.reason.as_ref().map_or(false, |r| {
+                let contains_status = r.contains("status") || r.contains("query") || r.contains("check");
+                crate::logger::log_debug(&format!("Checking reason '{}' for status keywords: {}", r, contains_status));
+                contains_status
+            }) {
+                crate::logger::log_event("ROUTER", "Routing to QueryExecutor (status query detected)");
+                RouteAction::QueryExecutor
+            } else {
+                match resp.action {
+                    router::RouterAction::LaunchClaude => RouteAction::LaunchClaude,
+                    router::RouterAction::CannotParse => {
+                        // During active session, unclear commands might be status queries
+                        let text_lower = text.to_lowercase();
+                        if text_lower.contains("what") || text_lower.contains("status") || 
+                           text_lower.contains("progress") || text_lower.contains("how") {
+                            RouteAction::QueryExecutor
+                        } else {
+                            RouteAction::CannotParse
+                        }
+                    }
+                }
+            }
+        } else {
+            // No active session
+            match resp.action {
+                router::RouterAction::LaunchClaude => RouteAction::LaunchClaude,
+                router::RouterAction::CannotParse => {
+                    // Check if this looks like a status query even without active session
+                    let text_lower = text.to_lowercase();
+                    if text_lower.contains("what") && text_lower.contains("happening") ||
+                       text_lower.contains("status") || 
+                       text_lower.contains("progress") {
+                        RouteAction::QueryExecutor  // Will respond "No active session to query"
+                    } else {
+                        RouteAction::CannotParse
+                    }
+                }
+            }
+        };
+        
         Ok(RouteResponse {
             action,
             prompt: resp.prompt,
@@ -28,8 +83,11 @@ impl RouterPort for RouterAdapter {
     }
 }
 
-/// For Phase 3 we only use confirmation path; launching remains in the TUI.
-pub enum AppCommand { LaunchExecutor { prompt: String } }
+/// Commands sent from core to app
+pub enum AppCommand { 
+    LaunchExecutor { prompt: String },
+    QueryExecutorStatus { reply_tx: tokio::sync::oneshot::Sender<String> },
+}
 
 pub struct ExecutorAdapter { tx: Sender<AppCommand> }
 impl ExecutorAdapter { pub fn new(tx: Sender<AppCommand>) -> Self { Self { tx } } }
@@ -37,6 +95,13 @@ impl ExecutorAdapter { pub fn new(tx: Sender<AppCommand>) -> Self { Self { tx } 
 impl ExecutorPort for ExecutorAdapter {
     async fn launch(&self, prompt: &str) -> Result<()> {
         self.tx.send(AppCommand::LaunchExecutor { prompt: prompt.to_string() }).await.map_err(|e| anyhow::anyhow!(e.to_string()))
+    }
+    
+    async fn query_status(&self) -> Result<String> {
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        self.tx.send(AppCommand::QueryExecutorStatus { reply_tx }).await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        reply_rx.await.map_err(|e| anyhow::anyhow!(e.to_string()))
     }
 }
 
@@ -68,7 +133,12 @@ pub struct CoreHandles {
     pub outbound_rx: mpsc::Receiver<protocol::Message>,
 }
 
-pub fn start_core_with_executor(exec: impl ExecutorPort + Send + Sync + 'static) -> CoreHandles {
+pub struct CoreSystem {
+    pub handles: CoreHandles,
+    pub core: std::sync::Arc<orchestrator_core::OrchestratorCore<RouterAdapter, ExecutorAdapter, OutboundChannel>>,
+}
+
+pub fn start_core_with_executor(exec: ExecutorAdapter) -> CoreSystem {
     let (in_tx, mut in_rx) = mpsc::channel::<protocol::Message>(100);
     let (out_tx, out_rx) = mpsc::channel::<protocol::Message>(100);
 
@@ -88,5 +158,8 @@ pub fn start_core_with_executor(exec: impl ExecutorPort + Send + Sync + 'static)
         }
     });
 
-    CoreHandles { inbound_tx: in_tx, outbound_rx: out_rx }
+    CoreSystem {
+        handles: CoreHandles { inbound_tx: in_tx, outbound_rx: out_rx },
+        core,
+    }
 }

@@ -10,6 +10,7 @@ pub struct OrchestratorCore<R: RouterPort, E: ExecutorPort, O: OutboundPort> {
     outbound: O,
     require_confirmation: bool,
     pending_confirmation: std::sync::Mutex<Option<PendingConfirmation>>,
+    active_session: std::sync::Mutex<Option<ports::RouterContext>>,
 }
 
 struct PendingConfirmation {
@@ -19,10 +20,23 @@ struct PendingConfirmation {
 
 impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> {
     pub fn new(router: R, executor: E, outbound: O) -> Self {
-        Self { router, executor, outbound, require_confirmation: true, pending_confirmation: std::sync::Mutex::new(None) }
+        Self { router, executor, outbound, require_confirmation: true, pending_confirmation: std::sync::Mutex::new(None), active_session: std::sync::Mutex::new(None) }
     }
 
     pub fn set_require_confirmation(&mut self, yes: bool) { self.require_confirmation = yes; }
+    
+    /// Set active session context (call when executor starts)
+    pub fn set_active_session(&self, session_type: String) {
+        *self.active_session.lock().unwrap() = Some(ports::RouterContext {
+            has_active_session: true,
+            session_type: Some(session_type),
+        });
+    }
+    
+    /// Clear active session context (call when executor ends)
+    pub fn clear_active_session(&self) {
+        *self.active_session.lock().unwrap() = None;
+    }
 
     /// Entry point for inbound messages (Phase 2: handle user_text only)
     pub async fn handle(&self, msg: protocol::Message) -> Result<()> {
@@ -40,8 +54,13 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
         let text_trim = ut.text.trim();
         if text_trim.is_empty() { return Ok(()); }
 
+        // Get current session context for router (drop lock before await)
+        let context = {
+            self.active_session.lock().unwrap().clone()
+        };
+        
         // Route the text (send error status on failure)
-        let decision = match self.router.route(text_trim).await {
+        let decision = match self.router.route(text_trim, context).await {
             Ok(d) => d,
             Err(e) => {
                 let _ = self.outbound.send(protocol::Message::Status(protocol::Status{
@@ -58,6 +77,40 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
                     level: "info".to_string(),
                     text: reason,
                 })).await
+            }
+            RouteAction::QueryExecutor => {
+                // Send status about active session (drop lock before await)
+                let session_info = self.active_session.lock().unwrap().clone();
+                if let Some(ctx) = session_info {
+                    // Query the executor for actual status/summary
+                    match self.executor.query_status().await {
+                        Ok(summary) => {
+                            // Send the summary as status message
+                            self.outbound.send(protocol::Message::Status(protocol::Status {
+                                v: Some(protocol::VERSION),
+                                level: "info".to_string(),
+                                text: summary,
+                            })).await?;
+                        }
+                        Err(e) => {
+                            // Fallback message if query fails
+                            let msg = format!("Active {} session is running but couldn't fetch details: {}", 
+                                            ctx.session_type.as_deref().unwrap_or("executor"), e);
+                            self.outbound.send(protocol::Message::Status(protocol::Status {
+                                v: Some(protocol::VERSION),
+                                level: "info".to_string(),
+                                text: msg,
+                            })).await?;
+                        }
+                    }
+                } else {
+                    self.outbound.send(protocol::Message::Status(protocol::Status {
+                        v: Some(protocol::VERSION),
+                        level: "info".to_string(),
+                        text: "No active session to query".to_string(),
+                    })).await?;
+                }
+                Ok(())
             }
             RouteAction::LaunchClaude => {
                 let prompt = decision.prompt.unwrap_or_else(|| text_trim.to_string());
@@ -88,7 +141,7 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
                     self.outbound.send(protocol::Message::Status(protocol::Status {
                         v: Some(protocol::VERSION),
                         level: "info".to_string(),
-                        text: format!("executor started: Claude"),
+                        text: format!("Starting Claude Code for: {}", prompt),
                     })).await
                 }
             }
@@ -117,7 +170,7 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
             if let Some(pending) = pending {
                 self.executor.launch(&pending.prompt).await?;
                 self.outbound.send(protocol::Message::Status(protocol::Status{
-                    v: Some(protocol::VERSION), level: "info".into(), text: "executor started: Claude".into()
+                    v: Some(protocol::VERSION), level: "info".into(), text: format!("Starting Claude Code for: {}", pending.prompt)
                 })).await?;
             }
         } else {
@@ -139,8 +192,25 @@ pub mod mocks {
     pub struct MockRouter;
     #[async_trait]
     impl RouterPort for MockRouter {
-        async fn route(&self, text: &str) -> Result<ports::RouteResponse> {
+        async fn route(&self, text: &str, context: Option<ports::RouterContext>) -> Result<ports::RouteResponse> {
             let text_l = text.to_lowercase();
+            
+            // Check for status queries when session is active
+            if let Some(ctx) = context {
+                if ctx.has_active_session {
+                    if text_l.contains("what") && text_l.contains("happening") ||
+                       text_l.contains("status") || text_l.contains("summary") ||
+                       text_l.contains("progress") || text_l.contains("update") {
+                        return Ok(ports::RouteResponse {
+                            action: ports::RouteAction::QueryExecutor,
+                            prompt: None,
+                            reason: None,
+                            confidence: Some(0.9),
+                        });
+                    }
+                }
+            }
+            
             if text_l.contains("code") || text_l.contains("build") || text_l.contains("refactor") {
                 Ok(ports::RouteResponse {
                     action: ports::RouteAction::LaunchClaude,
@@ -163,6 +233,7 @@ pub mod mocks {
     #[async_trait]
     impl ExecutorPort for MockExecutor {
         async fn launch(&self, _prompt: &str) -> Result<()> { Ok(()) }
+        async fn query_status(&self) -> Result<String> { Ok("Mock executor status".to_string()) }
     }
 
     #[derive(Clone)]

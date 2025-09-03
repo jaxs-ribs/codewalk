@@ -7,8 +7,34 @@ struct ContentView: View {
         Color.white
             .ignoresSafeArea(.all)
             .overlay(
-                CircleView(viewModel: viewModel)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack {
+                    // Connection status indicator (top)
+                    HStack {
+                        Circle()
+                            .fill(viewModel.connectionStatus == "Open" ? Color.green : Color.red)
+                            .frame(width: 8, height: 8)
+                        Text(viewModel.connectionStatus)
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                        Spacer()
+                    }
+                    .padding()
+                    
+                    Spacer()
+                    
+                    // Main circle UI
+                    CircleView(viewModel: viewModel)
+                    
+                    Spacer()
+                    
+                    // Last message (bottom)
+                    Text(viewModel.lastMessage)
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .lineLimit(2)
+                }
             )
             .persistentSystemOverlays(.hidden)
             .statusBarHidden()

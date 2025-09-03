@@ -273,6 +273,9 @@ pub trait ExecutorSession: Send {
     #[allow(dead_code)]
     fn executor_type(&self) -> ExecutorType;
     
+    /// Get the session ID (if available)
+    fn session_id(&self) -> Option<String>;
+    
     /// Launch the executor with a prompt
     async fn launch(prompt: &str, config: ExecutorConfig) -> Result<Box<dyn ExecutorSession>>
     where

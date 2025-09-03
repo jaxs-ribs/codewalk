@@ -85,14 +85,24 @@ OUTPUT FORMAT (JSON only):
 IMPORTANT: Preserve the user's exact words in the prompt field."#
         } else {
             // Shorter prompt for Llama models (no prompt caching)
-            r#"You are a voice command router. Determine if the user wants to code with Claude.
+            r#"You are a voice command router. Determine the user's intent.
 
-Return JSON: {"action": "launch_claude" or "cannot_parse", "prompt": "user request or null", "reason": "explanation or null", "confidence": 0.0-1.0}
+CONTEXT MARKERS:
+- [ACTIVE_SESSION: X] means an executor session is running
+- [NO_ACTIVE_SESSION] means no session is active
 
-launch_claude: coding, debugging, programming tasks
-cannot_parse: non-technical, unclear, or social requests
+ROUTING RULES:
+When ACTIVE_SESSION:
+- Questions about progress/status/what's happening → action: "cannot_parse", reason: "query status"
+- New coding requests → action: "launch_claude"
+- Other → action: "cannot_parse"
 
-Preserve exact user words in prompt."#
+When NO_ACTIVE_SESSION:
+- Coding tasks → action: "launch_claude"  
+- Non-technical → action: "cannot_parse"
+
+IMPORTANT: Always use "cannot_parse" as the action when returning "query status" as the reason.
+Return JSON: {"action": "launch_claude" or "cannot_parse", "prompt": "user request or null", "reason": "explanation or null", "confidence": 0.0-1.0}"#
         };
         
         // Combine base prompt with history context

@@ -25,6 +25,7 @@ router = { path = "../router" }
 control_center = { path = "../control_center" }
 orchestrator-core = { path = "../orchestrator-core" }
 protocol = { path = "../protocol" }
+llm = { path = "../llm" }
 
 # Optional STT for TUI mic
 stt = { path = "../stt", optional = true }

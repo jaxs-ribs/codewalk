@@ -109,3 +109,27 @@ pub async fn parse_router_response(json_str: &str) -> Result<RouterResponse> {
     let response: RouterResponse = serde_json::from_str(json_str)?;
     Ok(response)
 }
+
+/// Summarize text using Groq LLM
+pub async fn summarize_with_groq(system_prompt: &str, user_prompt: &str) -> Result<String> {
+    // Use llm crate directly for summarization
+    let client = llm::Client::from_env_groq("llama-3.1-8b-instant")?;
+    
+    let messages = vec![
+        llm::ChatMessage {
+            role: llm::Role::System,
+            content: system_prompt.to_string(),
+        },
+        llm::ChatMessage {
+            role: llm::Role::User,
+            content: user_prompt.to_string(),
+        },
+    ];
+    
+    let options = llm::ChatOptions {
+        temperature: Some(0.3),
+        json_object: false,
+    };
+    
+    client.chat(&messages, options).await
+}

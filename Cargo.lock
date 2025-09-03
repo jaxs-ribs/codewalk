@@ -2335,6 +2335,7 @@ dependencies = [
  "crossterm",
  "futures-util",
  "lazy_static",
+ "llm",
  "once_cell",
  "orchestrator-core",
  "protocol",
