@@ -807,12 +807,21 @@ impl App {
                             let msg_type = v.get("type").and_then(|s| s.as_str());
                             
                             if msg_type == Some("user_text") {
-                                let preview = v.get("text").and_then(|s| s.as_str()).unwrap_or("");
-                                let preview = if preview.len() > 60 { format!("{}…", &preview[..60]) } else { preview.to_string() };
+                                let text = v.get("text").and_then(|s| s.as_str()).unwrap_or("");
+                                let preview = if text.len() > 60 { format!("{}…", &text[..60]) } else { text.to_string() };
                                 self.append_output(format!("{} user_text: {}", prefixes::RELAY, preview));
-                                if let Some(tx) = &self.core_in_tx {
-                                    if let Ok(msg) = serde_json::from_value::<protocol::Message>(v.clone()) {
-                                        let _ = tx.send(msg).await;
+                                
+                                // If we're in ConfirmingExecutor mode, handle as confirmation response
+                                if self.mode == Mode::ConfirmingExecutor {
+                                    if let Err(e) = self.handle_confirmation_response(text).await {
+                                        self.append_output(format!("{} Error handling confirmation: {}", prefixes::EXEC, e));
+                                    }
+                                } else {
+                                    // Otherwise, send to core for normal routing
+                                    if let Some(tx) = &self.core_in_tx {
+                                        if let Ok(msg) = serde_json::from_value::<protocol::Message>(v.clone()) {
+                                            let _ = tx.send(msg).await;
+                                        }
                                     }
                                 }
                                 continue;
@@ -1056,23 +1065,23 @@ impl App {
             if let Some(ref last_summary) = self.last_session_summary {
                 if let Some(last_time) = self.last_session_time {
                     let elapsed = last_time.elapsed();
-                    if elapsed.as_secs() < 300 { // Within 5 minutes
-                        return format!("Previous session completed {} seconds ago: {}", elapsed.as_secs(), last_summary);
+                    if elapsed.as_secs() < 60 { // Within 1 minute - just completed
+                        return format!("I just finished {}", last_summary);
+                    } else if elapsed.as_secs() < 300 { // Within 5 minutes
+                        return format!("A few minutes ago, I {}", last_summary);
                     } else if elapsed.as_secs() < 3600 { // Within an hour
-                        let mins = elapsed.as_secs() / 60;
-                        return format!("Previous session completed {} minutes ago: {}", mins, last_summary);
+                        return format!("Earlier, I {}", last_summary);
                     }
                 }
-                return format!("Previous session: {}", last_summary);
+                return format!("Previously, I {}", last_summary);
             }
             
             // Try to load from disk if not in memory
-            if let Some((session_id, summary)) = self.load_previous_session().await {
-                crate::logger::log_event("SUMMARY", &format!("Loaded previous session {} from disk", session_id));
-                return format!("Previous session: {}", summary);
+            if let Some((_, summary)) = self.load_previous_session().await {
+                return format!("In our last session, I {}", summary);
             }
             
-            return "No active session. No previous sessions found.".to_string();
+            return "I'm not working on anything right now.".to_string();
         }
         
         // Check cache (valid for 10 seconds)
@@ -1109,17 +1118,8 @@ impl App {
         // Get summary from log summarizer  
         match self.log_summarizer.summarize_logs(&logs).await {
             Ok(summary) => {
-                let session_info = if let Some(session_id) = &self.active_executor_session_id {
-                    let duration = self.active_executor_started_at
-                        .map(|t| t.elapsed().as_secs())
-                        .unwrap_or(0);
-                    format!("Current session (ID: {}, running for {}s): {}", 
-                        &session_id[..8], // Show first 8 chars of session ID
-                        duration, 
-                        summary)
-                } else {
-                    format!("Current session: {}", summary)
-                };
+                // Just return the conversational summary without technical details
+                let session_info = format!("I'm {}", summary);
                 
                 crate::logger::log_event("SUMMARY", &format!("Generated summary: {}", session_info));
                 // Cache the summary
@@ -1129,13 +1129,8 @@ impl App {
             },
             Err(e) => {
                 crate::logger::log_error("SUMMARY", &format!("Failed to summarize: {}", e));
-                // Fallback to basic message
-                let msg = if let Some(session_id) = &self.active_executor_session_id {
-                    format!("Current session (ID: {}) is active. {} events logged.", 
-                        &session_id[..8], logs.len())
-                } else {
-                    format!("Session is active. {} events logged.", logs.len())
-                };
+                // Fallback to basic conversational message
+                let msg = "I'm working on your request right now.".to_string();
                 self.cached_summary = Some(msg.clone());
                 self.cached_summary_time = Some(std::time::Instant::now());
                 msg

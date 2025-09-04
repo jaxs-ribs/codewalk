@@ -91,7 +91,7 @@ final class ElevenLabsTTS: NSObject {
             "output_format": outputFormat,
             "voice_settings": [
                 "speed": 1.2,  // Increase speed by 15% (range: 0.7 to 1.2)
-                "stability": 0.1,
+                "stability": 0.8,
                 "similarity_boost": 0.8
             ]
         ]

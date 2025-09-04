@@ -20,9 +20,10 @@ impl App {
             }
         };
         
-        // Route the confirmation response to get the action
-        let response_json = crate::backend::text_to_llm_cmd(text).await?;
-        let response: router::RouterResponse = serde_json::from_str(&response_json)?;
+        // Use the confirmation analyzer directly, not the LLM
+        // The LLM would misinterpret "yes" as a status query
+        let action = router::confirmation::analyze_confirmation_response(text);
+        let response = router::confirmation::create_confirmation_response(action);
         
         match response.action {
             RouterAction::ContinuePrevious => {
