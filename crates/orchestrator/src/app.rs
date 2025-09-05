@@ -17,7 +17,6 @@ use crate::types::{Mode, PlanState, PendingExecutor, ErrorInfo, ScrollState, Scr
 use crate::types::RecordingState;
 use crate::utils::TextWrapper;
 use control_center::ParsedLogLine;
-use router::RouterAction;
 // For base64 decode on get_logs/stt frames
 use base64::Engine as _;
  
@@ -319,95 +318,32 @@ impl App {
     }
 
     async fn route_command(&mut self, text: &str) -> Result<()> {
-        // If we're in confirmation mode, handle the response differently
-        if self.mode == Mode::ConfirmingExecutor {
-            return self.handle_confirmation_response(text).await;
-        }
-        
         self.append_output(format!("{} Routing command...", prefixes::PLAN));
         
-        // Get router response from LLM
-        let response_json = match backend::text_to_llm_cmd(text).await {
-            Ok(json) => json,
-            Err(e) => {
+        // Always send to core for routing - core will handle confirmations too
+        if let Some(tx) = &self.core_in_tx {
+            let msg = protocol::Message::user_text(text.to_string(), Some("voice".to_string()), true);
+            if let Err(e) = tx.send(msg).await {
                 self.show_error_with_details(
-                    "LLM Routing Failed",
-                    "Failed to process command through LLM",
+                    "Routing Failed",
+                    "Failed to send command to core for routing",
                     format!("Error: {}", e)
                 );
                 self.mode = Mode::Idle;
-                return Err(e);
+                return Err(anyhow::anyhow!("Failed to send to core: {}", e));
             }
-        };
-        
-        let response = match backend::parse_router_response(&response_json).await {
-            Ok(r) => r,
-            Err(e) => {
-                self.show_error_with_details(
-                    "Response Parsing Failed",
-                    "Failed to parse LLM response",
-                    format!("Response: {}\nError: {}", response_json, e)
-                );
-                self.mode = Mode::Idle;
-                return Err(e);
-            }
-        };
-        
-        match response.action {
-            RouterAction::LaunchClaude => {
-                if let Some(prompt) = response.prompt {
-                    if self.settings.require_executor_confirmation {
-                        // Store pending executor info and switch to confirmation mode
-                        let config = ExecutorConfig::default();
-                        self.pending_executor = Some(PendingExecutor {
-                            prompt: prompt.clone(),
-                            executor_name: self.center.executor.name().to_string(),
-                            working_dir: config.working_dir.to_string_lossy().to_string(),
-                            confirmation_id: None,  // This path doesn't use core, so no ID
-                            is_initial_prompt: true,
-                            session_action: None,
-                        });
-                        self.mode = Mode::ConfirmingExecutor;
-                        
-                        // Show better message based on whether we have a previous session
-                        let confirmation_msg = if self.last_completed_session_id.is_some() {
-                            if let Some(summary) = &self.last_session_summary {
-                                format!("{} Should I start Claude for: {}?\n   Previous: {}\n   Say 'continue', 'new', or 'no'", 
-                                    prefixes::PLAN, prompt, summary)
-                            } else {
-                                format!("{} Should I start Claude for: {}?\n   Say 'continue previous', 'start new', or 'no'", 
-                                    prefixes::PLAN, prompt)
-                            }
-                        } else {
-                            format!("{} Should I start Claude for: {}?\n   Say 'yes' or 'no'", 
-                                prefixes::PLAN, prompt)
-                        };
-                        self.append_output(confirmation_msg);
-                    } else {
-                        // Launch immediately without confirmation
-                        self.append_output(format!("{} Launching {} with: {}", prefixes::EXEC, self.center.executor.name(), prompt));
-                        self.launch_executor(&prompt).await?;
-                    }
-                } else {
-                    self.append_output(format!("{} Error: No prompt extracted", prefixes::PLAN));
-                    self.mode = Mode::Idle;
-                }
-            }
-            RouterAction::CannotParse => {
-                let reason = response.reason.unwrap_or_else(|| "Could not understand command".to_string());
-                self.append_output(format!("{} {}", prefixes::PLAN, reason));
-                self.mode = Mode::Idle;
-            }
-            // These should only appear in confirmation context, not normal routing
-            RouterAction::ContinuePrevious | RouterAction::StartNew | 
-            RouterAction::DeclineSession | RouterAction::AmbiguousConfirmation | 
-            RouterAction::UnintelligibleResponse => {
-                self.append_output(format!("{} Unexpected confirmation response in normal routing context", prefixes::PLAN));
-                self.mode = Mode::Idle;
-            }
+            // The core will handle routing and send back appropriate messages
+            // (PromptConfirmation, Status, etc.) which will be handled by handle_core_messages
+            Ok(())
+        } else {
+            self.show_error_with_details(
+                "Core Not Available",
+                "Core system is not initialized",
+                "Please restart the application".to_string()
+            );
+            self.mode = Mode::Idle;
+            Err(anyhow::anyhow!("Core not initialized"))
         }
-        
-        Ok(())
     }
     
     pub(crate) async fn launch_executor_with_resume(&mut self, prompt: &str, resume_session_id: &str) -> Result<()> {
@@ -635,13 +571,8 @@ impl App {
             self.append_output(format!("{} {}", prefixes::UTTERANCE, text));
             self.input.clear();
             
-            // If we're in ConfirmingExecutor mode, handle as confirmation response
-            if self.mode == Mode::ConfirmingExecutor {
-                crate::logger::log_event("CONFIRMATION", &format!("Handling TUI input '{}' as confirmation response", text));
-                return self.handle_confirmation_response(&text).await;
-            }
-            
-            // Otherwise, send into headless core as user_text for normal routing
+            // Always send through core, even for confirmations
+            // The core will determine if this is a confirmation response
             if let Some(tx) = &self.core_in_tx {
                 let msg = protocol::Message::user_text(text, Some("tui".to_string()), true);
                 let _ = tx.send(msg).await;

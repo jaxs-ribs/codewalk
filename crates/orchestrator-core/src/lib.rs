@@ -55,6 +55,27 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
         let text_trim = ut.text.trim();
         if text_trim.is_empty() { return Ok(()); }
 
+        // Check if we have a pending confirmation - if so, treat this as a confirmation response
+        let has_pending = self.pending_confirmation.lock().unwrap().is_some();
+        if has_pending {
+            // Parse the text as a confirmation response
+            let accept = text_trim.to_lowercase().contains("yes") || 
+                        text_trim.to_lowercase().contains("continue") ||
+                        text_trim.to_lowercase().contains("start") ||
+                        text_trim.to_lowercase().contains("new");
+            
+            let pending = self.pending_confirmation.lock().unwrap().take();
+            if let Some(pending) = pending {
+                let cr = protocol::ConfirmResponse {
+                    v: Some(protocol::VERSION),
+                    id: Some(pending.id),
+                    for_: "executor_launch".to_string(),
+                    accept,
+                };
+                return self.handle_confirm(cr).await;
+            }
+        }
+
         // Get current session context for router (drop lock before await)
         let context = {
             self.active_session.lock().unwrap().clone()
