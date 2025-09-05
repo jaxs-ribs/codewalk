@@ -12,18 +12,33 @@ pub enum ScrollDirection {
     End,
 }
 
+/// UI-only display modes
+/// Business logic states are managed in orchestrator_core::state
 #[cfg_attr(not(feature = "tui"), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Mode {
-    Idle,
+    /// Normal display mode
+    Normal,
+    
+    /// Recording audio input
     #[cfg(feature = "tui-stt")]
     Recording,
+    
+    /// Displaying an error dialog
+    ShowingError,
+    
+    // Legacy modes - to be removed after full migration
+    #[deprecated(note = "Use Normal mode with core state")]
+    Idle,
+    #[deprecated(note = "Use core state ExecutionState::AwaitingConfirmation")]
+    ConfirmingExecutor,
+    #[deprecated(note = "Use core state ExecutionState::Running")]
+    ExecutorRunning,
+    #[deprecated(note = "Legacy state, no longer used")]
     PlanPending,
+    #[deprecated(note = "Legacy state, no longer used")]
     #[allow(dead_code)]
-    Executing,  // Kept for potential future use
-    ExecutorRunning,  // Generic executor running (Claude, Devin, etc.)
-    ConfirmingExecutor,  // Waiting for user confirmation to launch executor
-    ShowingError,  // Displaying error dialog
+    Executing,
 }
 
 #[cfg(feature = "tui-stt")]

@@ -7,6 +7,7 @@ mod constants;
 mod handlers;
 mod relay_client;
 mod settings;
+mod state_observer;
 mod types;
 #[cfg(feature = "tui")]
 mod ui;
@@ -135,6 +136,8 @@ async fn run_application<B: ratatui::backend::Backend>(terminal: &mut Terminal<B
         app.poll_core_outbound().await?;
         // Poll app commands (from core executor adapter)
         app.poll_app_commands().await?;
+        // Poll core state updates
+        app.poll_core_state().await?;
         
         terminal.draw(|frame| UI::draw(frame, &app))?;
         

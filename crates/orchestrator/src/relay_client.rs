@@ -144,6 +144,22 @@ pub fn load_config_from_env() -> Result<Option<RelayConfig>> {
 // Minimal global sender to emit frames over the relay socket from elsewhere in the app
 static OUT_SENDER: OnceCell<broadcast::Sender<String>> = OnceCell::new();
 
+/// Convenience function to connect to relay if configured
+pub async fn connect_if_configured() -> Option<mpsc::Receiver<RelayEvent>> {
+    match load_config_from_env() {
+        Ok(Some(config)) => {
+            match start(config).await {
+                Ok(rx) => Some(rx),
+                Err(e) => {
+                    eprintln!("Failed to start relay: {}", e);
+                    None
+                }
+            }
+        }
+        _ => None
+    }
+}
+
 pub fn send_frame(text: String) {
     if let Some(tx) = OUT_SENDER.get() {
         let _ = tx.send(text);

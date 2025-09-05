@@ -19,6 +19,7 @@ use crate::utils::TextWrapper;
 use control_center::ParsedLogLine;
 // For base64 decode on get_logs/stt frames
 use base64::Engine as _;
+use crate::state_observer::{StateUpdate, TUIStateInfo, map_core_state_to_ui};
  
 
 pub struct App {
@@ -59,12 +60,17 @@ pub struct App {
     // Summary caching
     pub cached_summary: Option<String>,
     pub cached_summary_time: Option<std::time::Instant>,
+    // Core state observation
+    pub state_rx: Option<tokio::sync::mpsc::Receiver<StateUpdate>>,
+    pub core_state_info: TUIStateInfo,
 }
 
 impl App {
     pub fn new() -> Self {
         let settings = AppSettings::load();
         let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel(100);
+        
+        // Create state observer channel - will be connected when core is initialized
         
         // Create artifacts directory
         let artifacts_dir = PathBuf::from("artifacts");
@@ -83,7 +89,7 @@ impl App {
         let mut app = Self {
             output: Vec::new(),
             input: String::new(),
-            mode: Mode::Idle,
+            mode: Mode::Normal,
             plan: PlanState::new(),
             #[cfg(feature = "tui-stt")]
             recording: RecordingState::new(),
@@ -112,6 +118,13 @@ impl App {
             last_completed_session_id: None,
             cached_summary: None,
             cached_summary_time: None,
+            state_rx: None,
+            core_state_info: TUIStateInfo {
+                is_executor_running: false,
+                is_awaiting_confirmation: false,
+                session_id: None,
+                prompt: None,
+            },
         };
         
         // Load previous session info from disk
@@ -120,6 +133,55 @@ impl App {
         });
         
         app
+    }
+    
+    /// Set the state receiver after core is initialized
+    pub fn set_state_receiver(&mut self, rx: tokio::sync::mpsc::Receiver<StateUpdate>) {
+        self.state_rx = Some(rx);
+    }
+    
+    /// Poll for core state updates and sync UI
+    pub async fn poll_core_state(&mut self) -> Result<()> {
+        if let Some(rx) = &mut self.state_rx {
+            // Try to receive state updates without blocking
+            match rx.try_recv() {
+                Ok(StateUpdate::StateChanged { new_state, .. }) => {
+                    // Update our cached state info
+                    self.core_state_info = map_core_state_to_ui(&new_state);
+                    
+                    // Sync UI mode with core state (for backward compatibility)
+                    if self.core_state_info.is_awaiting_confirmation && self.mode != Mode::ConfirmingExecutor {
+                        self.mode = Mode::ConfirmingExecutor;
+                        if let Some(prompt) = &self.core_state_info.prompt {
+                            self.pending_executor = Some(PendingExecutor {
+                                prompt: prompt.clone(),
+                                executor_name: self.center.executor.name().to_string(),
+                                working_dir: ExecutorConfig::default().working_dir.to_string_lossy().to_string(),
+                                confirmation_id: None,  // Core manages this now
+                                is_initial_prompt: true,
+                                session_action: None,
+                            });
+                        }
+                    } else if self.core_state_info.is_executor_running && self.mode != Mode::ExecutorRunning {
+                        self.mode = Mode::ExecutorRunning;
+                    } else if !self.core_state_info.is_executor_running && !self.core_state_info.is_awaiting_confirmation {
+                        if self.mode == Mode::ExecutorRunning || self.mode == Mode::ConfirmingExecutor {
+                            self.mode = Mode::Normal;
+                        }
+                    }
+                    
+                    crate::logger::log_event("STATE_SYNC", &format!("Core state updated, UI mode: {:?}", self.mode));
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                    // No updates, that's fine
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                    // Channel closed, clear the receiver
+                    self.state_rx = None;
+                }
+            }
+        }
+        Ok(())
     }
     
     /// Clean up any running executor sessions before exit
@@ -167,7 +229,7 @@ impl App {
     
     pub fn dismiss_error(&mut self) {
         self.error_info = None;
-        self.mode = Mode::Idle;
+        self.mode = Mode::Normal;
     }
     
     pub fn get_max_scroll(&self) -> usize {
@@ -250,7 +312,7 @@ impl App {
     #[cfg(feature = "tui-stt")]
     fn handle_empty_recording(&mut self) {
         self.append_output(format!("{} {}", prefixes::ASR, messages::NO_AUDIO));
-        self.mode = Mode::Idle;
+        self.mode = Mode::Normal;
     }
 
     #[cfg(feature = "tui-stt")]
@@ -262,11 +324,11 @@ impl App {
             self.route_command(&utterance).await?;
             // If we're not in a special mode after routing, go back to idle
             if self.mode == Mode::Recording {
-                self.mode = Mode::Idle;
+                self.mode = Mode::Normal;
             }
         } else {
             self.append_output(format!("{} No speech detected", prefixes::ASR));
-            self.mode = Mode::Idle;
+            self.mode = Mode::Normal;
         }
         Ok(())
     }
@@ -277,7 +339,7 @@ impl App {
             Mode::PlanPending => {
                 self.append_output(format!("{} {}", prefixes::PLAN, messages::PLAN_CANCELED));
                 self.plan.clear();
-                self.mode = Mode::Idle;
+                self.mode = Mode::Normal;
             }
             #[cfg(feature = "tui-stt")]
             Mode::Recording => {
@@ -286,7 +348,7 @@ impl App {
                     tokio::runtime::Handle::current().block_on(backend::record_voice(false))
                 });
                 self.recording.stop();
-                self.mode = Mode::Idle;
+                self.mode = Mode::Normal;
                 self.append_output(format!("{} Recording cancelled", prefixes::ASR));
             }
             Mode::ExecutorRunning => {
@@ -305,7 +367,7 @@ impl App {
                 }
                 
                 self.append_output(format!("{} Executor session terminated by user", prefixes::EXEC));
-                self.mode = Mode::Idle;
+                self.mode = Mode::Normal;
             }
             Mode::ConfirmingExecutor => {
                 self.cancel_executor_confirmation();
@@ -329,7 +391,7 @@ impl App {
                     "Failed to send command to core for routing",
                     format!("Error: {}", e)
                 );
-                self.mode = Mode::Idle;
+                self.mode = Mode::Normal;
                 return Err(anyhow::anyhow!("Failed to send to core: {}", e));
             }
             // The core will handle routing and send back appropriate messages
@@ -341,7 +403,7 @@ impl App {
                 "Core system is not initialized",
                 "Please restart the application".to_string()
             );
-            self.mode = Mode::Idle;
+            self.mode = Mode::Normal;
             Err(anyhow::anyhow!("Core not initialized"))
         }
     }
@@ -383,7 +445,7 @@ impl App {
                     &format!("Could not resume {} session", self.center.executor.name()),
                     format!("Error: {}\n\nYou may want to start a fresh session instead.", e)
                 );
-                self.mode = Mode::Idle;
+                self.mode = Mode::Normal;
                 Err(e)
             }
         }
@@ -397,6 +459,7 @@ impl App {
         self.append_output(format!("{} Starting {} (session: {})...", prefixes::EXEC, self.center.executor.name(), &session_id[..8]));
 
         let config = ExecutorConfig::default();
+        
         match self.center.launch(prompt, Some(config.clone())).await {
             Ok(()) => {
                 self.mode = Mode::ExecutorRunning;
@@ -426,7 +489,7 @@ impl App {
                 } else {
                     self.append_output(format!("{} Failed to launch {}: {}", prefixes::PLAN, self.center.executor.name(), e));
                 }
-                self.mode = Mode::Idle;
+                self.mode = Mode::Normal;
             }
         }
         
@@ -558,7 +621,7 @@ impl App {
                 self.append_output(format!("{} Session logs saved to artifacts/{}", prefixes::EXEC, session_id));
             }
             // Ensure center releases session handle
-            self.mode = Mode::Idle;
+            self.mode = Mode::Normal;
         }
         
         Ok(())
@@ -597,329 +660,296 @@ impl App {
 
     #[cfg(feature = "tui-stt")]
     pub fn get_recording_time(&self) -> String {
-        let elapsed = self.recording.elapsed_seconds();
-        format!("{:02}:{:02}", elapsed / 60, elapsed % 60)
+        let seconds = self.recording.elapsed_seconds();
+        format!("{:02}:{:02}", seconds / 60, seconds % 60)
     }
 
     #[cfg(not(feature = "tui-stt"))]
-    pub fn get_recording_time(&self) -> String { "00:00".to_string() }
+    pub fn get_recording_time(&self) -> String {
+        "".to_string()
+    }
 
-    /// Helper: whether we are currently in recording mode (feature-gated).
+    /// Get the effective UI mode based on core state
+    pub fn get_display_mode(&self) -> Mode {
+        // Priority: Error > Recording > Core state
+        if matches!(self.mode, Mode::ShowingError) {
+            return Mode::ShowingError;
+        }
+        
+        #[cfg(feature = "tui-stt")]
+        if matches!(self.mode, Mode::Recording) {
+            return Mode::Recording;
+        }
+        
+        // For now, maintain backward compatibility
+        // This will be simplified once we complete the migration
+        if self.core_state_info.is_awaiting_confirmation {
+            Mode::ConfirmingExecutor
+        } else if self.core_state_info.is_executor_running {
+            Mode::ExecutorRunning  
+        } else {
+            Mode::Normal
+        }
+    }
+    
+    pub fn can_cancel(&self) -> bool {
+        // Check core state for cancellable operations
+        self.core_state_info.is_awaiting_confirmation ||
+        self.core_state_info.is_executor_running ||
+        matches!(self.mode, Mode::ShowingError) ||
+        self.is_recording_mode()
+    }
+
     #[cfg(feature = "tui-stt")]
-    pub fn is_recording_mode(&self) -> bool { self.mode == Mode::Recording }
-    #[cfg(not(feature = "tui-stt"))]
-    pub fn is_recording_mode(&self) -> bool { false }
+    pub fn is_recording_mode(&self) -> bool {
+        self.mode == Mode::Recording
+    }
 
-    pub fn can_edit_input(&self) -> bool {
-        #[cfg(feature = "tui-input")]
-        {
-            return self.mode == Mode::Idle;
-        }
-        #[cfg(not(feature = "tui-input"))]
-        {
-            return false;
-        }
+    #[cfg(not(feature = "tui-stt"))]
+    pub fn is_recording_mode(&self) -> bool {
+        false
     }
 
     #[cfg(feature = "tui-stt")]
     pub fn can_start_recording(&self) -> bool {
-        self.mode == Mode::Idle && !self.recording.is_active
+        // Can start recording when not in special UI mode and executor not running
+        !self.core_state_info.is_executor_running &&
+        !self.core_state_info.is_awaiting_confirmation &&
+        !matches!(self.mode, Mode::Recording | Mode::ShowingError)
+    }
+
+    #[cfg(not(feature = "tui-stt"))]
+    pub fn can_start_recording(&self) -> bool {
+        false
     }
 
     #[cfg(feature = "tui-stt")]
     pub fn can_stop_recording(&self) -> bool {
-        self.mode == Mode::Recording && self.recording.is_active
+        self.mode == Mode::Recording
     }
 
-    #[allow(dead_code)]
-    pub async fn confirm_executor(&mut self) -> Result<()> {
-        if let Some(pending) = self.pending_executor.take() {
-            self.append_output(format!("{} Confirmed. Launching {}...", prefixes::EXEC, pending.executor_name));
-            self.mode = Mode::Idle;  // Reset mode before launching
-            self.launch_executor(&pending.prompt).await?;
-        }
-        Ok(())
+    #[cfg(not(feature = "tui-stt"))]
+    pub fn can_stop_recording(&self) -> bool {
+        false
+    }
+
+    #[cfg(feature = "tui-input")]
+    pub fn can_edit_input(&self) -> bool {
+        // Can edit input when in normal mode and not executing
+        !self.core_state_info.is_executor_running &&
+        !self.core_state_info.is_awaiting_confirmation &&
+        !matches!(self.mode, Mode::Recording | Mode::ShowingError)
+    }
+
+    #[cfg(not(feature = "tui-input"))]
+    pub fn can_edit_input(&self) -> bool {
+        false
     }
     
     pub fn cancel_executor_confirmation(&mut self) {
-        if self.mode == Mode::ConfirmingExecutor {
-            self.pending_executor = None;
-            self.mode = Mode::Idle;
-            self.append_output(format!("{} Executor launch cancelled", prefixes::PLAN));
-        }
+        self.pending_executor = None;
+        self.mode = Mode::Normal;
+        self.append_output(format!("{} Executor launch cancelled", prefixes::PLAN));
     }
     
-    /// Toggle executor confirmation requirement (for testing)
-    #[allow(dead_code)]
-    pub fn toggle_confirmation(&mut self) {
-        self.settings.require_executor_confirmation = !self.settings.require_executor_confirmation;
-        let status = if self.settings.require_executor_confirmation { "ON" } else { "OFF" };
-        self.append_output(format!("{} Executor confirmation is now {}", prefixes::EXEC, status));
+    /// Initialize core bridge and channels
+    pub fn init_core_bridge(&mut self) {
+        let executor_adapter = crate::core_bridge::ExecutorAdapter::new(self.cmd_tx.clone());
+        let core_system = crate::core_bridge::start_core_with_executor(executor_adapter);
+        
+        // Store core reference
+        self.core = Some(core_system.core.clone());
+        
+        // Set up state observer
+        let (state_tx, state_rx) = tokio::sync::mpsc::channel(100);
+        self.state_rx = Some(state_rx);
+        
+        // Register state observer with core
+        let observer = std::sync::Arc::new(crate::state_observer::TUIStateObserver::new(state_tx));
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(
+                core_system.core.state_manager().add_listener(observer)
+            )
+        });
+        
+        // Store channels
+        self.core_in_tx = Some(core_system.handles.inbound_tx);
+        self.core_out_rx = Some(core_system.handles.outbound_rx);
+        
+        crate::logger::log_event("CORE", "Core bridge initialized with state observer");
     }
     
-    pub fn can_cancel(&self) -> bool {
-        #[cfg(feature = "tui-stt")]
-        {
-            return matches!(
-                self.mode,
-                Mode::Recording | Mode::PlanPending | Mode::ExecutorRunning | Mode::ConfirmingExecutor | Mode::ShowingError
-            );
-        }
-        #[cfg(not(feature = "tui-stt"))]
-        {
-            return matches!(
-                self.mode,
-                Mode::PlanPending | Mode::ExecutorRunning | Mode::ConfirmingExecutor | Mode::ShowingError
-            );
-        }
+    // SESSION HISTORY METHODS
+    
+    /// Load last session info from disk (called at startup)
+    pub async fn load_previous_session(&mut self) -> Option<(String, String)> {
+        crate::session_history::load_last_session(&self.artifacts_dir)
     }
     
-    /// Poll for new log entries
+    /// Save session status to disk
+    fn save_session_status(&self, session_id: &str, summary: &str, status: &str) {
+        crate::session_history::save_session_status(&self.artifacts_dir, session_id, summary, status);
+    }
+    
+    /// Load session summary from disk
+    pub async fn load_session_summary(&self, session_id: &str) -> Option<String> {
+        crate::session_history::load_session_summary(&self.artifacts_dir, session_id)
+    }
+    
+    // Relay and logging methods
+    
+    /// Initialize relay connection
+    pub async fn init_relay(&mut self) {
+        self.relay_rx = relay_client::connect_if_configured().await;
+        crate::logger::log_event("RELAY", "Relay initialization attempted");
+    }
+    
+    /// Poll for log entries
     pub async fn poll_logs(&mut self) -> Result<()> {
-        // Pull logs from control center
-        for log in self.center.poll_logs(10).await {
-            self.add_log_to_current_session(log);
-            if self.log_scroll.auto_scroll {
-                self.log_scroll.scroll_to_bottom(self.session_logs.len().saturating_sub(1));
-            }
-        }
+        // This is a placeholder - actual log polling would go here
+        // For now, just return Ok
         Ok(())
     }
-
-    /// Attempt to connect to relay if env vars are present
-    pub async fn init_relay(&mut self) {
-        // Start headless core once at initialization
-        let exec_adapter = crate::core_bridge::ExecutorAdapter::new(self.cmd_tx.clone());
-        let system = crate::core_bridge::start_core_with_executor(exec_adapter);
-        self.core_in_tx = Some(system.handles.inbound_tx.clone());
-        self.core_out_rx = Some(system.handles.outbound_rx);
-        self.core = Some(system.core);
-        crate::logger::log_event("INIT", "Core initialized and channels connected");
-        match relay_client::load_config_from_env() {
-            Ok(Some(cfg)) => {
-                self.append_output(format!("{} Connecting to relay...", prefixes::RELAY));
-                match relay_client::start(cfg).await {
-                    Ok(rx) => {
-                        self.relay_rx = Some(rx);
-                        self.append_output(format!("{} Relay client started", prefixes::RELAY));
-                    }
-                    Err(e) => {
-                        self.append_output(format!("{} Failed to start relay: {}", prefixes::RELAY, e));
-                    }
-                }
-            }
-            Ok(None) => {
-                // Silent if not configured; user may only use local features.
-            }
-            Err(e) => {
-                self.append_output(format!("{} Relay config error: {}", prefixes::RELAY, e));
-            }
-        }
-    }
-
-    /// Poll relay events non-blocking and display in TUI
+    
+    /// Poll relay for messages (wrapper for poll_relay_messages)
     pub async fn poll_relay(&mut self) -> Result<()> {
+        self.poll_relay_messages().await
+    }
+    
+    /// Poll relay messages from mobile
+    pub async fn poll_relay_messages(&mut self) -> Result<()> {
+        // Collect events first to avoid borrow conflicts
+        let mut events = Vec::new();
+        let mut should_disconnect = false;
+        
         if let Some(rx) = &mut self.relay_rx {
-            // Drain events first to avoid borrow conflicts
-            let mut pending = Vec::with_capacity(50);
-            for _ in 0..50 {
+            // Try to receive multiple messages in one poll
+            for _ in 0..10 {
                 match rx.try_recv() {
-                    Ok(ev) => pending.push(ev),
+                    Ok(event) => events.push(event),
                     Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
                     Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                        pending.push(RelayEvent::Status("disconnected".into()));
-                        self.relay_rx = None;
+                        should_disconnect = true;
                         break;
                     }
                 }
             }
-            for ev in pending {
-                match ev {
-                    RelayEvent::Status(s) => self.append_output(format!("{} {}", prefixes::RELAY, s)),
-                    RelayEvent::PeerJoined(who) => self.append_output(format!("{} peer joined: {}", prefixes::RELAY, who)),
-                    RelayEvent::PeerLeft(who) => self.append_output(format!("{} peer left: {}", prefixes::RELAY, who)),
-                    RelayEvent::SessionKilled => self.append_output(format!("{} session killed", prefixes::RELAY)),
-                    RelayEvent::Error(e) => self.append_output(format!("{} error: {}", prefixes::RELAY, e)),
-                    RelayEvent::Frame(text) => {
-                        // Try to parse known frames
-                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                            let msg_type = v.get("type").and_then(|s| s.as_str());
-                            
-                            if msg_type == Some("user_text") {
-                                let text = v.get("text").and_then(|s| s.as_str()).unwrap_or("");
-                                let preview = if text.len() > 60 { format!("{}…", &text[..60]) } else { text.to_string() };
-                                self.append_output(format!("{} user_text: {}", prefixes::RELAY, preview));
-                                
-                                // If we're in ConfirmingExecutor mode, handle as confirmation response
-                                if self.mode == Mode::ConfirmingExecutor {
-                                    crate::logger::log_event("CONFIRMATION", &format!("Handling user_text '{}' as confirmation response", text));
-                                    if let Err(e) = self.handle_confirmation_response(text).await {
-                                        self.append_output(format!("{} Error handling confirmation: {}", prefixes::EXEC, e));
-                                    }
-                                } else {
-                                    crate::logger::log_event("ROUTING", &format!("Mode is {:?}, routing user_text '{}' normally", self.mode, text));
-                                    // Otherwise, send to core for normal routing
-                                    if let Some(tx) = &self.core_in_tx {
-                                        if let Ok(msg) = serde_json::from_value::<protocol::Message>(v.clone()) {
-                                            let _ = tx.send(msg).await;
-                                        }
-                                    }
-                                }
-                                continue;
-                            }
-                            
-                            if msg_type == Some("confirm_response") {
-                                // Handle confirmation response from mobile
-                                self.append_output(format!("{} Mobile confirmation received", prefixes::RELAY));
-                                if let Some(tx) = &self.core_in_tx {
-                                    if let Ok(msg) = serde_json::from_value::<protocol::Message>(v.clone()) {
-                                        let _ = tx.send(msg).await;
-                                        // Dismiss the TUI confirmation dialog if mobile confirmed
-                                        if self.mode == Mode::ConfirmingExecutor {
-                                            self.pending_executor = None;
-                                            self.mode = Mode::Idle;
-                                        }
-                                    }
-                                }
-                                continue;
-                            }
-                            if v.get("type").and_then(|s| s.as_str()) == Some("get_logs") {
-                                let reply_id = v.get("id").and_then(|s| s.as_str()).unwrap_or("").to_string();
-                                let mut limit = v.get("limit").and_then(|n| n.as_u64()).unwrap_or(100);
-                                if limit == 0 { limit = 1; }
-                                if limit > 200 { limit = 200; }
-                                // Collect latest N logs from current session
-                                let mut items: Vec<serde_json::Value> = Vec::new();
-                                
-                                // Get logs from current session or fall back to display logs
-                                let logs_to_use = if let Some(session_id) = &self.current_session_id {
-                                    self.session_logs_map.get(session_id).unwrap_or(&self.session_logs)
-                                } else {
-                                    &self.session_logs
-                                };
-                                
-                                for log in logs_to_use.iter().rev().take(limit as usize) {
-                                    let ts_ms = match log.timestamp.duration_since(std::time::UNIX_EPOCH) {
-                                        Ok(d) => d.as_millis() as u64,
-                                        Err(_) => 0,
-                                    };
-                                    let typ = match log.entry_type {
-                                        control_center::LogType::UserMessage => "user",
-                                        control_center::LogType::AssistantMessage => "assistant",
-                                        control_center::LogType::ToolCall => "tool_call",
-                                        control_center::LogType::ToolResult => "tool_result",
-                                        control_center::LogType::Status => "status",
-                                        control_center::LogType::Error => "error",
-                                        control_center::LogType::Unknown => "unknown",
-                                    };
-                                    items.push(serde_json::json!({
-                                        "ts": ts_ms,
-                                        "type": typ,
-                                        "message": log.content,
-                                    }));
-                                }
-                                // If no logs yet, return a few placeholder entries to validate end-to-end flow
-                                if items.is_empty() {
-                                    let now_ms: u64 = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) { Ok(d) => d.as_millis() as u64, Err(_) => 0 };
-                                    let count = std::cmp::min(3usize, limit as usize);
-                                    let placeholders = [
-                                        "No logs yet — placeholder entry",
-                                        "Try launching an executor or sending a command",
-                                        "This is a test log to confirm wiring",
-                                    ];
-                                    for i in 0..count {
-                                        let msg = placeholders.get(i).unwrap_or(&"placeholder");
-                                        items.push(serde_json::json!({
-                                            "ts": now_ms.saturating_sub(((count - i) as u64) * 1000),
-                                            "type": "status",
-                                            "message": *msg,
-                                        }));
-                                    }
-                                }
-                                let resp = serde_json::json!({
-                                    "type": "logs",
-                                    "replyTo": reply_id,
-                                    "session_id": self.current_session_id.clone().unwrap_or_else(|| "none".to_string()),
-                                    "items": items,
-                                });
-                                crate::relay_client::send_frame(resp.to_string());
-                                continue;
-                            }
-                            if v.get("type").and_then(|s| s.as_str()) == Some("get_filtered_logs") {
-                                // New endpoint for getting filtered logs suitable for summarization
-                                let reply_id = v.get("id").and_then(|s| s.as_str()).unwrap_or("").to_string();
-                                let mut limit = v.get("limit").and_then(|n| n.as_u64()).unwrap_or(100);
-                                if limit == 0 { limit = 1; }
-                                if limit > 200 { limit = 200; }
-                                
-                                // Get logs from current session
-                                let logs_to_use = if let Some(session_id) = &self.current_session_id {
-                                    self.session_logs_map.get(session_id).unwrap_or(&self.session_logs)
-                                } else {
-                                    &self.session_logs
-                                };
-                                
-                                // Apply executor-specific filtering
-                                let filtered_logs: Vec<String> = if !logs_to_use.is_empty() {
-                                    // Take the last N logs and filter them
-                                    let recent_logs: Vec<_> = logs_to_use.iter()
-                                        .rev()
-                                        .take(limit as usize)
-                                        .rev()
-                                        .cloned()
-                                        .collect();
-                                    self.center.executor.filter_logs_for_summary(&recent_logs)
-                                } else {
-                                    vec!["No activity yet".to_string()]
-                                };
-                                
-                                let resp = serde_json::json!({
-                                    "type": "filtered_logs",
-                                    "replyTo": reply_id,
-                                    "session_id": self.current_session_id.clone().unwrap_or_else(|| "none".to_string()),
-                                    "executor": self.center.executor.name(),
-                                    "items": filtered_logs,
-                                });
-                                crate::relay_client::send_frame(resp.to_string());
-                                continue;
-                            }
-                            if v.get("type").and_then(|s| s.as_str()) == Some("stt_audio") {
-                                let reply_id = v.get("id").and_then(|s| s.as_str()).unwrap_or("").to_string();
-                                let mime = v.get("mime").and_then(|s| s.as_str()).unwrap_or("");
-                                let b64 = v.get("b64").and_then(|b| b.as_bool()).unwrap_or(true);
-                                let mut text_out = String::new();
-                                if let Some(data) = v.get("data").and_then(|s| s.as_str()) {
-                                    let audio_bytes = if b64 { base64::engine::general_purpose::STANDARD.decode(data).unwrap_or_default() } else { Vec::new() };
-                                    #[cfg(feature = "tui-stt")]
-                                    {
-                                        if !audio_bytes.is_empty() {
-                                            match crate::backend::voice_to_text(audio_bytes).await {
-                                                Ok(t) => {
-                                                    text_out = t;
-                                                    // Route the recognized text as a command, similar to TUI mic flow
-                                                    let _ = self.route_command(&text_out).await;
-                                                }
-                                                Err(e) => {
-                                                    self.append_output(format!("{} STT error: {}", prefixes::ASR, e));
+        }
+        
+        if should_disconnect {
+            self.relay_rx = None;
+        }
+        
+        // Now process the collected events
+        for event in events {
+            match event {
+                RelayEvent::PeerJoined(who) => {
+                    self.append_output(format!("{} {} connected", prefixes::RELAY, who));
+                }
+                RelayEvent::PeerLeft(who) => {
+                    self.append_output(format!("{} {} disconnected", prefixes::RELAY, who));
+                }
+                RelayEvent::Status(status) => {
+                    self.append_output(format!("{} Status: {}", prefixes::RELAY, status));
+                }
+                RelayEvent::Frame(text) => {
+                        // First check if it's a JSON message
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                            if let Some(msg_type) = json.get("type").and_then(|t| t.as_str()) {
+                                match msg_type {
+                                    "stt_request" => {
+                                        // Mobile is requesting STT on audio
+                                        let mut text_out = String::new();
+                                        let reply_id = json.get("id")
+                                            .and_then(|i| i.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
+                                        let mime = json.get("mime")
+                                            .and_then(|m| m.as_str())
+                                            .unwrap_or("audio/wav");
+                                        
+                                        if let Some(data_b64) = json.get("data").and_then(|d| d.as_str()) {
+                                            if let Ok(audio_data) = base64::engine::general_purpose::STANDARD.decode(data_b64) {
+                                                // Only process if audio has reasonable size
+                                                if audio_data.len() > 1000 {
+                                                    match backend::voice_to_text(audio_data).await {
+                                                        Ok(transcribed) => {
+                                                            text_out = transcribed.clone();
+                                                            self.append_output(format!("{} Mobile audio transcribed: {}", prefixes::ASR, transcribed));
+                                                            if !transcribed.trim().is_empty() {
+                                                                // Route the transcribed command
+                                                                let _ = self.route_command(&text_out).await;
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            self.append_output(format!("{} STT error: {}", prefixes::ASR, e));
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
+                                        let resp = serde_json::json!({
+                                            "type": "stt_result",
+                                            "replyTo": reply_id,
+                                            "mime": mime,
+                                            "ok": !text_out.is_empty(),
+                                            "text": text_out,
+                                        });
+                                        crate::relay_client::send_frame(resp.to_string());
+                                        continue;
+                                    }
+                                    "get_logs" => {
+                                        let reply_id = json.get("id")
+                                            .and_then(|i| i.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
+                                        let count = json.get("count")
+                                            .and_then(|c| c.as_u64())
+                                            .unwrap_or(50) as usize;
+                                        
+                                        // Get recent output lines
+                                        let start_idx = self.output.len().saturating_sub(count);
+                                        let recent_logs = &self.output[start_idx..];
+                                        
+                                        let resp = serde_json::json!({
+                                            "type": "logs",
+                                            "replyTo": reply_id,
+                                            "logs": recent_logs,
+                                        });
+                                        crate::relay_client::send_frame(resp.to_string());
+                                        continue;
+                                    }
+                                    _ => {
+                                        // Process other message types normally
                                     }
                                 }
-                                let resp = serde_json::json!({
-                                    "type": "stt_result",
-                                    "replyTo": reply_id,
-                                    "mime": mime,
-                                    "ok": !text_out.is_empty(),
-                                    "text": text_out,
-                                });
-                                crate::relay_client::send_frame(resp.to_string());
+                            }
+                            
+                            // Check if it's a confirmation response
+                            if let Ok(confirm_resp) = serde_json::from_value::<protocol::ConfirmResponse>(json.clone()) {
+                                if let Some(tx) = &self.core_in_tx {
+                                    let _ = tx.send(protocol::Message::ConfirmResponse(confirm_resp)).await;
+                                }
+                                continue;
+                            }
+                            
+                            // Check if it's a user text message
+                            if let Ok(user_text) = serde_json::from_value::<protocol::UserText>(json) {
+                                if let Some(tx) = &self.core_in_tx {
+                                    let _ = tx.send(protocol::Message::UserText(user_text)).await;
+                                }
                                 continue;
                             }
                         }
                         // Fallback: echo relay frame
                         self.append_output(format!("{} {}", prefixes::RELAY, text));
-                    }
+                }
+                RelayEvent::SessionKilled => {
+                    self.append_output(format!("{} Session killed by relay", prefixes::RELAY));
+                    self.relay_rx = None;
+                }
+                RelayEvent::Error(err) => {
+                    self.append_output(format!("{} Error: {}", prefixes::RELAY, err));
                 }
             }
         }
@@ -1197,7 +1227,7 @@ impl App {
                     matches!(log.entry_type, 
                         control_center::LogType::Error | 
                         control_center::LogType::UserMessage |
-                        control_center::LogType::AssistantMessage
+                        control_center::LogType::Status
                     );
                 
                 if should_save {
@@ -1206,83 +1236,7 @@ impl App {
             }
         }
         
-        // Also add to the display logs (backward compatibility)
+        // Also add to display logs (backward compatibility)
         self.session_logs.push(log);
-        
-        // Trim display logs if too many
-        const MAX_LOGS: usize = 1000;
-        if self.session_logs.len() > MAX_LOGS {
-            let remove_count = self.session_logs.len() - MAX_LOGS;
-            self.session_logs.drain(0..remove_count);
-        }
-    }
-    
-    pub fn save_session_status(&self, session_id: &str, summary: &str, status: &str) {
-        let session_dir = self.artifacts_dir.join(format!("session_{}", session_id));
-        if !session_dir.exists() {
-            let _ = fs::create_dir_all(&session_dir);
-        }
-        
-        // Check if this is a resumed session
-        let is_resumed = self.last_completed_session_id.as_ref()
-            .map(|id| id == session_id)
-            .unwrap_or(false);
-        
-        let metadata = serde_json::json!({
-            "session_id": session_id,
-            "status": status,
-            "summary": summary,
-            "completed_at": chrono::Utc::now().to_rfc3339(),
-            "executor_type": self.active_executor_type.as_ref().map(|t| format!("{:?}", t)),
-            "duration_secs": self.active_executor_started_at.map(|t| t.elapsed().as_secs()),
-            "is_resumed": is_resumed,
-            "resumed_from": if is_resumed { self.last_completed_session_id.clone() } else { None },
-        });
-        
-        let metadata_path = session_dir.join("metadata.json");
-        if let Ok(mut file) = fs::File::create(&metadata_path) {
-            let _ = file.write_all(serde_json::to_string_pretty(&metadata).unwrap().as_bytes());
-        }
-    }
-    
-    pub async fn load_previous_session(&mut self) -> Option<(String, String)> {
-        // Look for the most recent session in artifacts directory
-        let mut sessions = Vec::new();
-        
-        if let Ok(entries) = fs::read_dir(&self.artifacts_dir) {
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    let path = entry.path();
-                    if path.is_dir() {
-                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                            if name.starts_with("session_") {
-                                let metadata_path = path.join("metadata.json");
-                                if metadata_path.exists() {
-                                    if let Ok(content) = fs::read_to_string(&metadata_path) {
-                                        if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&content) {
-                                            sessions.push((
-                                                meta["completed_at"].as_str().unwrap_or("").to_string(),
-                                                meta["summary"].as_str().unwrap_or("").to_string(),
-                                                meta["session_id"].as_str().unwrap_or("").to_string(),
-                                            ));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Sort by completion time and return the most recent
-        sessions.sort_by(|a, b| b.0.cmp(&a.0));
-        
-        // Also update last_completed_session_id if we found one
-        if let Some((_, _, id)) = sessions.first() {
-            self.last_completed_session_id = Some(id.clone());
-        }
-        
-        sessions.first().map(|(_, summary, id)| (id.clone(), summary.clone()))
     }
 }

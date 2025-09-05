@@ -156,6 +156,7 @@ impl InputLine {
     
     fn get_mode_text(mode: &Mode) -> &'static str {
         match mode {
+            Mode::Normal => "Ready",
             Mode::Idle => "Idle",
             #[cfg(feature = "tui-stt")]
             Mode::Recording => "Recording",

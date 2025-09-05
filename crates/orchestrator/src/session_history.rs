@@ -92,3 +92,63 @@ impl SessionHistory {
         Ok(())
     }
 }
+
+// Standalone functions for App compatibility
+
+/// Load the last session from disk
+pub fn load_last_session(artifacts_dir: &PathBuf) -> Option<(String, String)> {
+    let session_dir = artifacts_dir.join(".last_session");
+    if !session_dir.exists() {
+        return None;
+    }
+    
+    let id_path = session_dir.join("id");
+    let summary_path = session_dir.join("summary");
+    
+    if let (Ok(id), Ok(summary)) = (fs::read_to_string(id_path), fs::read_to_string(summary_path)) {
+        Some((id.trim().to_string(), summary.trim().to_string()))
+    } else {
+        None
+    }
+}
+
+/// Save session status to disk
+pub fn save_session_status(artifacts_dir: &PathBuf, session_id: &str, summary: &str, status: &str) {
+    let session_dir = artifacts_dir.join(session_id);
+    if let Err(e) = fs::create_dir_all(&session_dir) {
+        eprintln!("Failed to create session directory: {}", e);
+        return;
+    }
+    
+    let status_path = session_dir.join("status.json");
+    let status_data = serde_json::json!({
+        "session_id": session_id,
+        "summary": summary,
+        "status": status,
+        "updated_at": Utc::now().to_rfc3339(),
+    });
+    
+    if let Ok(content) = serde_json::to_string_pretty(&status_data) {
+        let _ = fs::write(status_path, content);
+    }
+    
+    // Also save as last session if completed
+    if status == "completed" {
+        let last_dir = artifacts_dir.join(".last_session");
+        if let Ok(()) = fs::create_dir_all(&last_dir) {
+            let _ = fs::write(last_dir.join("id"), session_id);
+            let _ = fs::write(last_dir.join("summary"), summary);
+        }
+    }
+}
+
+/// Load session summary from disk
+pub fn load_session_summary(artifacts_dir: &PathBuf, session_id: &str) -> Option<String> {
+    let status_path = artifacts_dir.join(session_id).join("status.json");
+    if let Ok(content) = fs::read_to_string(status_path) {
+        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
+            return data.get("summary").and_then(|s| s.as_str()).map(|s| s.to_string());
+        }
+    }
+    None
+}

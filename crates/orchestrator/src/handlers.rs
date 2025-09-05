@@ -94,27 +94,31 @@ impl InputHandler {
     }
 
     async fn handle_enter(app: &mut App) -> Result<()> {
+        // Check core state first for business logic
+        if app.core_state_info.is_awaiting_confirmation {
+            // Send confirm to core; it will trigger launch via adapter
+            if let Some(tx) = &app.core_in_tx {
+                let confirmation_id = app.pending_executor.as_ref()
+                    .and_then(|p| p.confirmation_id.clone());
+                let msg = protocol::Message::ConfirmResponse(protocol::ConfirmResponse{ 
+                    v: Some(protocol::VERSION), 
+                    id: confirmation_id,
+                    for_: "executor_launch".into(), 
+                    accept: true 
+                });
+                let _ = tx.send(msg).await;
+            }
+            app.pending_executor = None;
+            // Mode will be updated by state sync
+            return Ok(());
+        }
+        
+        // Handle UI-specific modes
         match app.mode {
             #[cfg(feature = "tui-input")]
-            Mode::Idle => app.handle_text_input().await?,
+            Mode::Normal | Mode::Idle => app.handle_text_input().await?,
             #[cfg(not(feature = "tui-input"))]
-            Mode::Idle => {},
-            Mode::ConfirmingExecutor => {
-                // Send confirm to core; it will trigger launch via adapter
-                if let Some(tx) = &app.core_in_tx {
-                    let confirmation_id = app.pending_executor.as_ref()
-                        .and_then(|p| p.confirmation_id.clone());
-                    let msg = protocol::Message::ConfirmResponse(protocol::ConfirmResponse{ 
-                        v: Some(protocol::VERSION), 
-                        id: confirmation_id,
-                        for_: "executor_launch".into(), 
-                        accept: true 
-                    });
-                    let _ = tx.send(msg).await;
-                }
-                app.pending_executor = None;
-                app.mode = Mode::Idle;
-            }
+            Mode::Normal | Mode::Idle => {},
             Mode::ShowingError => app.dismiss_error(),
             _ => {}
         }
@@ -122,23 +126,22 @@ impl InputHandler {
     }
 
     fn handle_cancel(app: &mut App) {
-        if app.can_cancel() {
-            if app.mode == Mode::ConfirmingExecutor {
-                if let Some(tx) = &app.core_in_tx {
-                    let confirmation_id = app.pending_executor.as_ref()
-                        .and_then(|p| p.confirmation_id.clone());
-                    let msg = protocol::Message::ConfirmResponse(protocol::ConfirmResponse{ 
-                        v: Some(protocol::VERSION), 
-                        id: confirmation_id,
-                        for_: "executor_launch".into(), 
-                        accept: false 
-                    });
-                    let _ = tx.try_send(msg);
-                }
-                app.cancel_executor_confirmation();
-            } else {
-                app.cancel_current_operation();
+        // Check core state first
+        if app.core_state_info.is_awaiting_confirmation {
+            if let Some(tx) = &app.core_in_tx {
+                let confirmation_id = app.pending_executor.as_ref()
+                    .and_then(|p| p.confirmation_id.clone());
+                let msg = protocol::Message::ConfirmResponse(protocol::ConfirmResponse{ 
+                    v: Some(protocol::VERSION), 
+                    id: confirmation_id,
+                    for_: "executor_launch".into(), 
+                    accept: false 
+                });
+                let _ = tx.try_send(msg);
             }
+            app.cancel_executor_confirmation();
+        } else if app.can_cancel() {
+            app.cancel_current_operation();
         }
     }
 

@@ -1,8 +1,14 @@
 pub mod ports;
 pub mod session;
+pub mod session_manager;
+pub mod state;
 
 use anyhow::Result;
 use ports::{ExecutorPort, OutboundPort, RouteAction, RouterPort};
+use state::{StateManager, StateEvent, WorkstationState, ExecutionState};
+use session_manager::SessionManager;
+use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
 
 /// Headless orchestrator core: consumes protocol messages, emits protocol messages.
 pub struct OrchestratorCore<R: RouterPort, E: ExecutorPort, O: OutboundPort> {
@@ -10,8 +16,10 @@ pub struct OrchestratorCore<R: RouterPort, E: ExecutorPort, O: OutboundPort> {
     executor: E,
     outbound: O,
     require_confirmation: bool,
-    pending_confirmation: std::sync::Mutex<Option<PendingConfirmation>>,
-    active_session: std::sync::Mutex<Option<ports::RouterContext>>,
+    pending_confirmation: Mutex<Option<PendingConfirmation>>,
+    active_session: Mutex<Option<ports::RouterContext>>,
+    state_manager: Arc<StateManager>,
+    session_manager: Arc<Mutex<SessionManager>>,
 }
 
 struct PendingConfirmation {
@@ -21,7 +29,30 @@ struct PendingConfirmation {
 
 impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> {
     pub fn new(router: R, executor: E, outbound: O) -> Self {
-        Self { router, executor, outbound, require_confirmation: true, pending_confirmation: std::sync::Mutex::new(None), active_session: std::sync::Mutex::new(None) }
+        // Default artifacts directory
+        let artifacts_dir = PathBuf::from("artifacts");
+        let _ = std::fs::create_dir_all(&artifacts_dir);
+        
+        Self { 
+            router, 
+            executor, 
+            outbound, 
+            require_confirmation: true, 
+            pending_confirmation: Mutex::new(None), 
+            active_session: Mutex::new(None),
+            state_manager: Arc::new(StateManager::new()),
+            session_manager: Arc::new(Mutex::new(SessionManager::new(artifacts_dir))),
+        }
+    }
+    
+    /// Get the state manager for external monitoring
+    pub fn state_manager(&self) -> Arc<StateManager> {
+        self.state_manager.clone()
+    }
+    
+    /// Get the session manager for external access
+    pub fn session_manager(&self) -> Arc<Mutex<SessionManager>> {
+        self.session_manager.clone()
     }
 
     pub fn set_require_confirmation(&mut self, yes: bool) { self.require_confirmation = yes; }
@@ -146,13 +177,28 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
                 let prompt = decision.prompt.unwrap_or_else(|| text_trim.to_string());
                 if self.require_confirmation {
                     eprintln!("DEBUG core: LaunchClaude -> sending PromptConfirmation");
-                    // Generate unique confirmation ID
-                    let confirmation_id = format!("confirm_{}", std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis());
                     
-                    // Store pending confirmation
+                    // Transition state to AwaitingConfirmation
+                    let _ = self.state_manager.handle_event(StateEvent::RequestExecution {
+                        prompt: prompt.clone(),
+                        executor_type: "Claude".to_string(),
+                    }).await;
+                    
+                    // Get the confirmation ID from the state
+                    let confirmation_id = match self.state_manager.get_state().await {
+                        WorkstationState::Executing(ExecutionState::AwaitingConfirmation { confirmation_id, .. }) => {
+                            confirmation_id
+                        }
+                        _ => {
+                            // Fallback if state transition failed
+                            format!("confirm_{}", std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis())
+                        }
+                    };
+                    
+                    // Store pending confirmation (for backward compatibility)
                     *self.pending_confirmation.lock().unwrap() = Some(PendingConfirmation {
                         id: confirmation_id.clone(),
                         prompt: prompt.clone(),
@@ -205,7 +251,27 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
         if cr.accept {
             if let Some(pending) = pending {
                 eprintln!("DEBUG core: launching executor with prompt: {}", pending.prompt);
+                
+                // Transition state to Running
+                let confirmation_id = cr.id.unwrap_or_else(|| pending.id.clone());
+                let _ = self.state_manager.handle_event(StateEvent::ConfirmExecution { 
+                    confirmation_id 
+                }).await;
+                
+                // Launch the executor
                 self.executor.launch(&pending.prompt).await?;
+                
+                // Get session ID from state and start session in session manager
+                if let WorkstationState::Executing(ExecutionState::Running { session_id, executor_type, prompt, .. }) = self.state_manager.get_state().await {
+                    // Start tracking the session (release lock before await)
+                    {
+                        let mut session_mgr = self.session_manager.lock().unwrap();
+                        session_mgr.start_session(prompt, executor_type, PathBuf::from("."));
+                    }
+                    
+                    let _ = self.state_manager.handle_event(StateEvent::ExecutionStarted { session_id }).await;
+                }
+                
                 self.outbound.send(protocol::Message::Status(protocol::Status{
                     v: Some(protocol::VERSION), level: "info".into(), text: format!("Starting Claude Code for: {}", pending.prompt)
                 })).await?;
@@ -213,6 +279,14 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
         } else {
             // canceled: emit status
             eprintln!("DEBUG core: confirmation declined");
+            
+            // Transition state back to Idle
+            if let Some(pending) = pending {
+                let _ = self.state_manager.handle_event(StateEvent::DeclineExecution { 
+                    confirmation_id: cr.id.unwrap_or_else(|| pending.id) 
+                }).await;
+            }
+            
             self.outbound.send(protocol::Message::Status(protocol::Status{
                 v: Some(protocol::VERSION), level: "info".into(), text: "executor launch canceled".into()
             })).await?;
