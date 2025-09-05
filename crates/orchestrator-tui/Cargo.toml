@@ -1,0 +1,15 @@
+[package]
+name = "orchestrator-tui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+ratatui = "0.28"
+crossterm = "0.28"
+protocol = { path = "../protocol" }
+orchestrator-core = { path = "../orchestrator-core" }
+anyhow.workspace = true
+tokio = { workspace = true, features = ["full"] }
+serde.workspace = true
+serde_json.workspace = true

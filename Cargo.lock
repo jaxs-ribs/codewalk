@@ -2388,6 +2388,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "orchestrator-tui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossterm",
+ "orchestrator-core",
+ "protocol",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "overload"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
