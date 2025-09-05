@@ -103,11 +103,11 @@ flowchart LR
     Relay[Relay Client]:::ui
   end
   subgraph Orchestrator
-    App[orchestrator (binary glue)]:::app
+    App[orchestrator - binary glue]:::app
     Core[orchestrator-core]:::core
   end
   subgraph Adapters
-    Bridge[orchestrator-adapters\n(Ports impl)]:::adp
+    Bridge[orchestrator-adapters\nports adapter]:::adp
     RouterCrate[router]:::lib
     LLM[llm]:::lib
   end
