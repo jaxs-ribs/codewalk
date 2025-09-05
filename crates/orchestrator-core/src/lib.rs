@@ -1,4 +1,5 @@
 pub mod ports;
+pub mod session;
 
 use anyhow::Result;
 use ports::{ExecutorPort, OutboundPort, RouteAction, RouterPort};

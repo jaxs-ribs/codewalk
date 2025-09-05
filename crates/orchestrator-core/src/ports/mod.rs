@@ -1,12 +1,19 @@
+pub mod storage;
+pub mod summarizer;
+pub mod monitor;
+
+pub use storage::{SessionStore, SessionMetadata};
+pub use summarizer::{Summarizer, SessionSummaryOutput, KeyEvent, EventImportance};
+pub use monitor::{LogMonitor, LogLevel, SpanId, MetricValue};
+
 use anyhow::Result;
 use async_trait::async_trait;
 
-/// Minimal router decision for Phase 2
 #[derive(Debug, Clone, PartialEq)]
 pub enum RouteAction {
     LaunchClaude,
     CannotParse,
-    QueryExecutor,  // New: Query status of running executor
+    QueryExecutor,
 }
 
 #[derive(Debug, Clone)]
@@ -20,7 +27,7 @@ pub struct RouteResponse {
 #[derive(Debug, Clone)]
 pub struct RouterContext {
     pub has_active_session: bool,
-    pub session_type: Option<String>,  // "claude", "devin", etc.
+    pub session_type: Option<String>,
 }
 
 #[async_trait]
@@ -38,4 +45,3 @@ pub trait ExecutorPort: Send + Sync {
 pub trait OutboundPort: Send + Sync {
     async fn send(&self, msg: protocol::Message) -> Result<()>;
 }
-

@@ -1,0 +1,24 @@
+[package]
+name = "orchestrator-adapters"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+orchestrator-core = { path = "../orchestrator-core" }
+router = { path = "../router" }
+llm = { path = "../llm" }
+control_center = { path = "../control_center" }
+protocol = { path = "../protocol" }
+anyhow.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["full"] }
+chrono.workspace = true
+uuid.workspace = true
+tracing.workspace = true
+lazy_static.workspace = true
+futures-util.workspace = true
+tokio-tungstenite.workspace = true
+once_cell.workspace = true
