@@ -63,14 +63,26 @@ impl RouterPort for RouterAdapter {
             match resp.action {
                 router::RouterAction::LaunchClaude => RouteAction::LaunchClaude,
                 router::RouterAction::CannotParse => {
-                    // Check if this looks like a status query even without active session
-                    let text_lower = text.to_lowercase();
-                    if text_lower.contains("what") && text_lower.contains("happening") ||
-                       text_lower.contains("status") || 
-                       text_lower.contains("progress") {
-                        RouteAction::QueryExecutor  // Will respond "No active session to query"
+                    // First check if the reason indicates a status query
+                    if resp.reason.as_ref().map_or(false, |r| {
+                        let contains_status = r.contains("status") || r.contains("query") || r.contains("check");
+                        crate::logger::log_debug(&format!("No active session - Checking reason '{}' for status keywords: {}", r, contains_status));
+                        contains_status
+                    }) {
+                        crate::logger::log_event("ROUTER", "Routing to QueryExecutor (status query detected, will check for last session)");
+                        RouteAction::QueryExecutor
                     } else {
-                        RouteAction::CannotParse
+                        // Also check the text directly for status-like queries
+                        let text_lower = text.to_lowercase();
+                        if text_lower.contains("what") && text_lower.contains("happening") ||
+                           text_lower.contains("status") || 
+                           text_lower.contains("last session") ||
+                           text_lower.contains("previous session") ||
+                           text_lower.contains("progress") {
+                            RouteAction::QueryExecutor  // Will respond with last session info or "No active session"
+                        } else {
+                            RouteAction::CannotParse
+                        }
                     }
                 }
                 // Confirmation responses shouldn't appear in normal routing
@@ -114,9 +126,14 @@ pub struct OutboundChannel(pub mpsc::Sender<protocol::Message>);
 #[async_trait]
 impl OutboundPort for OutboundChannel {
     async fn send(&self, msg: protocol::Message) -> Result<()> {
+            crate::logger::log_event("CORE_BRIDGE_OUT", &format!("Sending message: {:?}", msg));
             match self.0.try_send(msg) {
-                Ok(()) => Ok(()),
+                Ok(()) => {
+                    crate::logger::log_event("CORE_BRIDGE_OUT", "Message sent successfully");
+                    Ok(())
+                }
                 Err(tokio::sync::mpsc::error::TrySendError::Full(m)) => {
+                    crate::logger::log_event("CORE_BRIDGE_OUT", "Channel full, handling overflow");
                     // Drop noisy Status when channel is full; ensure important prompts are delivered
                     match &m {
                         protocol::Message::Status(_) => Ok(()),
@@ -124,6 +141,7 @@ impl OutboundPort for OutboundChannel {
                     }
                 }
                 Err(tokio::sync::mpsc::error::TrySendError::Closed(m)) => {
+                    crate::logger::log_event("CORE_BRIDGE_OUT", "Channel closed!");
                     // Channel closed; treat as non-fatal
                     let _ = m; // ignore
                     Ok(())
@@ -158,7 +176,10 @@ pub fn start_core_with_executor(exec: ExecutorAdapter) -> CoreSystem {
     let core_task = core.clone();
     tokio::spawn(async move {
         while let Some(msg) = in_rx.recv().await {
-            let _ = core_task.handle(msg).await;
+            crate::logger::log_event("CORE_TASK", &format!("Processing message: {:?}", msg));
+            if let Err(e) = core_task.handle(msg).await {
+                crate::logger::log_event("CORE_TASK", &format!("Error handling message: {}", e));
+            }
         }
     });
 

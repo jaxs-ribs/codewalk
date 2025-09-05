@@ -634,7 +634,14 @@ impl App {
             let text = self.input.clone();
             self.append_output(format!("{} {}", prefixes::UTTERANCE, text));
             self.input.clear();
-            // Send into headless core as user_text
+            
+            // If we're in ConfirmingExecutor mode, handle as confirmation response
+            if self.mode == Mode::ConfirmingExecutor {
+                crate::logger::log_event("CONFIRMATION", &format!("Handling TUI input '{}' as confirmation response", text));
+                return self.handle_confirmation_response(&text).await;
+            }
+            
+            // Otherwise, send into headless core as user_text for normal routing
             if let Some(tx) = &self.core_in_tx {
                 let msg = protocol::Message::user_text(text, Some("tui".to_string()), true);
                 let _ = tx.send(msg).await;
@@ -753,9 +760,10 @@ impl App {
         // Start headless core once at initialization
         let exec_adapter = crate::core_bridge::ExecutorAdapter::new(self.cmd_tx.clone());
         let system = crate::core_bridge::start_core_with_executor(exec_adapter);
-        self.core_in_tx = Some(system.handles.inbound_tx);
+        self.core_in_tx = Some(system.handles.inbound_tx.clone());
         self.core_out_rx = Some(system.handles.outbound_rx);
         self.core = Some(system.core);
+        crate::logger::log_event("INIT", "Core initialized and channels connected");
         match relay_client::load_config_from_env() {
             Ok(Some(cfg)) => {
                 self.append_output(format!("{} Connecting to relay...", prefixes::RELAY));
@@ -813,10 +821,12 @@ impl App {
                                 
                                 // If we're in ConfirmingExecutor mode, handle as confirmation response
                                 if self.mode == Mode::ConfirmingExecutor {
+                                    crate::logger::log_event("CONFIRMATION", &format!("Handling user_text '{}' as confirmation response", text));
                                     if let Err(e) = self.handle_confirmation_response(text).await {
                                         self.append_output(format!("{} Error handling confirmation: {}", prefixes::EXEC, e));
                                     }
                                 } else {
+                                    crate::logger::log_event("ROUTING", &format!("Mode is {:?}, routing user_text '{}' normally", self.mode, text));
                                     // Otherwise, send to core for normal routing
                                     if let Some(tx) = &self.core_in_tx {
                                         if let Ok(msg) = serde_json::from_value::<protocol::Message>(v.clone()) {
@@ -992,10 +1002,20 @@ impl App {
             let mut buffered: Vec<protocol::Message> = Vec::with_capacity(50);
             for _ in 0..50 {
                 match rx.try_recv() {
-                    Ok(msg) => buffered.push(msg),
+                    Ok(msg) => {
+                        crate::logger::log_event("CORE_OUT_POLL", &format!("Got message: {:?}", msg));
+                        buffered.push(msg);
+                    }
                     Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
-                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => { self.core_out_rx = None; break; }
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => { 
+                        crate::logger::log_event("CORE_OUT_POLL", "Channel disconnected!");
+                        self.core_out_rx = None; 
+                        break; 
+                    }
                 }
+            }
+            if !buffered.is_empty() {
+                crate::logger::log_event("CORE_OUT", &format!("Processing {} messages from core", buffered.len()));
             }
             for msg in buffered {
                 match msg {
@@ -1007,6 +1027,7 @@ impl App {
                         relay_client::send_frame(status_json);
                     }
                     protocol::Message::PromptConfirmation(ref pc) => {
+                        crate::logger::log_event("CORE_OUT", &format!("Received PromptConfirmation for: {}", pc.prompt));
                         // Forward confirmation request to mobile via relay
                         let confirmation_json = serde_json::to_string(&msg).unwrap_or_default();
                         relay_client::send_frame(confirmation_json);

@@ -10,7 +10,7 @@ enum ElevenTTSError: Error {
 /// Service for text-to-speech using ElevenLabs API
 final class ElevenLabsTTS {
     private let apiKey: String
-    private let voiceId = "GBv7mTt0atIp3Br8iCZE" // Thomas voice
+    private let voiceId = "03vEurziQfq3V8WZhQvn" // Updated voice
     private let baseURL = URL(string: "https://api.elevenlabs.io")!
     private var player: AVAudioPlayer?
     

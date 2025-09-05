@@ -179,16 +179,83 @@ impl ClaudeLogMonitor {
             
             // Try to get text field from object
             if let Some(obj) = content.as_object() {
+                // Check for text field
                 if let Some(text) = obj.get("text").and_then(|v| v.as_str()) {
                     return text.to_string();
                 }
+                
+                // Check for message field
                 if let Some(msg) = obj.get("message").and_then(|v| v.as_str()) {
                     return msg.to_string();
                 }
+                
+                // Special handling for tool calls/results
+                if let Some(tool_name) = obj.get("tool_name").and_then(|v| v.as_str()) {
+                    if let Some(tool_input) = obj.get("tool_input") {
+                        // Extract key info from tool input
+                        if let Some(input_obj) = tool_input.as_object() {
+                            if tool_name.contains("Write") || tool_name.contains("Edit") {
+                                if let Some(file) = input_obj.get("file_path").and_then(|v| v.as_str()) {
+                                    return format!("{}: {}", tool_name, file);
+                                }
+                            } else if tool_name.contains("Read") {
+                                if let Some(file) = input_obj.get("file_path").and_then(|v| v.as_str()) {
+                                    return format!("Reading: {}", file);
+                                }
+                            } else if tool_name.contains("Bash") {
+                                if let Some(cmd) = input_obj.get("command").and_then(|v| v.as_str()) {
+                                    let short_cmd = if cmd.len() > 50 {
+                                        format!("{}...", &cmd[..50])
+                                    } else {
+                                        cmd.to_string()
+                                    };
+                                    return format!("$ {}", short_cmd);
+                                }
+                            }
+                        }
+                        return format!("{}", tool_name);
+                    }
+                    return format!("{}", tool_name);
+                }
+                
+                // Handle tool results
+                if let Some(output) = obj.get("output") {
+                    if let Some(text) = output.as_str() {
+                        let lines: Vec<&str> = text.lines().take(2).collect();
+                        if lines.len() > 1 {
+                            return format!("{}...", lines[0]);
+                        } else if !lines.is_empty() {
+                            return lines[0].to_string();
+                        }
+                    }
+                }
+                
+                // Handle status messages
+                if let Some(status) = obj.get("status").and_then(|v| v.as_str()) {
+                    return status.to_string();
+                }
             }
             
-            // Fallback to JSON representation
-            return serde_json::to_string_pretty(content).unwrap_or_default();
+            // For arrays, try to summarize
+            if let Some(arr) = content.as_array() {
+                if !arr.is_empty() {
+                    if let Some(first) = arr.first() {
+                        if let Some(text) = first.as_str() {
+                            return text.to_string();
+                        }
+                    }
+                    return format!("[{} items]", arr.len());
+                }
+            }
+            
+            // Last resort - try to get a concise string representation
+            if let Ok(compact) = serde_json::to_string(content) {
+                if compact.len() <= 100 {
+                    return compact;
+                } else {
+                    return format!("{}...", &compact[..100]);
+                }
+            }
         }
         
         // Handle tool calls

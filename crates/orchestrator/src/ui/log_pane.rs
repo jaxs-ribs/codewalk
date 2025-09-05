@@ -46,8 +46,8 @@ impl LogPane {
         let style = Self::get_log_style(&log.entry_type);
         let prefix = Self::get_log_prefix(&log.entry_type);
         
-        // Wrap content at 30 characters for better display in narrow pane
-        const MAX_WIDTH: usize = 30;
+        // Increased width for better readability
+        const MAX_WIDTH: usize = 60;
         let prefix_len = prefix.len() + 1; // +1 for space
         let content_max = MAX_WIDTH.saturating_sub(prefix_len);
         
@@ -58,16 +58,25 @@ impl LogPane {
             .collect::<Vec<_>>()
             .join(" ");
         
-        // Truncate or wrap content
+        // Smart truncation based on content type
         let display_content = if clean_content.len() > content_max {
-            // Try to find a good break point
-            let mut break_point = content_max;
-            if let Some(space_pos) = clean_content[..content_max].rfind(' ') {
-                if space_pos > content_max / 2 {
-                    break_point = space_pos;
+            // For file paths, show end rather than beginning
+            if clean_content.contains('/') || clean_content.contains('\\') {
+                if clean_content.len() > content_max {
+                    format!("...{}", &clean_content[clean_content.len().saturating_sub(content_max - 3)..])
+                } else {
+                    clean_content
                 }
+            } else {
+                // For regular text, try to find a good break point
+                let mut break_point = content_max.saturating_sub(3); // Account for "..."
+                if let Some(space_pos) = clean_content[..content_max.min(clean_content.len())].rfind(' ') {
+                    if space_pos > content_max / 2 {
+                        break_point = space_pos;
+                    }
+                }
+                format!("{}...", &clean_content[..break_point.min(clean_content.len())])
             }
-            format!("{}...", &clean_content[..break_point])
         } else {
             clean_content
         };

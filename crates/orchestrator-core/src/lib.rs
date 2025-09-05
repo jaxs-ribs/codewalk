@@ -79,36 +79,31 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
                 })).await
             }
             RouteAction::QueryExecutor => {
-                // Send status about active session (drop lock before await)
-                let session_info = self.active_session.lock().unwrap().clone();
-                if let Some(ctx) = session_info {
-                    // Query the executor for actual status/summary
-                    match self.executor.query_status().await {
-                        Ok(summary) => {
-                            // Send the summary as status message
-                            self.outbound.send(protocol::Message::Status(protocol::Status {
-                                v: Some(protocol::VERSION),
-                                level: "info".to_string(),
-                                text: summary,
-                            })).await?;
-                        }
-                        Err(e) => {
-                            // Fallback message if query fails
-                            let msg = format!("Active {} session is running but couldn't fetch details: {}", 
-                                            ctx.session_type.as_deref().unwrap_or("executor"), e);
-                            self.outbound.send(protocol::Message::Status(protocol::Status {
-                                v: Some(protocol::VERSION),
-                                level: "info".to_string(),
-                                text: msg,
-                            })).await?;
-                        }
+                // Always query the executor - it handles both active and past sessions
+                match self.executor.query_status().await {
+                    Ok(summary) => {
+                        // Send the summary as status message
+                        self.outbound.send(protocol::Message::Status(protocol::Status {
+                            v: Some(protocol::VERSION),
+                            level: "info".to_string(),
+                            text: summary,
+                        })).await?;
                     }
-                } else {
-                    self.outbound.send(protocol::Message::Status(protocol::Status {
-                        v: Some(protocol::VERSION),
-                        level: "info".to_string(),
-                        text: "No active session to query".to_string(),
-                    })).await?;
+                    Err(e) => {
+                        // Check if there's an active session for better error message
+                        let session_info = self.active_session.lock().unwrap().clone();
+                        let msg = if let Some(ctx) = session_info {
+                            format!("Active {} session is running but couldn't fetch details: {}", 
+                                    ctx.session_type.as_deref().unwrap_or("executor"), e)
+                        } else {
+                            format!("Couldn't fetch session information: {}", e)
+                        };
+                        self.outbound.send(protocol::Message::Status(protocol::Status {
+                            v: Some(protocol::VERSION),
+                            level: "info".to_string(),
+                            text: msg,
+                        })).await?;
+                    }
                 }
                 Ok(())
             }
