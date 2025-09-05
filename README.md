@@ -37,3 +37,37 @@ Manual Test (multiple terminals)
 
    Type text and press Send. The app shows “Ack: received”. The TUI prints a `RELAY> user_text: ...` line.
 
+Architecture Overview
+
+- crates/orchestrator-core: Headless business logic. Routes protocol messages, manages confirmation flow, tracks active session context. No UI or I/O.
+- crates/orchestrator-adapters: Integrations for router/LLM, relay, and the core bridge. Provides thin adapters that implement orchestrator-core ports.
+- crates/control_center: Executor orchestration and log monitoring (Claude Code, etc.). Emits structured logs and abstracts session lifecycles.
+- crates/orchestrator: Thin binary and coordination glue. Starts core, wiring adapters and relay. Maintains artifacts and session summaries.
+- crates/orchestrator-tui: Terminal UI state and rendering (feature-gated while extraction stabilizes). No business logic.
+- crates/router, crates/llm, crates/stt, crates/protocol: Supporting libraries for routing, LLM access, speech-to-text, and message schema.
+
+Logs and Artifacts
+
+- All orchestrator logs now write to `artifacts/orchestrator_*.log`.
+- Executor logs default under `artifacts/executor_logs/` and per-run artifacts under `artifacts/`.
+- Tail current orchestrator logs with `tail -f artifacts/orchestrator_*.log`.
+
+Testing Notes
+
+- Unit and integration tests target fast completion; individual async waits are capped to <=10s.
+- Long-running benches are reduced (iterations=200) to keep CI <10s per test target.
+
+Inter‑Crate Communication
+
+- Messages: All user/system events are represented as `protocol::Message`.
+- Channels: The app sets up Tokio mpsc channels.
+  - App → Core: `Message::UserText`, `Message::ConfirmResponse`.
+  - Core → App/UI: `Message::PromptConfirmation`, `Message::Status`, etc.
+- Ports (traits in `orchestrator-core`):
+  - `RouterPort::route(text, context) -> RouteResponse` — implemented in adapters using `router` + `llm`.
+  - `ExecutorPort::launch/query_status` — implemented against `control_center`.
+  - `OutboundPort::send(Message)` — typically a channel sender to UI/relay.
+
+Runtime Shapes
+- Headless: Core + adapters run without UI, emitting statuses and summaries.
+- TUI: UI crate renders panes and only emits protocol messages; it holds no business logic.

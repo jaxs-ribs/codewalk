@@ -1,5 +1,15 @@
 pub mod state;
+pub mod types;
+pub mod constants;
+pub mod utils;
+pub mod app;
+pub mod log_types;
+
+// Gate unfinished UI modules behind an optional `ui` feature.
+// This keeps the crate buildable while UI extraction is in progress.
+#[cfg(feature = "ui")]
 pub mod ui;
+#[cfg(feature = "ui")]
 pub mod handlers;
 
 pub use state::{TuiState, Tab, ScrollState, ErrorDisplay};
@@ -11,7 +21,7 @@ use anyhow::Result;
 /// Main UI drawing function
 pub fn draw_ui<B: Backend>(
     terminal: &mut Terminal<B>,
-    state: &TuiState,
+    _state: &TuiState,
 ) -> Result<()> {
     terminal.draw(|f| {
         // The UI drawing logic will be moved here from the main app

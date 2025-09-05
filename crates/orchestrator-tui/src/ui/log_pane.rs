@@ -6,7 +6,7 @@ use ratatui::{
 };
 
 use crate::app::App;
-use control_center::{ParsedLogLine, LogType};
+use crate::log_types::{ParsedLogLine, LogType};
 use super::styles::Styles;
 
 pub struct LogPane;

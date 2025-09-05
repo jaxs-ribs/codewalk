@@ -37,27 +37,27 @@ impl InputHandler {
         match (key.code, key.modifiers) {
             // Scrolling controls
             (KeyCode::Up, _) if !app.is_recording_mode() => {
-                app.handle_scroll(ScrollDirection::Up, 1);
+                app.handle_scroll(ScrollDirection::Up);
                 return Ok(());
             }
             (KeyCode::Down, _) if !app.is_recording_mode() => {
-                app.handle_scroll(ScrollDirection::Down, 1);
+                app.handle_scroll(ScrollDirection::Down);
                 return Ok(());
             }
             (KeyCode::PageUp, _) if !app.is_recording_mode() => {
-                app.handle_scroll(ScrollDirection::PageUp, 10);
+                app.handle_scroll(ScrollDirection::PageUp);
                 return Ok(());
             }
             (KeyCode::PageDown, _) if !app.is_recording_mode() => {
-                app.handle_scroll(ScrollDirection::PageDown, 10);
+                app.handle_scroll(ScrollDirection::PageDown);
                 return Ok(());
             }
             (KeyCode::Home, _) if !app.is_recording_mode() => {
-                app.handle_scroll(ScrollDirection::Home, 0);
+                app.handle_scroll(ScrollDirection::Home);
                 return Ok(());
             }
             (KeyCode::End, _) if !app.is_recording_mode() => {
-                app.handle_scroll(ScrollDirection::End, 0);
+                app.handle_scroll(ScrollDirection::End);
                 return Ok(());
             }
             _ => {}

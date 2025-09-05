@@ -13,8 +13,8 @@ lazy_static! {
 pub fn init_logging() -> anyhow::Result<()> {
     eprintln!("DEBUG: Starting logger init");
     
-    // Create logs directory if it doesn't exist
-    let logs_dir = PathBuf::from("logs");
+    // Create artifacts directory if it doesn't exist
+    let logs_dir = PathBuf::from("artifacts");
     if !logs_dir.exists() {
         eprintln!("DEBUG: Creating logs directory");
         fs::create_dir_all(&logs_dir)?;

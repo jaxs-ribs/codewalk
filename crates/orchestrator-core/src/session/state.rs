@@ -59,16 +59,16 @@ impl SessionStateMachine {
     }
 
     pub fn can_transition_to(&self, new_state: SessionState) -> bool {
-        match (self.current_state, new_state) {
-            (SessionState::Idle, SessionState::Running) => true,
-            (SessionState::Running, SessionState::Paused) => true,
-            (SessionState::Running, SessionState::Completed) => true,
-            (SessionState::Running, SessionState::Failed(_)) => true,
-            (SessionState::Paused, SessionState::Running) => true,
-            (SessionState::Paused, SessionState::Completed) => true,
-            (SessionState::Paused, SessionState::Failed(_)) => true,
-            _ => false,
-        }
+        matches!(
+            (self.current_state, new_state),
+            (SessionState::Idle, SessionState::Running)
+                | (SessionState::Running, SessionState::Paused)
+                | (SessionState::Running, SessionState::Completed)
+                | (SessionState::Running, SessionState::Failed(_))
+                | (SessionState::Paused, SessionState::Running)
+                | (SessionState::Paused, SessionState::Completed)
+                | (SessionState::Paused, SessionState::Failed(_))
+        )
     }
 
     pub fn transition_to(&mut self, new_state: SessionState) -> Result<(), String> {

@@ -26,11 +26,13 @@ pub enum SessionStatus {
     Cancelled,
 }
 
+#[allow(dead_code)]
 pub struct SessionHistory {
     history_file: PathBuf,
     entries: Vec<SessionHistoryEntry>,
 }
 
+#[allow(dead_code)]
 impl SessionHistory {
     pub fn new(artifacts_dir: &PathBuf) -> Self {
         let history_file = artifacts_dir.join("session_history.json");

@@ -83,6 +83,7 @@ pub struct PendingExecutor {
 pub enum SessionAction {
     ContinuePrevious,
     StartNew,
+    #[allow(dead_code)]
     Declined,
 }
 

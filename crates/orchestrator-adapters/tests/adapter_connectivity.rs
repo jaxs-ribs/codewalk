@@ -1,4 +1,5 @@
 use orchestrator_core::ports::{RouterPort, RouterContext};
+use orchestrator_core::ports::SessionStore; // bring trait into scope for method calls
 use async_trait::async_trait;
 use anyhow::Result;
 

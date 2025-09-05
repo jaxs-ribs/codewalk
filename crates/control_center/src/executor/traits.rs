@@ -248,8 +248,9 @@ pub struct ExecutorConfig {
 impl Default for ExecutorConfig {
     fn default() -> Self {
         Self {
-            working_dir: PathBuf::from("~/Documents/walking-projects/first"),
-            log_dir: Some(PathBuf::from("~/Documents/walking-projects/logs")),
+            // Default to workspace-local artifacts to avoid user-specific paths
+            working_dir: PathBuf::from("artifacts/workspace"),
+            log_dir: Some(PathBuf::from("artifacts/logs")),
             skip_permissions: true,
             custom_flags: Vec::new(),
         }
@@ -302,4 +303,3 @@ pub trait ExecutorSession: Send {
         None
     }
 }
-

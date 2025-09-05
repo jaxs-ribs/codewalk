@@ -13,3 +13,10 @@ anyhow.workspace = true
 tokio = { workspace = true, features = ["full"] }
 serde.workspace = true
 serde_json.workspace = true
+
+[features]
+# Optional UI modules (disabled by default while extraction stabilizes)
+ui = []
+# Declare feature flags referenced in code to avoid unexpected cfg warnings
+tui-stt = []
+tui-input = []

@@ -21,6 +21,7 @@ pub enum SessionEventType {
     Completed,
 }
 
+#[allow(dead_code)]
 pub struct SessionHistory {
     events: VecDeque<SessionEvent>,
     max_events: usize,

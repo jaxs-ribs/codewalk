@@ -3,7 +3,7 @@
 ## Important Directories
 
 ### Logs
-- **Orchestrator logs**: `logs/orchestrator_*.log` (in project root)
+- **Orchestrator logs**: `artifacts/orchestrator_*.log` (in project root)
   - Format: `orchestrator_YYYYMMDD_HHMMSS.log`
   - Contains routing decisions, session management, and debug info
   
@@ -40,7 +40,7 @@ cargo build -p orchestrator --release  # or without --release for debug
 ./target/release/codewalk  # or ./target/debug/codewalk
 
 # Check logs
-tail -f logs/orchestrator_*.log
+tail -f artifacts/orchestrator_*.log
 ```
 
 ### Testing Confirmation Flow

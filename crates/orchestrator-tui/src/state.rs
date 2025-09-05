@@ -8,10 +8,12 @@ pub enum Tab {
     Logs,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ScrollState {
     pub position: usize,
     pub max_position: usize,
+    pub auto_scroll: bool,
+    pub offset: usize,
 }
 
 impl ScrollState {
@@ -19,6 +21,8 @@ impl ScrollState {
         Self {
             position: 0,
             max_position: 0,
+            auto_scroll: true,
+            offset: 0,
         }
     }
 

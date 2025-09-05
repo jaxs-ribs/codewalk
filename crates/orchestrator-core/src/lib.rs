@@ -51,24 +51,34 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
     }
 
     async fn handle_user_text(&self, ut: protocol::UserText) -> Result<()> {
+        eprintln!("DEBUG core: handle_user_text text='{}'", ut.text);
         // Simplified: treat every message as final; ignore id/partial.
         let text_trim = ut.text.trim();
         if text_trim.is_empty() { return Ok(()); }
 
         // Check if we have a pending confirmation - if so, treat this as a confirmation response
         let has_pending = self.pending_confirmation.lock().unwrap().is_some();
+        eprintln!("DEBUG core: has_pending_confirmation={} require_confirmation={}"
+                 , has_pending, self.require_confirmation);
         if has_pending {
             // Parse the text as a confirmation response
             let accept = text_trim.to_lowercase().contains("yes") || 
                         text_trim.to_lowercase().contains("continue") ||
                         text_trim.to_lowercase().contains("start") ||
                         text_trim.to_lowercase().contains("new");
+            eprintln!("DEBUG core: interpreting as confirmation accept={}", accept);
             
-            let pending = self.pending_confirmation.lock().unwrap().take();
-            if let Some(pending) = pending {
+            // Do NOT clear the pending here; let handle_confirm consume it
+            let pending_id = self
+                .pending_confirmation
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|p| p.id.clone());
+            if let Some(pending_id) = pending_id {
                 let cr = protocol::ConfirmResponse {
                     v: Some(protocol::VERSION),
-                    id: Some(pending.id),
+                    id: Some(pending_id),
                     for_: "executor_launch".to_string(),
                     accept,
                 };
@@ -91,8 +101,10 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
                 return Ok(());
             }
         };
+        eprintln!("DEBUG core: route decision action={:?}", decision.action);
         match decision.action {
             RouteAction::CannotParse => {
+                eprintln!("DEBUG core: CannotParse -> sending Status");
                 let reason = decision.reason.unwrap_or_else(|| "could not understand".to_string());
                 self.outbound.send(protocol::Message::Status(protocol::Status {
                     v: Some(protocol::VERSION),
@@ -101,6 +113,7 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
                 })).await
             }
             RouteAction::QueryExecutor => {
+                eprintln!("DEBUG core: QueryExecutor -> querying executor");
                 // Always query the executor - it handles both active and past sessions
                 match self.executor.query_status().await {
                     Ok(summary) => {
@@ -132,6 +145,7 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
             RouteAction::LaunchClaude => {
                 let prompt = decision.prompt.unwrap_or_else(|| text_trim.to_string());
                 if self.require_confirmation {
+                    eprintln!("DEBUG core: LaunchClaude -> sending PromptConfirmation");
                     // Generate unique confirmation ID
                     let confirmation_id = format!("confirm_{}", std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -166,25 +180,31 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
     }
 
     async fn handle_confirm(&self, cr: protocol::ConfirmResponse) -> Result<()> {
+        eprintln!("DEBUG core: handle_confirm for_={} accept={}", cr.for_, cr.accept);
         if cr.for_ != "executor_launch" { return Ok(()); }
         
         let pending = {
             let mut guard = self.pending_confirmation.lock().unwrap();
             // Only process if the confirmation ID matches (or no ID for backward compat)
             if let Some(ref pending) = *guard {
+                eprintln!("DEBUG core: pending confirmation present with id={}", pending.id);
                 if cr.id.is_none() || cr.id.as_ref() == Some(&pending.id) {
+                    eprintln!("DEBUG core: confirmation id matches");
                     guard.take()
                 } else {
                     // Confirmation ID doesn't match - ignore
+                    eprintln!("DEBUG core: confirmation id mismatch: got {:?} expected {}", cr.id, pending.id);
                     return Ok(());
                 }
             } else {
+                eprintln!("DEBUG core: no pending confirmation");
                 None
             }
         };
         
         if cr.accept {
             if let Some(pending) = pending {
+                eprintln!("DEBUG core: launching executor with prompt: {}", pending.prompt);
                 self.executor.launch(&pending.prompt).await?;
                 self.outbound.send(protocol::Message::Status(protocol::Status{
                     v: Some(protocol::VERSION), level: "info".into(), text: format!("Starting Claude Code for: {}", pending.prompt)
@@ -192,6 +212,7 @@ impl<R: RouterPort, E: ExecutorPort, O: OutboundPort> OrchestratorCore<R, E, O> 
             }
         } else {
             // canceled: emit status
+            eprintln!("DEBUG core: confirmation declined");
             self.outbound.send(protocol::Message::Status(protocol::Status{
                 v: Some(protocol::VERSION), level: "info".into(), text: "executor launch canceled".into()
             })).await?;
@@ -214,17 +235,19 @@ pub mod mocks {
             
             // Check for status queries when session is active
             if let Some(ctx) = context {
-                if ctx.has_active_session {
-                    if text_l.contains("what") && text_l.contains("happening") ||
-                       text_l.contains("status") || text_l.contains("summary") ||
-                       text_l.contains("progress") || text_l.contains("update") {
-                        return Ok(ports::RouteResponse {
-                            action: ports::RouteAction::QueryExecutor,
-                            prompt: None,
-                            reason: None,
-                            confidence: Some(0.9),
-                        });
-                    }
+                if ctx.has_active_session
+                    && (text_l.contains("what") && text_l.contains("happening")
+                        || text_l.contains("status")
+                        || text_l.contains("summary")
+                        || text_l.contains("progress")
+                        || text_l.contains("update"))
+                {
+                    return Ok(ports::RouteResponse {
+                        action: ports::RouteAction::QueryExecutor,
+                        prompt: None,
+                        reason: None,
+                        confidence: Some(0.9),
+                    });
                 }
             }
             
@@ -258,7 +281,10 @@ pub mod mocks {
     #[async_trait]
     impl OutboundPort for ChannelOutbound {
         async fn send(&self, msg: protocol::Message) -> Result<()> {
-            self.0.send(msg).await.map_err(|e| anyhow::anyhow!(e.to_string()))
+            eprintln!("DEBUG core: ChannelOutbound sending message");
+            let r = self.0.send(msg).await.map_err(|e| anyhow::anyhow!(e.to_string()));
+            eprintln!("DEBUG core: ChannelOutbound send result: {:?}", r.as_ref().map(|_| &()));
+            r
         }
     }
 }

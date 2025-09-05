@@ -7,7 +7,8 @@ use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 use notify::{Watcher, RecursiveMode, Event, EventKind};
 
-const CLAUDE_LOGS_DIR: &str = "~/.claude/projects";
+// Default Claude logs directory; prefer workspace-local path to keep artifacts together
+const CLAUDE_LOGS_DIR: &str = "artifacts/executor_logs";
 const POLL_INTERVAL_MS: u64 = 100;
 
 /// Represents a parsed log line with metadata
@@ -359,4 +360,3 @@ pub fn spawn_log_monitor(working_dir: Option<&Path>) -> mpsc::Receiver<ParsedLog
     
     rx
 }
-
