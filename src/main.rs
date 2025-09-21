@@ -35,6 +35,10 @@ use rodio::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+mod artifacts;
+
+use crate::artifacts::{ArtifactManager, ArtifactUpdateOutcome};
+
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 const PUSH_TO_TALK_KEY: Keycode = Keycode::Space;
 const EXIT_KEY: Keycode = Keycode::Escape;
@@ -147,6 +151,7 @@ struct App {
     assistant: AssistantClient,
     tts: TtsClient,
     trace_logger: Option<TraceLogger>,
+    artifact_manager: Option<ArtifactManager>,
     output_dir: PathBuf,
 }
 
@@ -163,12 +168,28 @@ impl App {
             .context("GROQ_API_KEY disappeared before we could build the Groq clients")?;
         let transcriber = TranscriptionClient::new(api_key.clone())?;
         let assistant = AssistantClient::new(api_key.clone())?;
-        let tts = TtsClient::new(api_key)?;
+        let tts = TtsClient::new(api_key.clone())?;
         let logging_enabled = !matches!(
             std::env::var("WALKCOACH_NO_LOG"),
             Ok(val) if matches!(val.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes")
         );
         let trace_logger = TraceLogger::new(logging_enabled)?;
+        let artifact_manager = if logging_enabled {
+            match ArtifactManager::new(api_key) {
+                Ok(manager) => {
+                    if let Some(reason) = manager.disabled_reason() {
+                        println!("{reason}");
+                    }
+                    Some(manager)
+                }
+                Err(err) => {
+                    eprintln!("Artifact manager unavailable: {err:?}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         Ok(Self {
             recorder,
@@ -179,6 +200,7 @@ impl App {
             assistant,
             tts,
             trace_logger,
+            artifact_manager,
             output_dir,
         })
     }
@@ -313,6 +335,14 @@ impl App {
                     trace_entry.durations.speak_ms = speak_start.elapsed().as_millis() as u64;
                 }
 
+                if let Some(manager) = &self.artifact_manager {
+                    match manager.process_turn(&transcript, &answer) {
+                        Ok(Some(outcome)) => self.report_artifact_outcome(outcome),
+                        Ok(None) => {}
+                        Err(err) => eprintln!("Artifact update failed: {err:?}"),
+                    }
+                }
+
                 self.log_trace(trace_entry);
             }
 
@@ -327,6 +357,61 @@ impl App {
             if let Err(err) = logger.log(entry) {
                 eprintln!("Trace logging failed: {err:?}");
             }
+        }
+    }
+
+    fn report_artifact_outcome(&self, outcome: ArtifactUpdateOutcome) {
+        let rationale = outcome.rationale.trim();
+        if outcome.total_patches == 0 {
+            if rationale.is_empty() {
+                println!("Artifact editor: no changes.");
+            } else {
+                println!("Artifact editor: no changes ({rationale}).");
+            }
+            return;
+        }
+
+        let applied_summary: Vec<String> = outcome
+            .applied
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect();
+        let applied_joined = if applied_summary.is_empty() {
+            "none".to_string()
+        } else {
+            applied_summary.join(", ")
+        };
+
+        if rationale.is_empty() {
+            println!(
+                "Artifact editor applied {}/{} patches (updated: {}).",
+                outcome.applied.len(),
+                outcome.total_patches,
+                applied_joined
+            );
+        } else {
+            println!(
+                "Artifact editor applied {}/{} patches (updated: {}). {}",
+                outcome.applied.len(),
+                outcome.total_patches,
+                applied_joined,
+                rationale
+            );
+        }
+
+        if !outcome.rejected.is_empty() {
+            for rejected in &outcome.rejected {
+                eprintln!(
+                    "Artifact patch rejected for {}: {} (see {})",
+                    rejected.path.display(),
+                    rejected.reason,
+                    rejected.reject_path.display()
+                );
+            }
+        }
+
+        if outcome.phasing_updated {
+            println!("Phasing index refreshed.");
         }
     }
 }

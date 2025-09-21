@@ -1,0 +1,7 @@
+--- /dev/null
++++ artifacts/phasing.md
+@@ -0,0 +1,5 @@
++# Snake App Phasing
++
++## Phase 1 - Pick Stack
++Choose language and graphics layer so we can lock the spec.
