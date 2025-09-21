@@ -10,7 +10,8 @@ members = [
     "relay/server",
     "relay/client-workstation",
     "relay/client-mobile",
-    "xtask", "crates/orchestrator-adapters", "crates/orchestrator-tui",
+    "crates/orchestrator-adapters", 
+    "crates/orchestrator-tui",
     
 ]
 resolver = "2"
