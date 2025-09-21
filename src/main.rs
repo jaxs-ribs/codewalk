@@ -17,12 +17,15 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use device_query::{DeviceQuery, DeviceState, Keycode};
+use reqwest::blocking::{Client as HttpClient, multipart};
 use rodio::{OutputStream, OutputStreamHandle, Sink, Source, source::SineWave};
+use serde::Deserialize;
 
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 const PUSH_TO_TALK_KEY: Keycode = Keycode::Space;
 const EXIT_KEY: Keycode = Keycode::Escape;
 const OUTPUT_DIR: &str = "recordings";
+const DEFAULT_STT_LANGUAGE: &str = "en";
 
 fn main() -> Result<()> {
     let env_source = load_env_file()?;
@@ -122,6 +125,7 @@ struct App {
     recorder: Recorder,
     beep: BeepPlayer,
     keyboard: DeviceState,
+    transcriber: TranscriptionClient,
     output_dir: PathBuf,
 }
 
@@ -132,11 +136,15 @@ impl App {
         let keyboard = DeviceState::new();
         let output_dir = PathBuf::from(OUTPUT_DIR);
         fs::create_dir_all(&output_dir).context("Failed to create recordings directory")?;
+        let api_key = std::env::var("GROQ_API_KEY")
+            .context("GROQ_API_KEY disappeared before we could build the Groq client")?;
+        let transcriber = TranscriptionClient::new(api_key)?;
 
         Ok(Self {
             recorder,
             beep,
             keyboard,
+            transcriber,
             output_dir,
         })
     }
@@ -177,6 +185,18 @@ impl App {
                             saved.path.display(),
                             elapsed.as_secs_f32()
                         );
+
+                        match self.transcriber.transcribe(&saved.path) {
+                            Ok(transcript) => {
+                                println!("Transcript: {transcript}");
+                            }
+                            Err(err) => {
+                                eprintln!(
+                                    "Transcription failed for {}: {err:?}",
+                                    saved.path.display()
+                                );
+                            }
+                        }
                     }
                     Ok(None) => println!("No audio detected. Nothing saved."),
                     Err(err) => eprintln!("Failed to save recording: {err:?}"),
@@ -268,6 +288,87 @@ struct RecordingState {
 struct RecordingResult {
     samples: Vec<f32>,
     sample_rate: u32,
+}
+
+struct TranscriptionClient {
+    http: HttpClient,
+    base_url: String,
+    api_key: String,
+    language: String,
+}
+
+impl TranscriptionClient {
+    fn new(api_key: String) -> Result<Self> {
+        let http = HttpClient::builder()
+            .timeout(Duration::from_secs(45))
+            .build()
+            .context("Failed to build HTTP client for Groq transcription")?;
+
+        let base_url = std::env::var("GROQ_API_BASE_URL")
+            .unwrap_or_else(|_| "https://api.groq.com".to_string());
+        let language =
+            std::env::var("GROQ_STT_LANGUAGE").unwrap_or_else(|_| DEFAULT_STT_LANGUAGE.to_string());
+
+        Ok(Self {
+            http,
+            base_url,
+            api_key,
+            language,
+        })
+    }
+
+    fn transcribe(&self, audio_path: &Path) -> Result<String> {
+        let audio_bytes = fs::read(audio_path)
+            .with_context(|| format!("Failed to read audio file {}", audio_path.display()))?;
+
+        let file_name = audio_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("audio.wav");
+
+        let part = multipart::Part::bytes(audio_bytes)
+            .file_name(file_name.to_string())
+            .mime_str("audio/wav")
+            .context("Failed to prepare audio part for transcription")?;
+
+        let form = multipart::Form::new()
+            .text("model", "whisper-large-v3-turbo")
+            .text("language", self.language.clone())
+            .text("response_format", "json")
+            .part("file", part);
+
+        let url = format!(
+            "{}/openai/v1/audio/transcriptions",
+            self.base_url.trim_end_matches('/')
+        );
+
+        let response = self
+            .http
+            .post(url)
+            .bearer_auth(&self.api_key)
+            .multipart(form)
+            .send()
+            .context("Groq transcription request failed")?;
+
+        let response = response
+            .error_for_status()
+            .context("Groq transcription returned an error status")?;
+
+        let payload: TranscriptionResponse = response
+            .json()
+            .context("Failed to parse Groq transcription response")?;
+
+        if payload.text.trim().is_empty() {
+            Err(anyhow!("Groq transcription response was empty"))
+        } else {
+            Ok(payload.text)
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct TranscriptionResponse {
+    text: String,
 }
 
 fn build_input_stream_f32(
