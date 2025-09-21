@@ -1,7 +1,9 @@
 use std::{
+    cell::Cell,
     collections::HashSet,
     fs,
-    io::Cursor,
+    fs::OpenOptions,
+    io::{Cursor, Write},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -17,7 +19,7 @@ use base64::{
     Engine as _,
     engine::general_purpose::{STANDARD, URL_SAFE},
 };
-use chrono::Local;
+use chrono::{Local, SecondsFormat, Utc};
 use cpal::{
     SampleFormat, Stream,
     traits::{DeviceTrait, HostTrait, StreamTrait},
@@ -30,7 +32,7 @@ use reqwest::{
 use rodio::{
     OutputStream, OutputStreamHandle, Sink, Source, buffer::SamplesBuffer, source::SineWave,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 const TARGET_SAMPLE_RATE: u32 = 16_000;
@@ -144,6 +146,7 @@ struct App {
     transcriber: TranscriptionClient,
     assistant: AssistantClient,
     tts: TtsClient,
+    trace_logger: Option<TraceLogger>,
     output_dir: PathBuf,
 }
 
@@ -161,6 +164,11 @@ impl App {
         let transcriber = TranscriptionClient::new(api_key.clone())?;
         let assistant = AssistantClient::new(api_key.clone())?;
         let tts = TtsClient::new(api_key)?;
+        let logging_enabled = !matches!(
+            std::env::var("WALKCOACH_NO_LOG"),
+            Ok(val) if matches!(val.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes")
+        );
+        let trace_logger = TraceLogger::new(logging_enabled)?;
 
         Ok(Self {
             recorder,
@@ -170,6 +178,7 @@ impl App {
             transcriber,
             assistant,
             tts,
+            trace_logger,
             output_dir,
         })
     }
@@ -202,7 +211,10 @@ impl App {
                 let capture = self.recorder.stop()?;
                 self.beep.play()?;
 
-                match save_recording(&capture, &self.output_dir) {
+                let save_result = save_recording(&capture, &self.output_dir);
+                started_at = None;
+
+                let saved = match save_result {
                     Ok(Some(saved)) => {
                         let reported_duration = saved.duration_seconds;
                         println!(
@@ -210,55 +222,112 @@ impl App {
                             saved.path.display(),
                             elapsed.as_secs_f32()
                         );
-
-                        match self.transcriber.transcribe(&saved.path) {
-                            Ok(transcript) => {
-                                println!("Transcript: {transcript}");
-
-                                match self.assistant.reply(&transcript) {
-                                    Ok(answer) => {
-                                        println!("Assistant: {answer}");
-
-                                        match self.tts.synthesize(&answer) {
-                                            Ok(audio) => {
-                                                if std::env::var("WALKCOACH_DEBUG_TTS").is_ok() {
-                                                    eprintln!(
-                                                        "[tts-debug] bytes={} content-type={} note={:?}",
-                                                        audio.bytes.len(),
-                                                        audio.content_type,
-                                                        audio.note
-                                                    );
-                                                }
-
-                                                if let Err(err) = self.speaker.play(&audio) {
-                                                    eprintln!("Playback failed: {err:?}");
-                                                }
-                                            }
-                                            Err(err) => eprintln!("TTS synthesis failed: {err:?}"),
-                                        }
-                                    }
-                                    Err(err) => eprintln!("Assistant reply failed: {err:?}"),
-                                }
-                            }
-                            Err(err) => {
-                                eprintln!(
-                                    "Transcription failed for {}: {err:?}",
-                                    saved.path.display()
-                                );
-                            }
-                        }
+                        saved
                     }
-                    Ok(None) => println!("No audio detected. Nothing saved."),
-                    Err(err) => eprintln!("Failed to save recording: {err:?}"),
+                    Ok(None) => {
+                        println!("No audio detected. Nothing saved.");
+                        continue;
+                    }
+                    Err(err) => {
+                        eprintln!("Failed to save recording: {err:?}");
+                        continue;
+                    }
+                };
+
+                let mut trace_entry = TraceEntry::new("fast");
+                trace_entry.durations.record_ms = (saved.duration_seconds * 1000.0).round() as u64;
+
+                let stt_start = Instant::now();
+                let transcript = match self.transcriber.transcribe(&saved.path) {
+                    Ok(transcript) => {
+                        trace_entry.durations.stt_ms = stt_start.elapsed().as_millis() as u64;
+                        println!("Transcript: {transcript}");
+                        trace_entry.user_text = Some(transcript.clone());
+                        transcript
+                    }
+                    Err(err) => {
+                        trace_entry.durations.stt_ms = stt_start.elapsed().as_millis() as u64;
+                        let msg = format!("transcription failed: {err}");
+                        trace_entry.errors.push(msg);
+                        eprintln!("Transcription failed for {}: {err:?}", saved.path.display());
+                        self.log_trace(trace_entry);
+                        continue;
+                    }
+                };
+
+                let llm_start = Instant::now();
+                let answer = match self.assistant.reply(&transcript) {
+                    Ok(answer) => {
+                        trace_entry.durations.llm_ms = llm_start.elapsed().as_millis() as u64;
+                        println!("Assistant: {answer}");
+                        trace_entry.assistant_text = Some(answer.clone());
+                        answer
+                    }
+                    Err(err) => {
+                        trace_entry.durations.llm_ms = llm_start.elapsed().as_millis() as u64;
+                        let msg = format!("assistant failed: {err}");
+                        trace_entry.errors.push(msg);
+                        eprintln!("Assistant reply failed: {err:?}");
+                        self.log_trace(trace_entry);
+                        continue;
+                    }
+                };
+
+                let tts_start = Instant::now();
+                let tts_audio = match self.tts.synthesize(&answer) {
+                    Ok(audio) => {
+                        trace_entry.durations.tts_ms = tts_start.elapsed().as_millis() as u64;
+                        if std::env::var("WALKCOACH_DEBUG_TTS").is_ok() {
+                            eprintln!(
+                                "[tts-debug] bytes={} content-type={} note={:?}",
+                                audio.bytes.len(),
+                                audio.content_type,
+                                audio.note
+                            );
+                        }
+                        trace_entry.tts = Some(TraceTts {
+                            engine: "groq".to_string(),
+                            voice: self.tts.voice().to_string(),
+                            content_type: audio.content_type.clone(),
+                            note: audio.note.clone(),
+                        });
+                        Some(audio)
+                    }
+                    Err(err) => {
+                        trace_entry.durations.tts_ms = tts_start.elapsed().as_millis() as u64;
+                        let msg = format!("tts failed: {err}");
+                        trace_entry.errors.push(msg);
+                        eprintln!("TTS synthesis failed: {err:?}");
+                        self.log_trace(trace_entry);
+                        continue;
+                    }
+                };
+
+                if let Some(audio) = &tts_audio {
+                    let speak_start = Instant::now();
+                    if let Err(err) = self.speaker.play(audio) {
+                        let msg = format!("playback failed: {err}");
+                        trace_entry.errors.push(msg);
+                        eprintln!("Playback failed: {err:?}");
+                    }
+                    trace_entry.durations.speak_ms = speak_start.elapsed().as_millis() as u64;
                 }
 
-                started_at = None;
+                self.log_trace(trace_entry);
             }
 
             thread::sleep(Duration::from_millis(12));
         }
 
         Ok(())
+    }
+
+    fn log_trace(&self, entry: TraceEntry) {
+        if let Some(logger) = &self.trace_logger {
+            if let Err(err) = logger.log(entry) {
+                eprintln!("Trace logging failed: {err:?}");
+            }
+        }
     }
 }
 
@@ -638,6 +707,10 @@ impl TtsClient {
             })
         }
     }
+
+    fn voice(&self) -> &str {
+        &self.voice
+    }
 }
 
 struct SpeechPlayer {
@@ -694,6 +767,107 @@ impl SpeechPlayer {
         let buffer = SamplesBuffer::new(channels, sample_rate, samples);
         sink.append(buffer);
         sink.detach();
+        Ok(())
+    }
+}
+
+#[derive(Serialize)]
+struct TraceEntry {
+    id: String,
+    timestamp: String,
+    mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    assistant_text: Option<String>,
+    durations: TraceDurations,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tts: Option<TraceTts>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    errors: Vec<String>,
+}
+
+impl TraceEntry {
+    fn new(mode: &str) -> Self {
+        Self {
+            id: String::new(),
+            timestamp: String::new(),
+            mode: mode.to_string(),
+            user_text: None,
+            assistant_text: None,
+            durations: TraceDurations::default(),
+            tts: None,
+            errors: Vec::new(),
+        }
+    }
+}
+
+#[derive(Serialize, Default)]
+struct TraceDurations {
+    record_ms: u64,
+    stt_ms: u64,
+    llm_ms: u64,
+    tts_ms: u64,
+    speak_ms: u64,
+}
+
+#[derive(Serialize)]
+struct TraceTts {
+    engine: String,
+    voice: String,
+    content_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    note: Option<String>,
+}
+
+struct TraceLogger {
+    enabled: bool,
+    base_dir: PathBuf,
+    counter: Cell<u64>,
+}
+
+impl TraceLogger {
+    fn new(enabled: bool) -> Result<Option<Self>> {
+        if !enabled {
+            return Ok(None);
+        }
+
+        let base_dir = PathBuf::from("logs");
+        fs::create_dir_all(&base_dir).context("Failed to create logs directory")?;
+
+        Ok(Some(Self {
+            enabled,
+            base_dir,
+            counter: Cell::new(0),
+        }))
+    }
+
+    fn next_id(&self) -> String {
+        let seq = self.counter.get();
+        self.counter.set(seq + 1);
+        format!("{}-{:04}", Utc::now().format("%Y%m%dT%H%M%S"), seq)
+    }
+
+    fn log(&self, mut entry: TraceEntry) -> Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        entry.id = self.next_id();
+        entry.timestamp = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let date = Local::now().format("%Y%m%d").to_string();
+        let path = self.base_dir.join(format!("trace-{date}.jsonl"));
+        let json = serde_json::to_string(&entry).context("Failed to serialize trace entry")?;
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .with_context(|| format!("Failed to open trace log file at {}", path.display()))?;
+        file.write_all(json.as_bytes())
+            .context("Failed to write trace entry")?;
+        file.write_all(b"\n")
+            .context("Failed to finalize trace entry")?;
         Ok(())
     }
 }
