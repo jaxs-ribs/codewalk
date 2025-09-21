@@ -20,12 +20,17 @@ use device_query::{DeviceQuery, DeviceState, Keycode};
 use reqwest::blocking::{Client as HttpClient, multipart};
 use rodio::{OutputStream, OutputStreamHandle, Sink, Source, source::SineWave};
 use serde::Deserialize;
+use serde_json::json;
 
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 const PUSH_TO_TALK_KEY: Keycode = Keycode::Space;
 const EXIT_KEY: Keycode = Keycode::Escape;
 const OUTPUT_DIR: &str = "recordings";
 const DEFAULT_STT_LANGUAGE: &str = "en";
+const DEFAULT_LLM_TEMPERATURE: f32 = 0.3;
+const DEFAULT_LLM_MAX_TOKENS: u32 = 400;
+const DEFAULT_LLM_MODEL: &str = "moonshotai/kimi-k2-instruct-0905";
+const SMART_SECRETARY_PROMPT: &str = "You are Walkcoach, a smart secretary. Answer in one to three short sentences. If one clarifier would change the answer, ask it. Otherwise, give tight, actionable guidance. No filler.";
 
 fn main() -> Result<()> {
     let env_source = load_env_file()?;
@@ -126,6 +131,7 @@ struct App {
     beep: BeepPlayer,
     keyboard: DeviceState,
     transcriber: TranscriptionClient,
+    assistant: AssistantClient,
     output_dir: PathBuf,
 }
 
@@ -138,13 +144,15 @@ impl App {
         fs::create_dir_all(&output_dir).context("Failed to create recordings directory")?;
         let api_key = std::env::var("GROQ_API_KEY")
             .context("GROQ_API_KEY disappeared before we could build the Groq client")?;
-        let transcriber = TranscriptionClient::new(api_key)?;
+        let transcriber = TranscriptionClient::new(api_key.clone())?;
+        let assistant = AssistantClient::new(api_key)?;
 
         Ok(Self {
             recorder,
             beep,
             keyboard,
             transcriber,
+            assistant,
             output_dir,
         })
     }
@@ -189,6 +197,15 @@ impl App {
                         match self.transcriber.transcribe(&saved.path) {
                             Ok(transcript) => {
                                 println!("Transcript: {transcript}");
+
+                                match self.assistant.reply(&transcript) {
+                                    Ok(answer) => {
+                                        println!("Assistant: {answer}");
+                                    }
+                                    Err(err) => {
+                                        eprintln!("Assistant reply failed: {err:?}");
+                                    }
+                                }
                             }
                             Err(err) => {
                                 eprintln!(
@@ -369,6 +386,110 @@ impl TranscriptionClient {
 #[derive(Debug, Deserialize)]
 struct TranscriptionResponse {
     text: String,
+}
+
+struct AssistantClient {
+    http: HttpClient,
+    base_url: String,
+    api_key: String,
+    model: String,
+    temperature: f32,
+    max_tokens: u32,
+}
+
+impl AssistantClient {
+    fn new(api_key: String) -> Result<Self> {
+        let http = HttpClient::builder()
+            .timeout(Duration::from_secs(45))
+            .build()
+            .context("Failed to build HTTP client for Groq assistant")?;
+
+        let base_url = std::env::var("GROQ_API_BASE_URL")
+            .unwrap_or_else(|_| "https://api.groq.com".to_string());
+
+        let model =
+            std::env::var("GROQ_LLM_MODEL").unwrap_or_else(|_| DEFAULT_LLM_MODEL.to_string());
+
+        let temperature = std::env::var("GROQ_LLM_TEMPERATURE")
+            .ok()
+            .and_then(|val| val.parse::<f32>().ok())
+            .unwrap_or(DEFAULT_LLM_TEMPERATURE);
+
+        let max_tokens = std::env::var("GROQ_LLM_MAX_TOKENS")
+            .ok()
+            .and_then(|val| val.parse::<u32>().ok())
+            .unwrap_or(DEFAULT_LLM_MAX_TOKENS);
+
+        Ok(Self {
+            http,
+            base_url,
+            api_key,
+            model,
+            temperature,
+            max_tokens,
+        })
+    }
+
+    fn reply(&self, transcript: &str) -> Result<String> {
+        let body = json!({
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": SMART_SECRETARY_PROMPT},
+                {"role": "user", "content": transcript}
+            ],
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "stream": false
+        });
+
+        let url = format!(
+            "{}/openai/v1/chat/completions",
+            self.base_url.trim_end_matches('/')
+        );
+
+        let response = self
+            .http
+            .post(url)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()
+            .context("Groq assistant request failed")?;
+
+        let response = response
+            .error_for_status()
+            .context("Groq assistant returned an error status")?;
+
+        let payload: ChatCompletionResponse = response
+            .json()
+            .context("Failed to parse Groq assistant response")?;
+
+        let message = payload
+            .choices
+            .into_iter()
+            .find_map(|choice| choice.message.content)
+            .unwrap_or_default();
+
+        if message.trim().is_empty() {
+            Err(anyhow!("Groq assistant response was empty"))
+        } else {
+            Ok(message)
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatCompletionResponse {
+    choices: Vec<ChatChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatChoice {
+    message: ChatMessage,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatMessage {
+    content: Option<String>,
 }
 
 fn build_input_stream_f32(
