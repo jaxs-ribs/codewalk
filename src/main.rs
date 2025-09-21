@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
     fs,
+    io::Cursor,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -11,16 +12,26 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
+use audrey::Reader as AudioReader;
+use base64::{
+    Engine as _,
+    engine::general_purpose::{STANDARD, URL_SAFE},
+};
 use chrono::Local;
 use cpal::{
     SampleFormat, Stream,
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use device_query::{DeviceQuery, DeviceState, Keycode};
-use reqwest::blocking::{Client as HttpClient, multipart};
-use rodio::{OutputStream, OutputStreamHandle, Sink, Source, source::SineWave};
+use reqwest::{
+    blocking::{Client as HttpClient, multipart},
+    header::CONTENT_TYPE,
+};
+use rodio::{
+    OutputStream, OutputStreamHandle, Sink, Source, buffer::SamplesBuffer, source::SineWave,
+};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 const PUSH_TO_TALK_KEY: Keycode = Keycode::Space;
@@ -30,17 +41,16 @@ const DEFAULT_STT_LANGUAGE: &str = "en";
 const DEFAULT_LLM_TEMPERATURE: f32 = 0.3;
 const DEFAULT_LLM_MAX_TOKENS: u32 = 400;
 const DEFAULT_LLM_MODEL: &str = "moonshotai/kimi-k2-instruct-0905";
+const DEFAULT_TTS_MODEL: &str = "playai-tts";
+const DEFAULT_TTS_VOICE: &str = "Fritz-PlayAI";
 const SMART_SECRETARY_PROMPT: &str = "You are Walkcoach, a smart secretary. Answer in one to three short sentences. If one clarifier would change the answer, ask it. Otherwise, give tight, actionable guidance. No filler.";
 
 fn main() -> Result<()> {
     let env_source = load_env_file()?;
-
     ensure_groq_key(env_source.as_deref())?;
 
     let mut app = App::new()?;
-    app.run()?;
-
-    Ok(())
+    app.run()
 }
 
 fn load_env_file() -> Result<Option<PathBuf>> {
@@ -77,7 +87,7 @@ fn hydrate_env_var_from_files(name: &str, env_source: Option<&Path>) -> Result<(
     }
 
     if let Some(value) = locate_env_var(name, env_source)? {
-        // SAFETY: restricted to startup before worker threads spin up.
+        // SAFETY: remaining single-threaded during bootstrap.
         unsafe {
             std::env::set_var(name, &value);
         }
@@ -129,9 +139,11 @@ fn read_var_from_path(name: &str, path: &Path) -> Result<Option<String>> {
 struct App {
     recorder: Recorder,
     beep: BeepPlayer,
+    speaker: SpeechPlayer,
     keyboard: DeviceState,
     transcriber: TranscriptionClient,
     assistant: AssistantClient,
+    tts: TtsClient,
     output_dir: PathBuf,
 }
 
@@ -139,20 +151,25 @@ impl App {
     fn new() -> Result<Self> {
         let recorder = Recorder::new()?;
         let beep = BeepPlayer::new()?;
+        let speaker = SpeechPlayer::new()?;
         let keyboard = DeviceState::new();
         let output_dir = PathBuf::from(OUTPUT_DIR);
         fs::create_dir_all(&output_dir).context("Failed to create recordings directory")?;
+
         let api_key = std::env::var("GROQ_API_KEY")
-            .context("GROQ_API_KEY disappeared before we could build the Groq client")?;
+            .context("GROQ_API_KEY disappeared before we could build the Groq clients")?;
         let transcriber = TranscriptionClient::new(api_key.clone())?;
-        let assistant = AssistantClient::new(api_key)?;
+        let assistant = AssistantClient::new(api_key.clone())?;
+        let tts = TtsClient::new(api_key)?;
 
         Ok(Self {
             recorder,
             beep,
+            speaker,
             keyboard,
             transcriber,
             assistant,
+            tts,
             output_dir,
         })
     }
@@ -201,10 +218,26 @@ impl App {
                                 match self.assistant.reply(&transcript) {
                                     Ok(answer) => {
                                         println!("Assistant: {answer}");
+
+                                        match self.tts.synthesize(&answer) {
+                                            Ok(audio) => {
+                                                if std::env::var("WALKCOACH_DEBUG_TTS").is_ok() {
+                                                    eprintln!(
+                                                        "[tts-debug] bytes={} content-type={} note={:?}",
+                                                        audio.bytes.len(),
+                                                        audio.content_type,
+                                                        audio.note
+                                                    );
+                                                }
+
+                                                if let Err(err) = self.speaker.play(&audio) {
+                                                    eprintln!("Playback failed: {err:?}");
+                                                }
+                                            }
+                                            Err(err) => eprintln!("TTS synthesis failed: {err:?}"),
+                                        }
                                     }
-                                    Err(err) => {
-                                        eprintln!("Assistant reply failed: {err:?}");
-                                    }
+                                    Err(err) => eprintln!("Assistant reply failed: {err:?}"),
                                 }
                             }
                             Err(err) => {
@@ -490,6 +523,353 @@ struct ChatChoice {
 #[derive(Debug, Deserialize)]
 struct ChatMessage {
     content: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct TtsAudio {
+    bytes: Vec<u8>,
+    content_type: String,
+    note: Option<String>,
+}
+
+struct TtsClient {
+    http: HttpClient,
+    base_url: String,
+    api_key: String,
+    model: String,
+    voice: String,
+}
+
+impl TtsClient {
+    fn new(api_key: String) -> Result<Self> {
+        let http = HttpClient::builder()
+            .timeout(Duration::from_secs(45))
+            .build()
+            .context("Failed to build HTTP client for Groq TTS")?;
+
+        let base_url = std::env::var("GROQ_API_BASE_URL")
+            .unwrap_or_else(|_| "https://api.groq.com".to_string());
+
+        let model =
+            std::env::var("GROQ_TTS_MODEL").unwrap_or_else(|_| DEFAULT_TTS_MODEL.to_string());
+
+        let voice =
+            std::env::var("GROQ_TTS_VOICE").unwrap_or_else(|_| DEFAULT_TTS_VOICE.to_string());
+
+        Ok(Self {
+            http,
+            base_url,
+            api_key,
+            model,
+            voice,
+        })
+    }
+
+    fn synthesize(&self, text: &str) -> Result<TtsAudio> {
+        if text.trim().is_empty() {
+            return Err(anyhow!("TTS input text was empty"));
+        }
+
+        let body = json!({
+            "model": self.model,
+            "voice": self.voice,
+            "input": text,
+            "response_format": "wav"
+        });
+
+        let url = format!(
+            "{}/openai/v1/audio/speech",
+            self.base_url.trim_end_matches('/')
+        );
+
+        let response = self
+            .http
+            .post(url)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()
+            .context("Groq TTS request failed")?;
+
+        let response = response
+            .error_for_status()
+            .context("Groq TTS returned an error status")?;
+
+        let content_type = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|raw| raw.to_str().ok())
+            .map(|s| s.to_owned())
+            .unwrap_or_default();
+
+        let bytes = response
+            .bytes()
+            .context("Failed to read Groq TTS payload body")?;
+
+        if bytes.is_empty() {
+            return Err(anyhow!("Groq TTS response was empty"));
+        }
+
+        if content_type.contains("application/json") || bytes.starts_with(b"{") {
+            let payload: Value =
+                serde_json::from_slice(&bytes).context("Failed to parse Groq TTS JSON response")?;
+
+            let decoded = extract_audio_bytes(&payload)
+                .ok_or_else(|| anyhow!("Groq TTS JSON response missing audio payload"))?;
+
+            if decoded.is_empty() {
+                Err(anyhow!(
+                    "Groq TTS audio payload was empty after base64 decode"
+                ))
+            } else {
+                let (bytes, repair_note) = maybe_repair_wav(decoded)?;
+                Ok(TtsAudio {
+                    bytes,
+                    content_type: format!("{} (json)", content_type),
+                    note: merge_notes(Some("decoded from JSON payload".to_string()), repair_note),
+                })
+            }
+        } else {
+            let raw = bytes.to_vec();
+            let (bytes, repair_note) = maybe_repair_wav(raw)?;
+            Ok(TtsAudio {
+                bytes,
+                content_type,
+                note: repair_note,
+            })
+        }
+    }
+}
+
+struct SpeechPlayer {
+    _stream: OutputStream,
+    handle: OutputStreamHandle,
+}
+
+impl SpeechPlayer {
+    fn new() -> Result<Self> {
+        let (stream, handle) =
+            OutputStream::try_default().context("Failed to create TTS output stream")?;
+        Ok(Self {
+            _stream: stream,
+            handle,
+        })
+    }
+
+    fn play(&self, audio: &TtsAudio) -> Result<()> {
+        if audio.bytes.is_empty() {
+            return Err(anyhow!("No audio data supplied for playback"));
+        }
+
+        let sink = Sink::try_new(&self.handle).context("Failed to create TTS sink")?;
+        let cursor = Cursor::new(audio.bytes.clone());
+        let mut reader = match AudioReader::new(cursor) {
+            Ok(r) => r,
+            Err(err) => {
+                let dump_path = dump_tts_audio(audio).ok();
+                let info = build_tts_error_info("read", audio, dump_path.as_ref());
+                return Err(err).context(info);
+            }
+        };
+        let desc = reader.description();
+        let channels = u16::try_from(desc.channel_count())
+            .map_err(|_| anyhow!("TTS audio channel count exceeds supported range"))?;
+
+        if channels == 0 {
+            return Err(anyhow!("TTS audio has zero channels"));
+        }
+
+        let sample_rate = desc.sample_rate();
+        let samples: Vec<f32> = match reader
+            .samples::<f32>()
+            .collect::<std::result::Result<Vec<_>, _>>()
+        {
+            Ok(samples) => samples,
+            Err(err) => {
+                let dump_path = dump_tts_audio(audio).ok();
+                let info = build_tts_error_info("decode", audio, dump_path.as_ref());
+                return Err(err).context(info);
+            }
+        };
+
+        let buffer = SamplesBuffer::new(channels, sample_rate, samples);
+        sink.append(buffer);
+        sink.detach();
+        Ok(())
+    }
+}
+
+fn build_tts_error_info(stage: &str, audio: &TtsAudio, dump_path: Option<&PathBuf>) -> String {
+    let content_type = if audio.content_type.is_empty() {
+        "<unknown>"
+    } else {
+        audio.content_type.as_str()
+    };
+    let mut info = format!(
+        "Failed to {} TTS audio stream (content-type: {}, len: {} bytes",
+        stage,
+        content_type,
+        audio.bytes.len()
+    );
+
+    if let Some(note) = &audio.note {
+        info.push_str(&format!(", note: {}", note));
+    }
+
+    let head = audio
+        .bytes
+        .iter()
+        .take(12)
+        .map(|b| format!("{:02X}", b))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !head.is_empty() {
+        info.push_str(&format!(", head: {}", head));
+    }
+
+    if let Some(path) = dump_path {
+        info.push_str(&format!(", dumped to {}", path.display()));
+    }
+
+    info.push(')');
+    info
+}
+
+fn dump_tts_audio(audio: &TtsAudio) -> Result<PathBuf> {
+    let dir = Path::new("tts_debug");
+    fs::create_dir_all(dir).context("Failed to create tts_debug directory")?;
+
+    let timestamp = Local::now().format("%Y%m%d-%H%M%S%.3f");
+    let mut name = format!("tts-{timestamp}");
+    if let Some(note) = &audio.note {
+        let slug: String = note
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .take(24)
+            .collect();
+        if !slug.is_empty() {
+            name.push('-');
+            name.push_str(&slug);
+        }
+    }
+
+    let ext = guess_audio_extension(&audio.bytes, &audio.content_type);
+    let path = dir.join(format!("{name}.{ext}"));
+    fs::write(&path, &audio.bytes).context("Failed to write TTS debug dump")?;
+    Ok(path)
+}
+
+fn guess_audio_extension(bytes: &[u8], content_type: &str) -> &'static str {
+    if content_type.contains("wav") || bytes.starts_with(b"RIFF") {
+        "wav"
+    } else if content_type.contains("mp3")
+        || content_type.contains("mpeg")
+        || bytes.starts_with(b"ID3")
+    {
+        "mp3"
+    } else if content_type.contains("ogg") || bytes.starts_with(b"OggS") {
+        "ogg"
+    } else {
+        "bin"
+    }
+}
+
+fn maybe_repair_wav(bytes: Vec<u8>) -> Result<(Vec<u8>, Option<String>)> {
+    if bytes.len() < 44 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return Ok((bytes, None));
+    }
+
+    let mut data_found = false;
+    let mut note = None;
+    let mut repaired = bytes;
+
+    if let Ok(fixed) = u32::try_from(repaired.len().saturating_sub(8)) {
+        let current = u32::from_le_bytes(repaired[4..8].try_into().unwrap());
+        if current == 0xFFFF_FFFF || current as usize + 8 != repaired.len() {
+            repaired[4..8].copy_from_slice(&fixed.to_le_bytes());
+            note = Some(format!("patched RIFF size {}->{}", current, fixed));
+        }
+    }
+
+    let mut offset = 12usize;
+    while offset + 8 <= repaired.len() {
+        let chunk_id = &repaired[offset..offset + 4];
+        let chunk_size = u32::from_le_bytes(repaired[offset + 4..offset + 8].try_into().unwrap());
+        let chunk_data_start = offset + 8;
+        if chunk_id == b"data" {
+            data_found = true;
+            let available = repaired.len().saturating_sub(chunk_data_start);
+            if chunk_size == 0xFFFF_FFFF || chunk_size as usize > available {
+                if let Ok(fixed) = u32::try_from(available) {
+                    let old_note = note.take();
+                    let mut pieces = vec![format!("patched data size {}->{}", chunk_size, fixed)];
+                    if let Some(existing) = old_note {
+                        pieces.push(existing);
+                    }
+                    note = Some(pieces.join(", "));
+                    repaired[offset + 4..offset + 8].copy_from_slice(&fixed.to_le_bytes());
+                }
+            }
+            break;
+        }
+
+        let mut next = chunk_data_start + chunk_size as usize;
+        if chunk_size % 2 == 1 {
+            next += 1; // pad byte
+        }
+        if next <= offset {
+            break;
+        }
+        offset = next;
+    }
+
+    if !data_found {
+        return Ok((repaired, note));
+    }
+
+    Ok((repaired, note))
+}
+
+fn merge_notes(lhs: Option<String>, rhs: Option<String>) -> Option<String> {
+    match (lhs, rhs) {
+        (None, None) => None,
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (Some(a), Some(b)) => Some(format!("{}; {}", a, b)),
+    }
+}
+
+fn extract_audio_bytes(value: &Value) -> Option<Vec<u8>> {
+    fn decode_value(value: &Value) -> Option<Vec<u8>> {
+        match value {
+            Value::String(s) => decode_base64_candidate(s),
+            Value::Array(items) => items.iter().find_map(decode_value),
+            Value::Object(map) => {
+                for key in ["audio", "data", "audio_base64", "audioContent", "content"] {
+                    if let Some(val) = map.get(key) {
+                        if let Some(decoded) = decode_value(val) {
+                            return Some(decoded);
+                        }
+                    }
+                }
+                map.values().find_map(decode_value)
+            }
+            _ => None,
+        }
+    }
+
+    decode_value(value)
+}
+
+fn decode_base64_candidate(raw: &str) -> Option<Vec<u8>> {
+    let cleaned: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
+    if cleaned.is_empty() {
+        return None;
+    }
+
+    STANDARD
+        .decode(cleaned.as_bytes())
+        .ok()
+        .or_else(|| URL_SAFE.decode(cleaned.as_bytes()).ok())
 }
 
 fn build_input_stream_f32(
