@@ -28,6 +28,7 @@ class Orchestrator: ObservableObject {
     private var actionQueue: [ActionQueueItem] = []
     private let artifactManager: ArtifactManager
     private let assistantClient: AssistantClient
+    private let ttsManager: TTSManager
 
     init(groqApiKey: String) {
         // Initialize artifact manager
@@ -36,7 +37,10 @@ class Orchestrator: ObservableObject {
         // Initialize assistant client
         assistantClient = AssistantClient(groqApiKey: groqApiKey)
 
-        print("[Orchestrator] Initialized with ArtifactManager and AssistantClient")
+        // Initialize TTS manager
+        ttsManager = TTSManager()
+
+        print("[Orchestrator] Initialized with ArtifactManager, AssistantClient, and TTSManager")
     }
 
     // MARK: - Queue Management
@@ -122,10 +126,20 @@ class Orchestrator: ObservableObject {
             if artifactManager.safeWrite(filename: "description.md", content: content) {
                 lastResponse = "Description written. Say 'read the description' to hear it."
 
+                // Speak the success message
+                await MainActor.run {
+                    self.ttsManager.speak(self.lastResponse)
+                }
+
                 // Add to conversation history
                 addAssistantResponse("I've written the project description based on our conversation.")
             } else {
                 lastResponse = "Failed to write description"
+
+                // Speak the error
+                await MainActor.run {
+                    self.ttsManager.speak(self.lastResponse)
+                }
             }
         } catch {
             print("[Orchestrator] Failed to generate description: \(error)")
@@ -145,10 +159,20 @@ class Orchestrator: ObservableObject {
             if artifactManager.safeWrite(filename: "phasing.md", content: content) {
                 lastResponse = "Phasing written. Say 'read the phasing' to hear it."
 
+                // Speak the success message
+                await MainActor.run {
+                    self.ttsManager.speak(self.lastResponse)
+                }
+
                 // Add to conversation history
                 addAssistantResponse("I've written the project phasing based on our conversation.")
             } else {
                 lastResponse = "Failed to write phasing"
+
+                // Speak the error
+                await MainActor.run {
+                    self.ttsManager.speak(self.lastResponse)
+                }
             }
         } catch {
             print("[Orchestrator] Failed to generate phasing: \(error)")
@@ -160,11 +184,20 @@ class Orchestrator: ObservableObject {
         if let content = artifactManager.safeRead(filename: "description.md") {
             // Log first 100 chars for display
             let preview = String(content.prefix(100))
-            lastResponse = "Reading description: \(preview)..."
+            lastResponse = "Reading description..."
             print("[Orchestrator] Read description (\(content.count) chars)")
-            // Phase 7 will add TTS here
+
+            // Speak the content using TTS
+            await MainActor.run {
+                self.ttsManager.speak(content)
+            }
         } else {
             lastResponse = "No description yet. Say 'write the description' first."
+
+            // Speak the error message
+            await MainActor.run {
+                self.ttsManager.speak(self.lastResponse)
+            }
 
             // List what files exist
             let files = artifactManager.listArtifacts()
@@ -176,11 +209,20 @@ class Orchestrator: ObservableObject {
         if let content = artifactManager.safeRead(filename: "phasing.md") {
             // Log first 100 chars for display
             let preview = String(content.prefix(100))
-            lastResponse = "Reading phasing: \(preview)..."
+            lastResponse = "Reading phasing..."
             print("[Orchestrator] Read phasing (\(content.count) chars)")
-            // Phase 7 will add TTS here
+
+            // Speak the content using TTS
+            await MainActor.run {
+                self.ttsManager.speak(content)
+            }
         } else {
             lastResponse = "No phasing yet. Say 'write the phasing' first."
+
+            // Speak the error message
+            await MainActor.run {
+                self.ttsManager.speak(self.lastResponse)
+            }
 
             // List what files exist
             let files = artifactManager.listArtifacts()
@@ -236,14 +278,30 @@ class Orchestrator: ObservableObject {
 
             lastResponse = response
 
+            // Speak the response
+            await MainActor.run {
+                self.ttsManager.speak(response)
+            }
+
             // Add assistant response to history
             addAssistantResponse(response)
         } catch {
             print("[Orchestrator] Failed to generate response: \(error)")
             lastResponse = "I couldn't process that. Try again?"
+
+            // Speak the error
+            await MainActor.run {
+                self.ttsManager.speak(self.lastResponse)
+            }
         }
 
         state = .idle
+    }
+
+    // MARK: - TTS Control
+
+    func stopSpeaking() {
+        ttsManager.stop()
     }
 
     // MARK: - Context Management

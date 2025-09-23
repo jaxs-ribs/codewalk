@@ -54,6 +54,10 @@ class AgentViewModel: ObservableObject {
 
     func startRecording() {
         print("[WalkCoach] Starting recording")
+
+        // Stop any ongoing TTS speech
+        orchestrator?.stopSpeaking()
+
         currentState = .recording
 
         // Start recording instantly
