@@ -476,6 +476,18 @@ impl Orchestrator {
         Arc::clone(&self.interrupt)
     }
 
+    /// Set the current transcript for the turn (used before content generation)
+    pub fn set_current_transcript(&mut self, transcript: &str) {
+        if let Some(turn) = &mut self.current_turn {
+            turn.transcript = Some(transcript.to_string());
+        } else {
+            // If no turn exists, create one
+            let mut turn = TurnContext::new();
+            turn.transcript = Some(transcript.to_string());
+            self.current_turn = Some(turn);
+        }
+    }
+
     /// Process an intent from the router.
     pub fn handle_intent(&mut self, intent: Intent) -> Result<String> {
         match intent {
@@ -524,7 +536,16 @@ impl Orchestrator {
             ProposedAction::WriteDescription => {
                 // Use generator if available, otherwise fallback
                 let content = if let Some(ref generator) = self.generator {
-                    let context = self.conversation_history.join("\n");
+                    // Include current turn transcript in context
+                    let mut context = self.conversation_history.join("\n");
+                    if let Some(turn) = &self.current_turn {
+                        if let Some(transcript) = &turn.transcript {
+                            if !context.is_empty() {
+                                context.push_str("\n");
+                            }
+                            context.push_str(&format!("User: {}", transcript));
+                        }
+                    }
                     generator.generate_description(&context)
                         .unwrap_or_else(|err| {
                             eprintln!("Generator failed: {err:?}, using fallback");
@@ -545,7 +566,17 @@ impl Orchestrator {
                     // Try to read existing description for context
                     let description = safe_read(&PathBuf::from("artifacts/description.md"))
                         .unwrap_or_else(|_| String::new());
-                    let context = self.conversation_history.join("\n");
+
+                    // Include current turn transcript in context
+                    let mut context = self.conversation_history.join("\n");
+                    if let Some(turn) = &self.current_turn {
+                        if let Some(transcript) = &turn.transcript {
+                            if !context.is_empty() {
+                                context.push_str("\n");
+                            }
+                            context.push_str(&format!("User: {}", transcript));
+                        }
+                    }
 
                     generator.generate_phasing(&description, &context)
                         .unwrap_or_else(|err| {
@@ -685,11 +716,70 @@ impl Orchestrator {
 fn split_by_phases(content: &str) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut current_chunk = String::new();
-    
+    let mut in_phasing_section = false;
+
     for line in content.lines() {
-        // Check for phase markers like "Phase One —" or "Phase Two —"
-        if line.starts_with("Phase ") && line.contains("—") && !current_chunk.is_empty() {
-            // Start of new phase, save current chunk
+        // Skip until we find the phasing section
+        if !in_phasing_section && line.trim().to_lowercase() == "# phasing.md" {
+            in_phasing_section = true;
+            continue;
+        }
+
+        if !in_phasing_section {
+            continue;
+        }
+
+        // Check for phase markers with various formats
+        // "## Phase One —", "phase one —", "**Phase One —**"
+        let clean_line = line
+            .trim_start_matches("##")
+            .trim_start_matches("**")
+            .trim_end_matches("**")
+            .trim();
+        let line_lower = clean_line.to_lowercase();
+
+        if line_lower.starts_with("phase ") && clean_line.contains("—") {
+            // Start of new phase
+            if !current_chunk.is_empty() {
+                chunks.push(current_chunk.trim().to_string());
+            }
+            current_chunk = String::from(line);
+        } else if !line.trim().is_empty() || !current_chunk.is_empty() {
+            // Add line to current chunk (skip leading empty lines)
+            if !current_chunk.is_empty() {
+                current_chunk.push('\n');
+            }
+            current_chunk.push_str(line);
+        }
+    }
+
+    // Add last chunk if it exists
+    if !current_chunk.is_empty() {
+        chunks.push(current_chunk.trim().to_string());
+    }
+
+    // If no phases found in phasing section, try old format without section header
+    if chunks.is_empty() {
+        chunks = split_by_phases_legacy(content);
+    }
+
+    chunks
+}
+
+// Legacy phase splitter for files without section headers
+fn split_by_phases_legacy(content: &str) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current_chunk = String::new();
+
+    for line in content.lines() {
+        let clean_line = line
+            .trim_start_matches("##")
+            .trim_start_matches("**")
+            .trim_end_matches("**")
+            .trim();
+        let line_lower = clean_line.to_lowercase();
+
+        if line_lower.starts_with("phase ") && clean_line.contains("—") && !current_chunk.is_empty() {
             chunks.push(current_chunk.trim().to_string());
             current_chunk = String::from(line);
         } else {
@@ -699,12 +789,11 @@ fn split_by_phases(content: &str) -> Vec<String> {
             current_chunk.push_str(line);
         }
     }
-    
-    // Add last chunk
+
     if !current_chunk.is_empty() {
         chunks.push(current_chunk.trim().to_string());
     }
-    
+
     chunks
 }
 

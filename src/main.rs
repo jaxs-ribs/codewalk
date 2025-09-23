@@ -314,6 +314,8 @@ impl App {
                             crate::router::Intent::Directive { ref action } => {
                                 // Execute directive immediately
                                 let action_clone = action.clone();
+                                // Set current transcript before executing (for content generation)
+                                self.orchestrator.set_current_transcript(&transcript);
                                 match self.orchestrator.handle_intent(intent) {
                                     Ok(_) => {
                                         let phase_msg;
@@ -449,6 +451,8 @@ impl App {
                                     }
                                     crate::router::Intent::Directive { .. } => {
                                         // LLM suggested a directive, execute it
+                                        // Set current transcript before executing (for content generation)
+                                        self.orchestrator.set_current_transcript(&transcript);
                                         match self.orchestrator.handle_intent(intent) {
                                             Ok(_) => format!("{} Done.", answer),
                                             Err(err) => {

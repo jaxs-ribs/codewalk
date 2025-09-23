@@ -1,17 +1,14 @@
-Phase One — Voice Wake-Up  
-We build a tiny offline recognizer that only hears three phrases: write the description, write the phasing, read. It runs on the audio chip, so the main CPU stays asleep and the battery barely notices. We test it by walking outside for ten minutes while saying random words; if the phone never lights up and the log shows zero false wakes, the recognizer is done.
+Phase One — Draw the Board  
+We start by painting a soft dark canvas that fills the browser window, then overlay a quiet grid of forty by forty squares in a mid gray so the player senses space without clutter. This sets the calm stage where color will later sing, and it proves the layout engine is ready. Done means you open index dot html and see only the dark grid with no scroll bars.
 
-Phase Two — Safe Capture  
-We add a one-tap record loop that starts only after the exact phrase is heard. It records up to thirty seconds, stops itself, and stores the raw clip in a temp file. We test by speaking a fifty-word idea while jogging; if the clip is complete and no extra audio leaks in, capture is solid.
+Phase Two — Spawn the Snake  
+Next we place a five segment snake on the grid, each block a flat mid gray for now, moving right one square every quarter second. We wire the arrow keys to change its heading, and we keep the segments linked so the tail follows the head. Remember, P is stored in the balls, so we treat each segment as a ball container. This gives us the core motion loop, and it is finished when you can steer the snake around the grid without breaking the chain.
 
-Phase Three — Speech to Clean Text  
-We ship the clip to the on-device speech kit and return the single line “I am a cat.” We test by saying any random phrase; if the output is exactly “I am a cat,” text cleanup is finished.
+Phase Three — Add Edible Light  
+Now we drop a single pulsing food square on a random empty cell; the food gently grows and shrinks to ninety percent opacity and back every half second. When the head hits the food, the snake gains one segment at the tail and a new food appears elsewhere. This delivers the reward cycle, and we know it works when you can eat three foods in a row and feel the tiny burst each time.
 
-Phase Four — Split and Save  
-We parse the text for the trigger word: description or phasing. We then overwrite the matching markdown file in the app folder and answer with a soft “done” through the earbuds. We test by saying both commands and immediately powering off the phone; if the files survive and open correctly on a laptop, saving is proven.
+Phase Four — Breathe Life with Color  
+Here we swap the flat colors for living gradients: the snake body becomes a flowing sweep from cyan to magenta that slides along as it moves, the head glows a little brighter, and upon eating, the entire snake flashes white then fades back to the sweep over half a second. Food becomes a soft star with a faint halo. The game now feels alive, and the test is simple: play for five seconds and notice you cannot look away.
 
-Phase Five — Calm Playback  
-This phase is a placeholder; we will define playback details later.
-
-Phase Six — Walk Cycle Validation  
-We recruit three users to walk a kilometer loop while using all three commands twice. We log battery drain, check that no other apps ran, and confirm each user ends with two complete documents. If average drain is under two percent and every file is readable, the product is shipped.
+Phase Five — End and Restart Gracefully  
+Finally we detect wall and self collisions, then stop motion and show a quiet game over message plus a gentle prompt to press space and restart. Pressing space clears the board, resets score to zero, and spawns a new snake and first food. With this, the loop is complete and polished, and we ship when you can lose, restart, and lose again without ever reaching for the mouse.
