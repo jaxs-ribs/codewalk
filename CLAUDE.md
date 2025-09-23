@@ -70,7 +70,8 @@ Research mode and long "thinking mode" can be added later without changing the l
 **A single-threaded, voice-first speccer that writes and reads two artifacts on command, and never does anything behind your back.**
 
 ## Development Guidelines
-**ALWAYS run `cargo build` or `cargo check` before claiming something is "fixed" or "complete". Never say "Fixed!" without verifying the code compiles.**
+- **ALWAYS run `cargo build` or `cargo check` before claiming something is "fixed" or "complete". Never say "Fixed!" without verifying the code compiles.**
+- **NEVER run `cargo run` yourself. The user will test the application. Only use `cargo build` or `cargo check` to verify compilation.**
 
 ## Implementation Phases
 
@@ -88,7 +89,7 @@ Read artifacts in manageable chunks with pauses between them.
 4. Say "read phase 3" - Should jump directly to phase 3
 5. Say "read description slowly" - Should read first paragraph, then ask to continue
 
-### Phase 8: Context-Aware Assistant (Next) ⏳
+### Phase 8: Context-Aware Assistant ✅
 Add conversation memory to fix confirmation issues.
 - Track conversation history in orchestrator
 - Pass context to LLM for better responses
@@ -101,8 +102,17 @@ Add conversation memory to fix confirmation issues.
 3. Say "read phasing slowly", wait for chunk prompt
 4. Say "yes" - Should continue reading (context-aware confirmation)
 
-### Phase 9: Advanced Edit Operations (Future)
-Targeted edits like "change phase 2 to..." and append/prepend operations.
+### Phase 9: Advanced Edit Operations ✅
+Targeted edits with specific phase targeting and append/prepend operations.
+- "Change phase 2 to focus on testing"
+- "Add a note to the description about X"
+- "Append deployment steps to phasing"
+- "Replace the third phase with infrastructure setup"
+
+**Test Procedure:**
+1. Say "change phase 2 to focus on unit testing" - Should update only phase 2
+2. Say "add a note about performance to the description" - Should append to description
+3. Say "replace phase 3 with deployment planning" - Should replace specific phase
 
 ### Phase 10: Polish & Production (Future)
 Configuration, voice selection, speed controls.
@@ -111,3 +121,5 @@ Configuration, voice selection, speed controls.
 ✅ Phase 0-6: Complete
 ✅ Artifact editor disabled (single-threaded execution restored)
 ✅ Phase 7: Complete (chunked reading implemented)
+✅ Phase 8: Complete (context-aware conversation)
+✅ Phase 9: Complete (advanced edit operations)

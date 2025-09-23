@@ -118,12 +118,15 @@ Rules:
 - Use "write_*" actions only when generating new content from scratch
 - Use "read_*_slowly" when user asks to read slowly, in chunks, or step by step
 - Use "read_phase_N" when user asks for a specific phase number (set phase_number field)
+- For "edit_phasing" with specific phase mentioned (e.g. "change phase 2 to..."), set phase_number field
 
 Examples:
 "write the description" -> {"intent_type": "directive", "action": "write_description"}
 "read phasing slowly" -> {"intent_type": "directive", "action": "read_phasing_slowly"}
 "read phase 3" -> {"intent_type": "directive", "action": "read_phase_N", "phase_number": 3}
+"change phase 2 to focus on testing" -> {"intent_type": "directive", "action": "edit_phasing", "phase_number": 2}
 "replace the phasing with I love you" -> {"intent_type": "directive", "action": "edit_phasing"}
+"add a note about performance" -> {"intent_type": "directive", "action": "edit_description"}
 "description please" -> {"intent_type": "directive", "action": "read_description"}
 "yes" -> {"intent_type": "confirmation", "confirmed": true}"#;
 
@@ -249,7 +252,7 @@ Examples:
                 change: input.to_string(), // Use the full input as the change
             }),
             "edit_phasing" => Ok(ProposedAction::EditPhasing {
-                phase: None,
+                phase: phase_number,
                 change: input.to_string(), // Use the full input as the change
             }),
             "stop" => Ok(ProposedAction::Stop),

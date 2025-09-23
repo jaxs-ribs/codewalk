@@ -612,7 +612,7 @@ impl Orchestrator {
                     content: updated_content,
                 }
             }
-            ProposedAction::EditPhasing { phase: _, change } => {
+            ProposedAction::EditPhasing { phase, change } => {
                 // Read current content, apply edit via generator, then write
                 let current_path = PathBuf::from("artifacts/phasing.md");
                 let current_content = if current_path.exists() {
@@ -622,9 +622,20 @@ impl Orchestrator {
                 };
 
                 let updated_content = if let Some(ref generator) = self.generator {
-                    generator
-                        .generate_edit(&current_content, &change)
-                        .unwrap_or(current_content.clone())
+                    // If phase is specified, pass it to generator for targeted edit
+                    if let Some(phase_num) = phase {
+                        generator
+                            .generate_phase_edit(&current_content, phase_num, &change)
+                            .unwrap_or_else(|_| {
+                                generator
+                                    .generate_edit(&current_content, &change)
+                                    .unwrap_or(current_content.clone())
+                            })
+                    } else {
+                        generator
+                            .generate_edit(&current_content, &change)
+                            .unwrap_or(current_content.clone())
+                    }
                 } else {
                     // Simple fallback: append the change
                     format!("{}\n\n{}", current_content, change)
@@ -769,6 +780,16 @@ impl ContentGenerator {
         let prompt = format!(
             "Current document:\n{}\n\nUser request: {}\n\nGenerate the updated document with the requested change applied. Return the complete updated document, not just the changes.",
             current_content, edit_request
+        );
+
+        self.generate_content(&prompt)
+    }
+
+    /// Generate a phase-specific edit for phasing document
+    fn generate_phase_edit(&self, current_content: &str, phase_number: u32, edit_request: &str) -> Result<String> {
+        let prompt = format!(
+            "Current phasing document:\n{}\n\nUser wants to edit specifically Phase {}:\n{}\n\nUpdate ONLY Phase {} based on the request, keeping all other phases unchanged. Return the complete document with the targeted phase updated.",
+            current_content, phase_number, edit_request, phase_number
         );
 
         self.generate_content(&prompt)

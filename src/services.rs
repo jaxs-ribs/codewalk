@@ -145,14 +145,10 @@ impl AssistantClient {
         // Add conversation history if provided
         if !context.is_empty() {
             let context_str = context.join("\n");
-            eprintln!("[DEBUG] Assistant context: {} messages", context.len());
-            eprintln!("[DEBUG] Context content:\n{}", context_str);
             messages.push(json!({
                 "role": "system",
                 "content": format!("Recent conversation history:\n{}", context_str)
             }));
-        } else {
-            eprintln!("[DEBUG] No context provided to assistant");
         }
         
         messages.push(json!({"role": "user", "content": transcript}));
