@@ -687,7 +687,8 @@ fn split_by_phases(content: &str) -> Vec<String> {
     let mut current_chunk = String::new();
     
     for line in content.lines() {
-        if line.starts_with("## Phase") && !current_chunk.is_empty() {
+        // Check for phase markers like "Phase One —" or "Phase Two —"
+        if line.starts_with("Phase ") && line.contains("—") && !current_chunk.is_empty() {
             // Start of new phase, save current chunk
             chunks.push(current_chunk.trim().to_string());
             current_chunk = String::from(line);
@@ -719,6 +720,48 @@ fn split_by_paragraphs(content: &str) -> Vec<String> {
 use reqwest::blocking::Client as HttpClient;
 use serde_json::json;
 use std::time::Duration;
+
+const TTS_SYSTEM_PROMPT: &str = "you are writing documents that will be read aloud by a text-to-speech engine to a walking user. your text must be fully understandable when spoken, without looking at a screen.
+
+rules for style:
+
+write in plain spoken english, short and natural sentences.
+
+keep sentences eight to fifteen words long.
+
+avoid bullet points, tables, code fences, lists, or symbols that sound odd when read aloud.
+
+use only headers and paragraphs; nothing that requires scanning.
+
+rules for description.md:
+
+write one or more paragraphs that pitch the project clearly, as if explaining it aloud.
+
+make it dense but crisp: capture what the project is, why it matters, how it works, and how it will feel in use.
+
+the goal is a self-contained story of the project that is easy to follow when heard once.
+
+rules for phasing.md:
+
+write sequential phases. each phase must begin with a header like 'phase one — short title.'
+
+under each header, write a single paragraph in spoken style, like a \"talk track.\"
+
+each phase must include three things: what we build in this phase, why it matters, and how we test that it is done.
+
+the \"what counts as done\" must be explicit, so the listener knows when this step can be checked off.
+
+do not generate vague or hand-wavy steps. each phase must yield a usable deliverable or proof point.
+
+general principles:
+
+you are speaking to someone walking. clarity matters more than density.
+
+every phase must be self-contained and testable.
+
+never leave the listener guessing what the output of a phase is.
+
+always narrate phases as if you were explaining them aloud to a colleague: simple, direct, and linear.";
 
 /// Generator for creating artifact content using LLMs
 struct ContentGenerator {
@@ -758,7 +801,7 @@ impl ContentGenerator {
     /// Generate a project description based on conversation context
     fn generate_description(&self, context: &str) -> Result<String> {
         let prompt = format!(
-            "Based on this conversation context, write a clear, concise project description in markdown format:\n\n{}\n\nWrite a professional project description with:\n- A brief overview paragraph\n- Key features/capabilities (as bullet points)\n- Main technical approach\n\nKeep it focused and under 300 words.",
+            "Based on this conversation context:\n\n{}\n\nWrite a project description for description.md that follows the TTS guidelines. Create a clear spoken narrative about what this project is, why it matters, how it works, and how it will feel to use. Use only paragraphs with headers - no bullets or lists.",
             context
         );
 
@@ -768,7 +811,7 @@ impl ContentGenerator {
     /// Generate a phasing plan based on project description
     fn generate_phasing(&self, description: &str, context: &str) -> Result<String> {
         let prompt = format!(
-            "Based on this project description:\n{}\n\nAnd this additional context:\n{}\n\nCreate a phasing plan in markdown format with 4-6 phases. Each phase should have:\n- A clear phase title\n- 2-3 bullet points describing the deliverables\n- Keep each phase focused and achievable\n\nFormat as:\n## Phase 1: [Title]\n- Deliverable 1\n- Deliverable 2\n\netc.",
+            "Based on this project description:\n{}\n\nAnd this additional context:\n{}\n\nWrite a phasing plan for phasing.md following the TTS guidelines. Create 4-6 phases. Each phase needs a header like 'Phase One — Title' followed by a single paragraph explaining what we build, why it matters, and how we test it's done. No bullets, lists, or vague steps.",
             description, context
         );
 
@@ -778,7 +821,7 @@ impl ContentGenerator {
     /// Generate an edit/update based on user request
     fn generate_edit(&self, current_content: &str, edit_request: &str) -> Result<String> {
         let prompt = format!(
-            "Current document:\n{}\n\nUser request: {}\n\nGenerate the updated document with the requested change applied. Return the complete updated document, not just the changes.",
+            "Current document:\n{}\n\nUser request: {}\n\nApply the requested change while maintaining TTS-friendly format. Keep the document readable aloud with short sentences and clear spoken structure. Return the complete updated document.",
             current_content, edit_request
         );
 
@@ -788,7 +831,7 @@ impl ContentGenerator {
     /// Generate a phase-specific edit for phasing document
     fn generate_phase_edit(&self, current_content: &str, phase_number: u32, edit_request: &str) -> Result<String> {
         let prompt = format!(
-            "Current phasing document:\n{}\n\nUser wants to edit specifically Phase {}:\n{}\n\nUpdate ONLY Phase {} based on the request, keeping all other phases unchanged. Return the complete document with the targeted phase updated.",
+            "Current phasing document:\n{}\n\nUser wants to edit specifically Phase {}:\n{}\n\nUpdate ONLY Phase {} based on the request. Keep the TTS-friendly format with a single paragraph per phase. Return the complete document with only the targeted phase changed.",
             current_content, phase_number, edit_request, phase_number
         );
 
@@ -802,7 +845,7 @@ impl ContentGenerator {
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are a technical documentation writer. Generate clear, professional content based on the user's requirements. Use markdown formatting."
+                    "content": TTS_SYSTEM_PROMPT
                 },
                 {
                     "role": "user",

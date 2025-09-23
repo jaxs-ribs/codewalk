@@ -109,26 +109,42 @@ Respond with JSON only:
   "phase_number": N (only for read_phase_N action)
 }
 
-Rules:
-- "directive" = execute immediately (clear command)
-- "proposal" = ask for confirmation first
+CRITICAL RULES - CONVERSATION FIRST:
+- Most user input is conversational (intent_type: "info", action: "none")
+- Only use write/edit actions for EXPLICIT COMMANDS like "write the description", "create the phasing", "edit the description"
+- When user discusses ideas, plans, or concepts WITHOUT explicit write commands, treat as "info"
+- "proposal" should be used when YOU want to suggest writing after gathering enough context
+- "directive" requires an explicit command verb (write, create, edit, read, etc.)
+
+Intent Types:
+- "directive" = ONLY for explicit commands with clear action verbs
+- "proposal" = when YOU want to suggest an action (include a question)
 - "confirmation" = user confirming/denying (yes/no/sure/nah/etc)
-- "info" = just informational
-- Use "edit_*" actions when user wants to change/modify/replace/update existing content with specific text
-- Use "write_*" actions only when generating new content from scratch
+- "info" = conversational, discussing ideas, planning, brainstorming (DEFAULT)
+
+Action Rules:
+- Use "write_*" ONLY when user explicitly says "write", "create", or similar command verb
+- Use "edit_*" ONLY when user explicitly says "edit", "change", "modify", "update" with specific text
+- Use "none" for all conversational, planning, or idea discussion
 - Use "read_*_slowly" when user asks to read slowly, in chunks, or step by step
 - Use "read_phase_N" when user asks for a specific phase number (set phase_number field)
-- For "edit_phasing" with specific phase mentioned (e.g. "change phase 2 to..."), set phase_number field
 
 Examples:
+"I'm thinking of building an app" -> {"intent_type": "info", "action": "none"}
+"It should help people walk" -> {"intent_type": "info", "action": "none"}
+"The app is called Code Walk" -> {"intent_type": "info", "action": "none"}
 "write the description" -> {"intent_type": "directive", "action": "write_description"}
-"read phasing slowly" -> {"intent_type": "directive", "action": "read_phasing_slowly"}
-"read phase 3" -> {"intent_type": "directive", "action": "read_phase_N", "phase_number": 3}
+"create a description for me" -> {"intent_type": "directive", "action": "write_description"}
+"let's write the phasing" -> {"intent_type": "directive", "action": "write_phasing"}
+"can you write the description?" -> {"intent_type": "directive", "action": "write_description"}
+"should we write the description?" -> {"intent_type": "info", "action": "none"}
+"read the phasing" -> {"intent_type": "directive", "action": "read_phasing"}
+"what's in the description?" -> {"intent_type": "directive", "action": "read_description"}
 "change phase 2 to focus on testing" -> {"intent_type": "directive", "action": "edit_phasing", "phase_number": 2}
-"replace the phasing with I love you" -> {"intent_type": "directive", "action": "edit_phasing"}
-"add a note about performance" -> {"intent_type": "directive", "action": "edit_description"}
-"description please" -> {"intent_type": "directive", "action": "read_description"}
-"yes" -> {"intent_type": "confirmation", "confirmed": true}"#;
+"I want the first phase to be about setup" -> {"intent_type": "info", "action": "none"}
+"yes" -> {"intent_type": "confirmation", "confirmed": true}
+"sure" -> {"intent_type": "confirmation", "confirmed": true}
+"no" -> {"intent_type": "confirmation", "confirmed": false}"#;
 
         // Build messages with optional context
         let mut messages = vec![

@@ -66,8 +66,12 @@ Research mode and long "thinking mode" can be added later without changing the l
 **You:** "For phase one, make the controls responsive on mobile."  
 **Speccer:** "Editing phase one… updated. Want me to read the phasing again?"
 
-## Key Principle
-**A single-threaded, voice-first speccer that writes and reads two artifacts on command, and never does anything behind your back.**
+## Key Principles
+1. **A single-threaded, voice-first speccer that writes and reads two artifacts on command, and never does anything behind your back.**
+2. **Conversation-first approach: The system should NEVER automatically write artifacts. It must either:**
+   - Wait for explicit commands like "write the description" or "write the phasing"
+   - Have a conversation to gather context, then ASK "Should I write the description now?" and wait for confirmation
+   - NEVER interpret vague project talk as a command to write artifacts
 
 ## Development Guidelines
 - **ALWAYS run `cargo build` or `cargo check` before claiming something is "fixed" or "complete". Never say "Fixed!" without verifying the code compiles.**
@@ -123,3 +127,4 @@ Configuration, voice selection, speed controls.
 ✅ Phase 7: Complete (chunked reading implemented)
 ✅ Phase 8: Complete (context-aware conversation)
 ✅ Phase 9: Complete (advanced edit operations)
+✅ TTS-optimized content generation (all artifacts written for spoken delivery)
