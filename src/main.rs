@@ -240,6 +240,8 @@ impl App {
             }
 
             if is_down && !recording_active {
+                // Interrupt any ongoing TTS playback immediately
+                self.orchestrator.interrupt();
                 self.recorder.start();
                 recording_active = true;
                 started_at = Some(Instant::now());
@@ -309,6 +311,7 @@ impl App {
                                 let action_clone = action.clone();
                                 match self.orchestrator.handle_intent(intent) {
                                     Ok(_) => {
+                                        let phase_msg;
                                         let (msg, skip_tts) = match action_clone {
                                             crate::router::ProposedAction::WriteDescription => {
                                                 ("Writing description now...", false)
@@ -321,6 +324,16 @@ impl App {
                                             } // Skip TTS, file will be spoken
                                             crate::router::ProposedAction::ReadPhasing => {
                                                 ("Reading phasing", true)
+                                            } // Skip TTS, file will be spoken
+                                            crate::router::ProposedAction::ReadDescriptionSlowly => {
+                                                ("Reading description slowly", true)
+                                            } // Skip TTS, file will be spoken
+                                            crate::router::ProposedAction::ReadPhasingSlowly => {
+                                                ("Reading phasing slowly", true)
+                                            } // Skip TTS, file will be spoken
+                                            crate::router::ProposedAction::ReadPhase { number } => {
+                                                phase_msg = format!("Reading phase {}", number);
+                                                (phase_msg.as_str(), true)
                                             } // Skip TTS, file will be spoken
                                             crate::router::ProposedAction::Stop => {
                                                 ("Stopping", false)
@@ -510,7 +523,12 @@ impl App {
 
                 if let Some(audio) = &tts_audio {
                     let speak_start = Instant::now();
-                    if let Err(err) = self.speaker.play(audio) {
+                    // Use interruptible playback for all TTS
+                    if let Err(err) = self.speaker.play_interruptible(
+                        audio,
+                        self.orchestrator.interrupt_handle(),
+                        &self.keyboard,
+                    ) {
                         let msg = format!("playback failed: {err}");
                         trace_entry.errors.push(msg);
                         eprintln!("Playback failed: {err:?}");
@@ -518,18 +536,19 @@ impl App {
                     trace_entry.durations.speak_ms = Some(speak_start.elapsed().as_millis() as u64);
                 }
 
-                // Queue artifact processing through orchestrator
-                // Skip if this was a direct command that already executed
-                if !skip_artifacts {
-                    let action = Action::ProcessArtifacts {
-                        transcript: transcript.clone(),
-                        reply: answer.clone(),
-                    };
-
-                    if let Err(err) = self.orchestrator.enqueue(action) {
-                        eprintln!("Failed to queue artifact processing: {err:?}");
-                    }
-                }
+                // DISABLED: Artifact processing should not happen automatically
+                // It violates single-threaded execution principle
+                // Artifacts should only be updated via explicit commands
+                //
+                // if !skip_artifacts {
+                //     let action = Action::ProcessArtifacts {
+                //         transcript: transcript.clone(),
+                //         reply: answer.clone(),
+                //     };
+                //     if let Err(err) = self.orchestrator.enqueue(action) {
+                //         eprintln!("Failed to queue artifact processing: {err:?}");
+                //     }
+                // }
 
                 // Add to conversation history if we have both transcript and assistant response
                 if let Some(assistant_text) = trace_entry.assistant_text.as_ref() {
@@ -567,18 +586,14 @@ impl App {
                         // Check for interrupt before speaking
                         if !self.orchestrator.interrupt_handle().load(Ordering::Relaxed) {
                             if let Ok(audio) = self.tts.synthesize(&text) {
-                                // For local TTS, the audio has already been spoken during synthesize()
-                                // The returned audio is just a placeholder
-                                // For Groq TTS, we need to play the actual audio
-                                if audio.macos_say_token().is_none() {
-                                    // Use interruptible playback with orchestrator's interrupt handle
-                                    if let Err(err) = self.speaker.play_interruptible(
-                                        &audio,
-                                        self.orchestrator.interrupt_handle(),
-                                        &self.keyboard,
-                                    ) {
-                                        eprintln!("Failed to speak: {err:?}");
-                                    }
+                                // Always use interruptible playback for ALL TTS
+                                // (both local macOS say and remote Groq TTS)
+                                if let Err(err) = self.speaker.play_interruptible(
+                                    &audio,
+                                    self.orchestrator.interrupt_handle(),
+                                    &self.keyboard,
+                                ) {
+                                    eprintln!("Failed to speak: {err:?}");
                                 }
                             }
                         }

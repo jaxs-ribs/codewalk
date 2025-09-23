@@ -16,7 +16,11 @@ use crate::router::{Intent, ProposedAction};
 #[derive(Debug, Clone)]
 pub enum Action {
     /// Read a file and return its contents
-    Read { path: String },
+    Read { 
+        path: String,
+        chunked: bool,  // If true, read in chunks (phases/paragraphs)
+        chunk_index: Option<usize>, // Specific chunk to read
+    },
     /// Write content to a file (full replacement)
     Write { path: String, content: String },
     /// Apply an edit patch to a file
@@ -103,6 +107,14 @@ pub struct ResponseCache {
     pub last_audio: Option<Vec<u8>>,
 }
 
+/// State for chunked reading continuation
+#[derive(Debug, Clone)]
+pub struct ChunkedReadingState {
+    pub path: String,
+    pub current_chunk: usize,
+    pub total_chunks: usize,
+}
+
 /// The main orchestrator that ensures single-threaded execution of all actions.
 /// This is the only component allowed to perform file I/O operations.
 pub struct Orchestrator {
@@ -126,6 +138,8 @@ pub struct Orchestrator {
     generator: Option<ContentGenerator>,
     /// Conversation history for context
     conversation_history: Vec<String>,
+    /// Chunked reading state for continuation
+    chunked_reading_state: Option<ChunkedReadingState>,
 }
 
 impl Orchestrator {
@@ -153,6 +167,7 @@ impl Orchestrator {
             artifact_manager: None,
             generator,
             conversation_history: Vec::new(),
+            chunked_reading_state: None,
         }
     }
 
@@ -242,9 +257,9 @@ impl Orchestrator {
         let _guard = IoGuard::new();
 
         match action {
-            Action::Read { path } => {
+            Action::Read { path, chunked, chunk_index } => {
                 // Check if this is a cache read
-                let content = if path == "cache:last" {
+                let full_content = if path == "cache:last" {
                     self.response_cache
                         .last_text
                         .clone()
@@ -255,20 +270,70 @@ impl Orchestrator {
                     }
 
                     let path_buf = PathBuf::from(&path);
-                    let content =
-                        safe_read(&path_buf).with_context(|| format!("Failed to read {}", path))?;
-
-                    // Cache the content for repeat
-                    self.response_cache.last_text = Some(content.clone());
-                    content
+                    safe_read(&path_buf).with_context(|| format!("Failed to read {}", path))?
                 };
 
+                // Handle chunked reading
+                let (content, continuation_prompt) = if chunked {
+                    // Split content into chunks based on file type
+                    let chunks = if path.contains("phasing") {
+                        // Split by phase headers (## Phase N:)
+                        split_by_phases(&full_content)
+                    } else {
+                        // Split by paragraphs (double newline)
+                        split_by_paragraphs(&full_content)
+                    };
+                    
+                    // Get the requested chunk or the first one
+                    let idx = chunk_index.unwrap_or(0);
+                    if idx < chunks.len() {
+                        let chunk = chunks[idx].to_string();
+                        
+                        // Cache for repeat
+                        self.response_cache.last_text = Some(chunk.clone());
+                        
+                        // Add continuation prompt if not last chunk
+                        let prompt = if idx + 1 < chunks.len() {
+                            // Save state for continuation
+                            self.chunked_reading_state = Some(ChunkedReadingState {
+                                path: path.clone(),
+                                current_chunk: idx + 1,
+                                total_chunks: chunks.len(),
+                            });
+                            Some(format!("Continue? (chunk {} of {})", idx + 2, chunks.len()))
+                        } else {
+                            // Clear state when done
+                            self.chunked_reading_state = None;
+                            None
+                        };
+                        
+                        (chunk, prompt)
+                    } else {
+                        // Out of bounds, return full content
+                        self.response_cache.last_text = Some(full_content.clone());
+                        self.chunked_reading_state = None;
+                        (full_content, None)
+                    }
+                } else {
+                    // Normal full read
+                    self.response_cache.last_text = Some(full_content.clone());
+                    self.chunked_reading_state = None;
+                    (full_content, None)
+                };
+
+                // For chunked reading, combine content and continuation into single message
+                let combined_message = if let Some(prompt) = continuation_prompt {
+                    format!("{}\n\n{}", content, prompt)
+                } else {
+                    content.clone()
+                };
+                
                 Ok(ActionResult {
                     artifact_outcome: None,
-                    read_content: Some(content.clone()),
+                    read_content: Some(content),
                     write_success: false,
-                    speak_text: Some(content), // This will be spoken
-                    completion_message: None,  // No completion for reads
+                    speak_text: Some(combined_message),
+                    completion_message: None,  // Don't send separate completion
                 })
             }
 
@@ -419,7 +484,17 @@ impl Orchestrator {
             }
             Intent::Confirmation { confirmed } => {
                 if confirmed {
-                    if let Some(action) = self.last_proposal.take() {
+                    // Check for chunked reading continuation first
+                    if let Some(state) = self.chunked_reading_state.take() {
+                        // Continue chunked reading
+                        let action = Action::Read {
+                            path: state.path,
+                            chunked: true,
+                            chunk_index: Some(state.current_chunk),
+                        };
+                        self.enqueue(action)?;
+                        Ok("continuing".to_string())
+                    } else if let Some(action) = self.last_proposal.take() {
                         self.execute_proposed_action(action)?;
                         Ok("executing".to_string())
                     } else {
@@ -427,6 +502,7 @@ impl Orchestrator {
                     }
                 } else {
                     self.last_proposal = None;
+                    self.chunked_reading_state = None;
                     Ok("cancelled".to_string())
                 }
             }
@@ -482,9 +558,31 @@ impl Orchestrator {
             }
             ProposedAction::ReadDescription => Action::Read {
                 path: "artifacts/description.md".to_string(),
+                chunked: false,
+                chunk_index: None,
             },
             ProposedAction::ReadPhasing => Action::Read {
                 path: "artifacts/phasing.md".to_string(),
+                chunked: false,
+                chunk_index: None,
+            },
+            ProposedAction::ReadDescriptionSlowly => Action::Read {
+                path: "artifacts/description.md".to_string(),
+                chunked: true,
+                chunk_index: Some(0),
+            },
+            ProposedAction::ReadPhasingSlowly => Action::Read {
+                path: "artifacts/phasing.md".to_string(),
+                chunked: true,
+                chunk_index: Some(0),
+            },
+            ProposedAction::ReadPhase { number } => {
+                // For specific phase, we'll still use chunked mode but with index
+                Action::Read {
+                    path: "artifacts/phasing.md".to_string(),
+                    chunked: true,
+                    chunk_index: Some((number - 1) as usize), // Phase 1 = index 0
+                }
             },
             ProposedAction::EditDescription { change } => {
                 // Read current content, apply edit via generator, then write
@@ -537,6 +635,8 @@ impl Orchestrator {
                 if self.response_cache.last_text.is_some() {
                     return self.enqueue(Action::Read {
                         path: "cache:last".to_string(), // Special marker for cached content
+                        chunked: false,
+                        chunk_index: None,
                     });
                 }
                 return Ok(());
@@ -563,6 +663,40 @@ impl Orchestrator {
             }
         }
     }
+}
+
+// Helper functions for chunked reading
+fn split_by_phases(content: &str) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current_chunk = String::new();
+    
+    for line in content.lines() {
+        if line.starts_with("## Phase") && !current_chunk.is_empty() {
+            // Start of new phase, save current chunk
+            chunks.push(current_chunk.trim().to_string());
+            current_chunk = String::from(line);
+        } else {
+            if !current_chunk.is_empty() {
+                current_chunk.push('\n');
+            }
+            current_chunk.push_str(line);
+        }
+    }
+    
+    // Add last chunk
+    if !current_chunk.is_empty() {
+        chunks.push(current_chunk.trim().to_string());
+    }
+    
+    chunks
+}
+
+fn split_by_paragraphs(content: &str) -> Vec<String> {
+    content
+        .split("\n\n")
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 // Content generator for creating descriptions and phasing

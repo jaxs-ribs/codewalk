@@ -1,0 +1,19 @@
+--- a/artifacts/phasing.md
++++ b/artifacts/phasing.md
+@@ -1,3 +1,15 @@
+ ## Tic-Tac-Toe – Phasing Plan
+ 
+-Phase 1 – Basic Board: Draw 3x3 grid, click to mark X or O, alternate turns.
++Phase 1 – Basic Board: Draw 3x3 grid, click to mark X or O, alternate turns. No win check yet; board fills until full.
++
++Phase 2 – Win & Tie Logic: Detect three-in-a-row and full-board tie; lock the grid and flash the winning line.
++
++Phase 3 – Score Strip: Add running counters for X wins, O wins, and ties; store in sessionStorage so reload keeps score.
++
++Phase 4 – Turn Indicator: Big banner shows whose turn it is; swap X/O labels on each move.
++
++Phase 5 – New Round: "Play again" button clears only the board; scores persist until tab closes.
++
++Phase 6 – Fit & Finish: Responsive sizing, tap-friendly cells, high-contrast palette, and a sub-7 kB payload.
++
++Phase 7 – Ship: Single self-contained HTML file; runs offline from file:// or any static host.

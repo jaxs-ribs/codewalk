@@ -27,6 +27,9 @@ pub enum ProposedAction {
     WritePhasing,
     ReadDescription,
     ReadPhasing,
+    ReadDescriptionSlowly,
+    ReadPhasingSlowly,
+    ReadPhase { number: u32 },
     EditDescription { change: String },
     EditPhasing { phase: Option<u32>, change: String },
     RepeatLast,
@@ -40,6 +43,7 @@ struct RouterResponse {
     action: Option<String>,
     confirmed: Option<bool>,
     question: Option<String>,
+    phase_number: Option<u32>,
 }
 
 /// Router that interprets user input and assistant responses into intents.
@@ -94,9 +98,10 @@ impl Router {
 Respond with JSON only:
 {
   "intent_type": "directive|proposal|confirmation|info",
-  "action": "write_description|write_phasing|read_description|read_phasing|edit_description|edit_phasing|stop|repeat_last|none",
+  "action": "write_description|write_phasing|read_description|read_phasing|read_description_slowly|read_phasing_slowly|read_phase_N|edit_description|edit_phasing|stop|repeat_last|none",
   "confirmed": true/false (only for confirmation),
-  "question": "question to ask if proposal"
+  "question": "question to ask if proposal",
+  "phase_number": N (only for read_phase_N action)
 }
 
 Rules:
@@ -106,15 +111,16 @@ Rules:
 - "info" = just informational
 - Use "edit_*" actions when user wants to change/modify/replace/update existing content with specific text
 - Use "write_*" actions only when generating new content from scratch
+- Use "read_*_slowly" when user asks to read slowly, in chunks, or step by step
+- Use "read_phase_N" when user asks for a specific phase number (set phase_number field)
 
 Examples:
 "write the description" -> {"intent_type": "directive", "action": "write_description"}
+"read phasing slowly" -> {"intent_type": "directive", "action": "read_phasing_slowly"}
+"read phase 3" -> {"intent_type": "directive", "action": "read_phase_N", "phase_number": 3}
 "replace the phasing with I love you" -> {"intent_type": "directive", "action": "edit_phasing"}
-"change the description to say X" -> {"intent_type": "directive", "action": "edit_description"}
-"description please" -> {"intent_type": "directive", "action": "read_description"}  
-"can you write it?" -> {"intent_type": "proposal", "action": "write_description", "question": "Write the description?"}
-"yes" -> {"intent_type": "confirmation", "confirmed": true}
-"i want to build X" -> {"intent_type": "info", "action": "none"}"#;
+"description please" -> {"intent_type": "directive", "action": "read_description"}
+"yes" -> {"intent_type": "confirmation", "confirmed": true}"#;
 
         let body = json!({
             "model": self.model,
@@ -170,7 +176,7 @@ Examples:
         match router_response.intent_type.as_str() {
             "directive" => {
                 let action_str = router_response.action.unwrap_or_else(|| "none".to_string());
-                match self.parse_action_with_context(&action_str, input) {
+                match self.parse_action_with_context(&action_str, input, router_response.phase_number) {
                     Ok(action) => Ok(Intent::Directive { action }),
                     Err(_) => Ok(Intent::Info {
                         message: "Got it".to_string(),
@@ -179,7 +185,7 @@ Examples:
             }
             "proposal" => {
                 let action_str = router_response.action.unwrap_or_else(|| "none".to_string());
-                match self.parse_action_with_context(&action_str, input) {
+                match self.parse_action_with_context(&action_str, input, router_response.phase_number) {
                     Ok(action) => {
                         let question = router_response.question.unwrap_or_else(|| {
                             format!("Should I {}?", action_str.replace('_', " "))
@@ -201,15 +207,24 @@ Examples:
     }
 
     fn parse_action(&self, action: &str) -> Result<ProposedAction> {
-        self.parse_action_with_context(action, "")
+        self.parse_action_with_context(action, "", None)
     }
 
-    fn parse_action_with_context(&self, action: &str, input: &str) -> Result<ProposedAction> {
+    fn parse_action_with_context(&self, action: &str, input: &str, phase_number: Option<u32>) -> Result<ProposedAction> {
         match action {
             "write_description" => Ok(ProposedAction::WriteDescription),
             "write_phasing" => Ok(ProposedAction::WritePhasing),
             "read_description" => Ok(ProposedAction::ReadDescription),
             "read_phasing" => Ok(ProposedAction::ReadPhasing),
+            "read_description_slowly" => Ok(ProposedAction::ReadDescriptionSlowly),
+            "read_phasing_slowly" => Ok(ProposedAction::ReadPhasingSlowly),
+            "read_phase_N" => {
+                if let Some(number) = phase_number {
+                    Ok(ProposedAction::ReadPhase { number })
+                } else {
+                    Err(anyhow!("Phase number required for read_phase_N"))
+                }
+            }
             "edit_description" => Ok(ProposedAction::EditDescription {
                 change: input.to_string(), // Use the full input as the change
             }),

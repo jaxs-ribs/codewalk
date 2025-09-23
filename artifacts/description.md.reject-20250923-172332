@@ -1,0 +1,11 @@
+--- a/artifacts/description.md
++++ b/artifacts/description.md
+@@ -1,4 +1,4 @@
+-# Snake Game
++# Two-Human Tic-Tac-Toe
+ 
+-Single HTML file. Canvas tag, vanilla JavaScript. No build tools.
++Single HTML file. Two humans share one screen. Tap to mark X or O, alternate turns.
+ 
+-Arrow keys steer the snake. Eat food, grow longer, avoid walls and self.
++First 3-in-a-row wins. Track score across rounds.

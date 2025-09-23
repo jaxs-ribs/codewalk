@@ -296,6 +296,7 @@ impl SpeechPlayer {
                 }
 
                 if interrupt.load(Ordering::Relaxed) {
+                    interrupt.store(false, Ordering::Relaxed); // Clear the flag
                     if !stop_say_process(Some(token)) {
                         stop_say_process(None);
                     }
@@ -305,6 +306,7 @@ impl SpeechPlayer {
 
                 let keys: HashSet<Keycode> = keyboard.get_keys().into_iter().collect();
                 if keys.contains(&PUSH_TO_TALK_KEY) || keys.contains(&EXIT_KEY) {
+                    interrupt.store(false, Ordering::Relaxed); // Clear the flag
                     if !stop_say_process(Some(token)) {
                         stop_say_process(None);
                     }
