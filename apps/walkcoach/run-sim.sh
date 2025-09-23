@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Parse command line arguments
+USE_GROQ_TTS=""
+for arg in "$@"; do
+    case $arg in
+        --groq-tts)
+            USE_GROQ_TTS="YES"
+            echo "[run] Groq TTS enabled via flag"
+            ;;
+    esac
+done
+
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJ_YML="$APP_DIR/project.yml"
 PROJ_XCODEPROJ="$APP_DIR/WalkCoach.xcodeproj"
@@ -82,7 +93,12 @@ xcrun simctl uninstall "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 xcrun simctl install "$UDID" "$APP_PATH"
 
 echo "[run] Launching app with logging..."
-xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" 2>&1 | tee "$LOG_FILE" &
+if [[ -n "$USE_GROQ_TTS" ]]; then
+    echo "[run] Launching with Groq TTS enabled"
+    xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" --UseGroqTTS 2>&1 | tee "$LOG_FILE" &
+else
+    xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" 2>&1 | tee "$LOG_FILE" &
+fi
 LOG_PID=$!
 
 echo ""

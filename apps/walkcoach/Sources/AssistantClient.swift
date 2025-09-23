@@ -30,8 +30,9 @@ class AssistantClient {
 
         The description should be:
         - About 3-5 sentences explaining what we're building
-        - Focused on the core idea and why it's interesting
-        - Natural and conversational, like a casual pitch
+        - Start with WHAT it is, then HOW it works, then WHY it's useful
+        - Focused on the core functionality, not implementation details
+        - Natural and conversational, like explaining to a friend on a walk
 
         Format:
         # Project Description
@@ -64,18 +65,20 @@ class AssistantClient {
         - 3-5 phases for most projects
         - Each phase has a short, clear title (3-5 words max)
         - Each phase has ONE paragraph explaining what we'll do
-        - The paragraph should sound natural when spoken aloud
+        - CRITICAL: Each phase MUST end with a clear, testable deliverable
+        - Example: "When this phase is done, you'll be able to tap record and see the waveform animate"
+        - The deliverable should be something the user can actually verify works
 
         Format:
         # Project Phasing
 
         ## Phase 1: [Short Clear Title]
-        [One flowing paragraph starting with "So" or "First" that explains this phase naturally]
+        [One flowing paragraph starting with "So" or "First" that explains this phase naturally. MUST end with: "When this phase is done, you'll be able to [specific testable action]"]
 
         ## Phase 2: [Short Clear Title]
-        [One flowing paragraph starting with "Then" or "Next" that explains this phase naturally]
+        [One flowing paragraph starting with "Then" or "Next" that explains this phase naturally. MUST end with: "Once complete, you can test by [specific verification step]"]
 
-        (Continue as needed)
+        (Continue as needed - EVERY phase needs a testable deliverable)
         """
 
         let messages = buildMessages(systemPrompt: systemPrompt,
@@ -133,7 +136,7 @@ class AssistantClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let requestBody: [String: Any] = [
-            "model": "llama-3.3-70b-versatile",
+            "model": "moonshotai/kimi-k2-instruct-0905",
             "messages": messages,
             "temperature": 0.7,
             "max_tokens": 800

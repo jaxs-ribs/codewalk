@@ -14,7 +14,7 @@ class AgentViewModel: ObservableObject {
     private var recorder: Recorder?
     private var sttUploader: STTUploader?
     private var router: Router?
-    private var orchestrator: Orchestrator?
+    private(set) var orchestrator: Orchestrator?
     private var recordingStartTime: Date?
     private var recordingTimer: Timer?
     private var currentRecordingURL: URL?

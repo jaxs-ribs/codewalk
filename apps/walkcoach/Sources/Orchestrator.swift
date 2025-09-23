@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import UIKit
 
 // MARK: - Orchestrator State
 
@@ -29,6 +30,8 @@ class Orchestrator: ObservableObject {
     private let artifactManager: ArtifactManager
     private let assistantClient: AssistantClient
     private let ttsManager: TTSManager
+    private let groqTTSManager: GroqTTSManager?
+    private let useGroqTTS: Bool
 
     init(groqApiKey: String) {
         // Initialize artifact manager
@@ -37,10 +40,22 @@ class Orchestrator: ObservableObject {
         // Initialize assistant client
         assistantClient = AssistantClient(groqApiKey: groqApiKey)
 
-        // Initialize TTS manager
+        // Initialize TTS manager (iOS native)
         ttsManager = TTSManager()
 
-        print("[Orchestrator] Initialized with ArtifactManager, AssistantClient, and TTSManager")
+        // Check for Groq TTS preference via launch arguments
+        useGroqTTS = CommandLine.arguments.contains("--UseGroqTTS")
+
+        // Initialize Groq TTS if enabled
+        if useGroqTTS {
+            groqTTSManager = GroqTTSManager(groqApiKey: groqApiKey)
+            print("[Orchestrator] Using Groq TTS with PlayAI voices")
+        } else {
+            groqTTSManager = nil
+            print("[Orchestrator] Using iOS native TTS")
+        }
+
+        print("[Orchestrator] Initialized with ArtifactManager, AssistantClient, and TTS")
     }
 
     // MARK: - Queue Management
@@ -111,6 +126,36 @@ class Orchestrator: ObservableObject {
             lastResponse = "Previous phase navigation coming in Phase 7"
         case .stop:
             lastResponse = "Stopped"
+        case .copyDescription:
+            await copyDescriptionAction()
+        case .copyPhasing:
+            await copyPhasingAction()
+        case .copyBoth:
+            await copyBothAction()
+        }
+    }
+
+    private func copyDescriptionAction() async {
+        if copyDescriptionToClipboard() {
+            await speak(lastResponse)
+        } else {
+            await speak(lastResponse)
+        }
+    }
+
+    private func copyPhasingAction() async {
+        if copyPhasingToClipboard() {
+            await speak(lastResponse)
+        } else {
+            await speak(lastResponse)
+        }
+    }
+
+    private func copyBothAction() async {
+        if copyBothToClipboard() {
+            await speak(lastResponse)
+        } else {
+            await speak(lastResponse)
         }
     }
 
@@ -129,9 +174,7 @@ class Orchestrator: ObservableObject {
                 lastResponse = "Description written. Say 'read the description' to hear it."
 
                 // Speak the success message
-                await MainActor.run {
-                    self.ttsManager.speak(self.lastResponse)
-                }
+                await speak(self.lastResponse)
 
                 // Add to conversation history
                 addAssistantResponse("I've written the project description based on our conversation.")
@@ -139,9 +182,7 @@ class Orchestrator: ObservableObject {
                 lastResponse = "Failed to write description"
 
                 // Speak the error
-                await MainActor.run {
-                    self.ttsManager.speak(self.lastResponse)
-                }
+                await speak(self.lastResponse)
             }
         } catch {
             print("[Orchestrator] Failed to generate description: \(error)")
@@ -151,9 +192,7 @@ class Orchestrator: ObservableObject {
                 lastResponse = "I'll write the description once the network is back"
 
                 // Speak the offline message
-                await MainActor.run {
-                    self.ttsManager.speak(self.lastResponse)
-                }
+                await speak(self.lastResponse)
             } else {
                 lastResponse = "Failed to generate description"
             }
@@ -173,9 +212,7 @@ class Orchestrator: ObservableObject {
                 lastResponse = "Phasing written. Say 'read the phasing' to hear it."
 
                 // Speak the success message
-                await MainActor.run {
-                    self.ttsManager.speak(self.lastResponse)
-                }
+                await speak(self.lastResponse)
 
                 // Add to conversation history
                 addAssistantResponse("I've written the project phasing based on our conversation.")
@@ -183,9 +220,7 @@ class Orchestrator: ObservableObject {
                 lastResponse = "Failed to write phasing"
 
                 // Speak the error
-                await MainActor.run {
-                    self.ttsManager.speak(self.lastResponse)
-                }
+                await speak(self.lastResponse)
             }
         } catch {
             print("[Orchestrator] Failed to generate phasing: \(error)")
@@ -201,16 +236,12 @@ class Orchestrator: ObservableObject {
             print("[Orchestrator] Read description (\(content.count) chars)")
 
             // Speak the content using TTS
-            await MainActor.run {
-                self.ttsManager.speak(content)
-            }
+            await speak(content)
         } else {
             lastResponse = "No description yet. Say 'write the description' first."
 
             // Speak the error message
-            await MainActor.run {
-                self.ttsManager.speak(self.lastResponse)
-            }
+            await speak(self.lastResponse)
 
             // List what files exist
             let files = artifactManager.listArtifacts()
@@ -226,16 +257,12 @@ class Orchestrator: ObservableObject {
             print("[Orchestrator] Read phasing (\(content.count) chars)")
 
             // Speak the content using TTS
-            await MainActor.run {
-                self.ttsManager.speak(content)
-            }
+            await speak(content)
         } else {
             lastResponse = "No phasing yet. Say 'write the phasing' first."
 
             // Speak the error message
-            await MainActor.run {
-                self.ttsManager.speak(self.lastResponse)
-            }
+            await speak(self.lastResponse)
 
             // List what files exist
             let files = artifactManager.listArtifacts()
@@ -249,16 +276,12 @@ class Orchestrator: ObservableObject {
             print("[Orchestrator] Read phase \(phaseNumber) (\(phaseContent.count) chars)")
 
             // Speak the phase content using TTS
-            await MainActor.run {
-                self.ttsManager.speak(phaseContent)
-            }
+            await speak(phaseContent)
         } else {
             lastResponse = "Phase \(phaseNumber) not found. Try 'read the phasing' to hear all phases."
 
             // Speak the error message
-            await MainActor.run {
-                self.ttsManager.speak(self.lastResponse)
-            }
+            await speak(self.lastResponse)
         }
     }
 
@@ -269,9 +292,7 @@ class Orchestrator: ObservableObject {
             lastResponse = "Description updated. Say 'read the description' to hear it."
 
             // Speak the success message
-            await MainActor.run {
-                self.ttsManager.speak(self.lastResponse)
-            }
+            await speak(self.lastResponse)
 
             // Add to conversation history
             addAssistantResponse("I've updated the description based on your request.")
@@ -279,9 +300,7 @@ class Orchestrator: ObservableObject {
             lastResponse = "Failed to edit description"
 
             // Speak the error
-            await MainActor.run {
-                self.ttsManager.speak(self.lastResponse)
-            }
+            await speak(self.lastResponse)
         }
     }
 
@@ -301,9 +320,7 @@ class Orchestrator: ObservableObject {
                 lastResponse = "Phase \(phase) updated. Say 'read phase \(phase)' to hear the changes."
 
                 // Speak the success message
-                await MainActor.run {
-                    self.ttsManager.speak(self.lastResponse)
-                }
+                await speak(self.lastResponse)
 
                 // Add to conversation history
                 addAssistantResponse("I've updated phase \(phase) based on your request.")
@@ -311,9 +328,7 @@ class Orchestrator: ObservableObject {
                 lastResponse = "Failed to edit phase \(phase)"
 
                 // Speak the error
-                await MainActor.run {
-                    self.ttsManager.speak(self.lastResponse)
-                }
+                await speak(self.lastResponse)
             }
         } else {
             // Append to phasing if no specific phase
@@ -321,16 +336,12 @@ class Orchestrator: ObservableObject {
                 lastResponse = "Phasing updated"
 
                 // Speak the success message
-                await MainActor.run {
-                    self.ttsManager.speak(self.lastResponse)
-                }
+                await speak(self.lastResponse)
             } else {
                 lastResponse = "Failed to edit phasing"
 
                 // Speak the error
-                await MainActor.run {
-                    self.ttsManager.speak(self.lastResponse)
-                }
+                await speak(self.lastResponse)
             }
         }
     }
@@ -347,9 +358,7 @@ class Orchestrator: ObservableObject {
             lastResponse = response
 
             // Speak the response
-            await MainActor.run {
-                self.ttsManager.speak(response)
-            }
+            await speak(response)
 
             // Add assistant response to history
             addAssistantResponse(response)
@@ -358,9 +367,7 @@ class Orchestrator: ObservableObject {
             lastResponse = "I couldn't process that. Try again?"
 
             // Speak the error
-            await MainActor.run {
-                self.ttsManager.speak(self.lastResponse)
-            }
+            await speak(self.lastResponse)
         }
 
         state = .idle
@@ -368,8 +375,30 @@ class Orchestrator: ObservableObject {
 
     // MARK: - TTS Control
 
+    private func speak(_ text: String) async {
+        if useGroqTTS, let groqTTS = groqTTSManager {
+            do {
+                try await groqTTS.synthesizeAndPlay(text)
+            } catch {
+                print("[Orchestrator] Groq TTS failed, falling back to iOS: \(error)")
+                // Fallback to iOS TTS
+                await MainActor.run {
+                    self.ttsManager.speak(text)
+                }
+            }
+        } else {
+            await MainActor.run {
+                self.ttsManager.speak(text)
+            }
+        }
+    }
+
     func stopSpeaking() {
-        ttsManager.stop()
+        if useGroqTTS {
+            groqTTSManager?.stop()
+        } else {
+            ttsManager.stop()
+        }
     }
 
     // MARK: - Context Management
@@ -385,5 +414,51 @@ class Orchestrator: ObservableObject {
 
     func addAssistantResponse(_ response: String) {
         conversationHistory.append((role: "assistant", content: response))
+    }
+
+    // MARK: - Clipboard Operations
+
+    func copyDescriptionToClipboard() -> Bool {
+        guard let content = artifactManager.safeRead(filename: "description.md") else {
+            lastResponse = "No description to copy. Say 'write the description' first."
+            return false
+        }
+
+        UIPasteboard.general.string = content
+        lastResponse = "Description copied to clipboard!"
+        return true
+    }
+
+    func copyPhasingToClipboard() -> Bool {
+        guard let content = artifactManager.safeRead(filename: "phasing.md") else {
+            lastResponse = "No phasing to copy. Say 'write the phasing' first."
+            return false
+        }
+
+        UIPasteboard.general.string = content
+        lastResponse = "Phasing copied to clipboard!"
+        return true
+    }
+
+    func copyBothToClipboard() -> Bool {
+        let description = artifactManager.safeRead(filename: "description.md") ?? ""
+        let phasing = artifactManager.safeRead(filename: "phasing.md") ?? ""
+
+        guard !description.isEmpty || !phasing.isEmpty else {
+            lastResponse = "No artifacts to copy. Write them first."
+            return false
+        }
+
+        var combined = ""
+        if !description.isEmpty {
+            combined += description + "\n\n"
+        }
+        if !phasing.isEmpty {
+            combined += "---\n\n" + phasing
+        }
+
+        UIPasteboard.general.string = combined
+        lastResponse = "Both artifacts copied to clipboard!"
+        return true
     }
 }

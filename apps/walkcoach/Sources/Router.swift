@@ -24,6 +24,9 @@ enum ProposedAction: Codable {
     case nextPhase
     case previousPhase
     case stop
+    case copyDescription
+    case copyPhasing
+    case copyBoth
 
     // Custom coding for enum with associated values
     enum CodingKeys: String, CodingKey {
@@ -69,6 +72,12 @@ enum ProposedAction: Codable {
             self = .previousPhase
         case "stop":
             self = .stop
+        case "copy_description":
+            self = .copyDescription
+        case "copy_phasing":
+            self = .copyPhasing
+        case "copy_both":
+            self = .copyBoth
         default:
             throw DecodingError.dataCorrupted(
                 DecodingError.Context(
@@ -115,6 +124,12 @@ enum ProposedAction: Codable {
             try container.encode("previous_phase", forKey: .action)
         case .stop:
             try container.encode("stop", forKey: .action)
+        case .copyDescription:
+            try container.encode("copy_description", forKey: .action)
+        case .copyPhasing:
+            try container.encode("copy_phasing", forKey: .action)
+        case .copyBoth:
+            try container.encode("copy_both", forKey: .action)
         }
     }
 }
@@ -150,6 +165,9 @@ class Router {
     - "next" or "next phase" -> next_phase
     - "previous" or "previous phase" -> previous_phase
     - "stop" -> stop
+    - "copy the description" or "copy description" -> copy_description
+    - "copy the phasing" or "copy phasing" -> copy_phasing
+    - "copy everything" or "copy both" -> copy_both
 
     For general project discussion, use intent=conversation.
     For unclear requests, use intent=clarification.
@@ -191,7 +209,7 @@ class Router {
 
         // Build request body
         let requestBody: [String: Any] = [
-            "model": "llama-3.3-70b-versatile",  // Using Llama instead of Kimi K2
+            "model": "moonshotai/kimi-k2-instruct-0905",  // Using Kimi K2
             "messages": [
                 ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": transcript]
