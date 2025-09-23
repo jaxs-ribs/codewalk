@@ -130,6 +130,10 @@ pub struct Orchestrator {
     interrupt: Arc<AtomicBool>,
     /// Reference to artifact manager (temporary for Phase 0)
     artifact_manager: Option<ArtifactManager>,
+    /// Content generator for creating descriptions and phasing
+    generator: Option<ContentGenerator>,
+    /// Conversation history for context
+    conversation_history: Vec<String>,
 }
 
 impl Orchestrator {
@@ -139,6 +143,9 @@ impl Orchestrator {
             .ok()
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(false);
+        
+        // Try to create generator, but don't fail if it can't be created
+        let generator = ContentGenerator::new().ok();
         
         Self {
             state: OrchestratorState::Conversing,
@@ -152,6 +159,8 @@ impl Orchestrator {
             debug_enabled,
             interrupt: Arc::new(AtomicBool::new(false)),
             artifact_manager: None,
+            generator,
+            conversation_history: Vec::new(),
         }
     }
     
@@ -166,6 +175,17 @@ impl Orchestrator {
         self.current_turn = Some(context.clone());
         self.debug_status("new turn started");
         context
+    }
+    
+    /// Add a conversation turn to history for context
+    pub fn add_to_history(&mut self, user_msg: &str, assistant_msg: &str) {
+        self.conversation_history.push(format!("User: {}", user_msg));
+        self.conversation_history.push(format!("Assistant: {}", assistant_msg));
+        
+        // Keep only last 10 turns for context (20 messages)
+        if self.conversation_history.len() > 20 {
+            self.conversation_history.drain(0..2);
+        }
     }
     
     /// Enqueue an action for execution.
@@ -377,6 +397,11 @@ impl Orchestrator {
         self.interrupt.store(true, Ordering::SeqCst);
     }
     
+    /// Clear the interrupt flag.
+    pub fn clear_interrupt(&self) {
+        self.interrupt.store(false, Ordering::SeqCst);
+    }
+    
     /// Get a handle to check for interrupts (for long-running operations).
     pub fn interrupt_handle(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.interrupt)
@@ -414,19 +439,48 @@ impl Orchestrator {
     
     /// Execute a proposed action by converting it to an Action and enqueueing it.
     fn execute_proposed_action(&mut self, proposed: ProposedAction) -> Result<()> {
+        // Enable I/O for reading during action preparation
+        let _guard = IoGuard::new();
+        
         let action = match proposed {
             ProposedAction::WriteDescription => {
-                // Basic content for Phase 3 testing
-                // In Phase 5, this will use generators  
+                // Use generator if available, otherwise fallback
+                let content = if let Some(ref generator) = self.generator {
+                    let context = self.conversation_history.join("\n");
+                    generator.generate_description(&context)
+                        .unwrap_or_else(|err| {
+                            eprintln!("Generator failed: {err:?}, using fallback");
+                            "# Project Description\n\nThis is a voice-first project specification tool.\n\nThe system allows you to:\n- Create and manage project descriptions\n- Define project phases\n- Use voice commands for all interactions\n- Get audio feedback through text-to-speech\n\nAll operations are single-threaded and sequential for predictability.\n".to_string()
+                        })
+                } else {
+                    "# Project Description\n\nThis is a voice-first project specification tool.\n\nThe system allows you to:\n- Create and manage project descriptions\n- Define project phases\n- Use voice commands for all interactions\n- Get audio feedback through text-to-speech\n\nAll operations are single-threaded and sequential for predictability.\n".to_string()
+                };
+                
                 Action::Write {
                     path: "artifacts/description.md".to_string(),
-                    content: "# Project Description\n\nThis is a voice-first project specification tool.\n\nThe system allows you to:\n- Create and manage project descriptions\n- Define project phases\n- Use voice commands for all interactions\n- Get audio feedback through text-to-speech\n\nAll operations are single-threaded and sequential for predictability.\n".to_string(),
+                    content,
                 }
             }
             ProposedAction::WritePhasing => {
+                // Use generator if available  
+                let content = if let Some(ref generator) = self.generator {
+                    // Try to read existing description for context
+                    let description = safe_read(&PathBuf::from("artifacts/description.md"))
+                        .unwrap_or_else(|_| String::new());
+                    let context = self.conversation_history.join("\n");
+                    
+                    generator.generate_phasing(&description, &context)
+                        .unwrap_or_else(|err| {
+                            eprintln!("Generator failed: {err:?}, using fallback");
+                            "# Project Phases\n\n## Phase 1: Foundation\nSet up core infrastructure and basic voice input.\n\n## Phase 2: Router Implementation  \nAdd intelligent routing of commands through LLM.\n\n## Phase 3: Audio Integration\nImplement text-to-speech for all read operations.\n\n## Phase 4: Content Generation\nAdd real content generation using LLMs.\n\n## Phase 5: Refinement\nPolish user experience and error handling.\n".to_string()
+                        })
+                } else {
+                    "# Project Phases\n\n## Phase 1: Foundation\nSet up core infrastructure and basic voice input.\n\n## Phase 2: Router Implementation  \nAdd intelligent routing of commands through LLM.\n\n## Phase 3: Audio Integration\nImplement text-to-speech for all read operations.\n\n## Phase 4: Content Generation\nAdd real content generation using LLMs.\n\n## Phase 5: Refinement\nPolish user experience and error handling.\n".to_string()
+                };
+                
                 Action::Write {
                     path: "artifacts/phasing.md".to_string(),
-                    content: "# Project Phases\n\n## Phase 1: Foundation\nSet up core infrastructure and basic voice input.\n\n## Phase 2: Router Implementation  \nAdd intelligent routing of commands through LLM.\n\n## Phase 3: Audio Integration\nImplement text-to-speech for all read operations.\n\n## Phase 4: Content Generation\nAdd real content generation using LLMs.\n\n## Phase 5: Refinement\nPolish user experience and error handling.\n".to_string(),
+                    content,
                 }
             }
             ProposedAction::ReadDescription => {
@@ -439,14 +493,49 @@ impl Orchestrator {
                     path: "artifacts/phasing.md".to_string(),
                 }
             }
-            ProposedAction::EditDescription { change: _ } => {
-                // For now, return a placeholder
-                // In Phase 6, this will generate proper diffs
-                return Ok(());
+            ProposedAction::EditDescription { change } => {
+                // Read current content, apply edit via generator, then write
+                let current_path = PathBuf::from("artifacts/description.md");
+                let current_content = if current_path.exists() {
+                    safe_read(&current_path)?
+                } else {
+                    String::new()
+                };
+                
+                let updated_content = if let Some(ref generator) = self.generator {
+                    generator.generate_edit(&current_content, &change)
+                        .unwrap_or(current_content.clone())
+                } else {
+                    // Simple fallback: append the change
+                    format!("{}\n\n{}", current_content, change)
+                };
+                
+                Action::Write {
+                    path: "artifacts/description.md".to_string(),
+                    content: updated_content,
+                }
             }
-            ProposedAction::EditPhasing { phase: _, change: _ } => {
-                // For now, return a placeholder
-                return Ok(());
+            ProposedAction::EditPhasing { phase: _, change } => {
+                // Read current content, apply edit via generator, then write
+                let current_path = PathBuf::from("artifacts/phasing.md");
+                let current_content = if current_path.exists() {
+                    safe_read(&current_path)?
+                } else {
+                    String::new()
+                };
+                
+                let updated_content = if let Some(ref generator) = self.generator {
+                    generator.generate_edit(&current_content, &change)
+                        .unwrap_or(current_content.clone())
+                } else {
+                    // Simple fallback: append the change
+                    format!("{}\n\n{}", current_content, change)
+                };
+                
+                Action::Write {
+                    path: "artifacts/phasing.md".to_string(),
+                    content: updated_content,
+                }
             }
             ProposedAction::RepeatLast => {
                 // Return cached text to be spoken
@@ -481,5 +570,121 @@ impl Orchestrator {
     }
 }
 
-// We need to add rand for turn IDs
-// This will be added to Cargo.toml dependencies
+// Content generator for creating descriptions and phasing
+use std::time::Duration;
+use reqwest::blocking::Client as HttpClient;
+use serde_json::json;
+
+/// Generator for creating artifact content using LLMs
+struct ContentGenerator {
+    http: HttpClient,
+    api_key: String,
+    base_url: String,
+    model: String,
+}
+
+impl ContentGenerator {
+    fn new() -> Result<Self> {
+        let api_key = std::env::var("GROQ_API_KEY")
+            .context("GROQ_API_KEY required for content generation")?;
+            
+        let http = HttpClient::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .context("Failed to build HTTP client for generator")?;
+            
+        let base_url = std::env::var("GROQ_API_BASE_URL")
+            .unwrap_or_else(|_| "https://api.groq.com".to_string());
+            
+        // Use same model as router for now (k2)
+        let model = std::env::var("GROQ_GENERATOR_MODEL")
+            .unwrap_or_else(|_| std::env::var("GROQ_LLM_MODEL")
+                .unwrap_or_else(|_| "moonshotai/kimi-k2-instruct-0905".to_string()));
+            
+        Ok(Self {
+            http,
+            api_key,
+            base_url,
+            model,
+        })
+    }
+    
+    /// Generate a project description based on conversation context
+    fn generate_description(&self, context: &str) -> Result<String> {
+        let prompt = format!(
+            "Based on this conversation context, write a clear, concise project description in markdown format:\n\n{}\n\nWrite a professional project description with:\n- A brief overview paragraph\n- Key features/capabilities (as bullet points)\n- Main technical approach\n\nKeep it focused and under 300 words.",
+            context
+        );
+        
+        self.generate_content(&prompt)
+    }
+    
+    /// Generate a phasing plan based on project description
+    fn generate_phasing(&self, description: &str, context: &str) -> Result<String> {
+        let prompt = format!(
+            "Based on this project description:\n{}\n\nAnd this additional context:\n{}\n\nCreate a phasing plan in markdown format with 4-6 phases. Each phase should have:\n- A clear phase title\n- 2-3 bullet points describing the deliverables\n- Keep each phase focused and achievable\n\nFormat as:\n## Phase 1: [Title]\n- Deliverable 1\n- Deliverable 2\n\netc.",
+            description, context
+        );
+        
+        self.generate_content(&prompt)
+    }
+    
+    /// Generate an edit/update based on user request
+    fn generate_edit(&self, current_content: &str, edit_request: &str) -> Result<String> {
+        let prompt = format!(
+            "Current document:\n{}\n\nUser request: {}\n\nGenerate the updated document with the requested change applied. Return the complete updated document, not just the changes.",
+            current_content, edit_request
+        );
+        
+        self.generate_content(&prompt)
+    }
+    
+    /// Core content generation using LLM
+    fn generate_content(&self, prompt: &str) -> Result<String> {
+        let body = json!({
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a technical documentation writer. Generate clear, professional content based on the user's requirements. Use markdown formatting."
+                },
+                {
+                    "role": "user", 
+                    "content": prompt
+                }
+            ],
+            "temperature": 0.7,
+            "max_tokens": 1000,
+        });
+        
+        let url = format!("{}/openai/v1/chat/completions", self.base_url.trim_end_matches('/'));
+        
+        let response = self.http
+            .post(url)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()
+            .context("Generator LLM request failed")?;
+            
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().unwrap_or_else(|_| "Unknown error".to_string());
+            eprintln!("Generator LLM error: Status={}, Body={}", status, error_text);
+            return Err(anyhow!("Generator LLM returned error: {}", status));
+        }
+            
+        let json: serde_json::Value = response.json()
+            .context("Failed to parse generator response")?;
+            
+        let content = json["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .trim();
+            
+        if content.is_empty() {
+            return Err(anyhow!("Generator returned empty content"));
+        }
+        
+        Ok(content.to_string())
+    }
+}

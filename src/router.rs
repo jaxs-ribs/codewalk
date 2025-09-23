@@ -111,13 +111,16 @@ Rules:
 - "proposal" = ask for confirmation first
 - "confirmation" = user confirming/denying (yes/no/sure/nah/etc)
 - "info" = just informational
+- Use "edit_*" actions when user wants to change/modify/replace/update existing content with specific text
+- Use "write_*" actions only when generating new content from scratch
 
 Examples:
 "write the description" -> {"intent_type": "directive", "action": "write_description"}
+"replace the phasing with I love you" -> {"intent_type": "directive", "action": "edit_phasing"}
+"change the description to say X" -> {"intent_type": "directive", "action": "edit_description"}
 "description please" -> {"intent_type": "directive", "action": "read_description"}  
 "can you write it?" -> {"intent_type": "proposal", "action": "write_description", "question": "Write the description?"}
 "yes" -> {"intent_type": "confirmation", "confirmed": true}
-"nope" -> {"intent_type": "confirmation", "confirmed": false}
 "i want to build X" -> {"intent_type": "info", "action": "none"}"#;
 
         let body = json!({
@@ -170,14 +173,14 @@ Examples:
         match router_response.intent_type.as_str() {
             "directive" => {
                 let action_str = router_response.action.unwrap_or_else(|| "none".to_string());
-                match self.parse_action(&action_str) {
+                match self.parse_action_with_context(&action_str, input) {
                     Ok(action) => Ok(Intent::Directive { action }),
                     Err(_) => Ok(Intent::Info { message: "Got it".to_string() })
                 }
             }
             "proposal" => {
                 let action_str = router_response.action.unwrap_or_else(|| "none".to_string());
-                match self.parse_action(&action_str) {
+                match self.parse_action_with_context(&action_str, input) {
                     Ok(action) => {
                         let question = router_response.question.unwrap_or_else(|| {
                             format!("Should I {}?", action_str.replace('_', " "))
@@ -199,17 +202,21 @@ Examples:
     }
     
     fn parse_action(&self, action: &str) -> Result<ProposedAction> {
+        self.parse_action_with_context(action, "")
+    }
+    
+    fn parse_action_with_context(&self, action: &str, input: &str) -> Result<ProposedAction> {
         match action {
             "write_description" => Ok(ProposedAction::WriteDescription),
             "write_phasing" => Ok(ProposedAction::WritePhasing),
             "read_description" => Ok(ProposedAction::ReadDescription),
             "read_phasing" => Ok(ProposedAction::ReadPhasing),
             "edit_description" => Ok(ProposedAction::EditDescription { 
-                change: "".to_string() 
+                change: input.to_string()  // Use the full input as the change
             }),
             "edit_phasing" => Ok(ProposedAction::EditPhasing { 
                 phase: None, 
-                change: "".to_string() 
+                change: input.to_string()  // Use the full input as the change
             }),
             "stop" => Ok(ProposedAction::Stop),
             "repeat_last" => Ok(ProposedAction::RepeatLast),

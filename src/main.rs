@@ -378,10 +378,28 @@ impl App {
                             (q, true)
                         }
                         crate::router::Intent::Info { ref message } => {
-                            // Just informational
-                            println!("Assistant: {message}");
-                            trace_entry.assistant_text = Some(message.clone());
-                            (message.clone(), true)
+                            // Info intent means it's conversational - pass to assistant
+                            if message == "Got it" {
+                                // This is a generic info response, use the assistant for real conversation
+                                let llm_start = Instant::now();
+                                match self.assistant.reply(&transcript) {
+                                    Ok(answer) => {
+                                        trace_entry.durations.llm_ms = llm_start.elapsed().as_millis() as u64;
+                                        println!("Assistant: {answer}");
+                                        trace_entry.assistant_text = Some(answer.clone());
+                                        (answer, false)  // Don't skip artifacts
+                                    }
+                                    Err(err) => {
+                                        let msg = format!("Assistant failed: {err}");
+                                        eprintln!("{msg}");
+                                        (msg, true)
+                                    }
+                                }
+                            } else {
+                                println!("Assistant: {message}");
+                                trace_entry.assistant_text = Some(message.clone());
+                                (message.clone(), true)
+                            }
                         }
                     }
                 }
@@ -496,6 +514,11 @@ impl App {
                         eprintln!("Failed to queue artifact processing: {err:?}");
                     }
                 }
+                
+                // Add to conversation history if we have both transcript and assistant response
+                if let Some(assistant_text) = trace_entry.assistant_text.as_ref() {
+                    self.orchestrator.add_to_history(&transcript, assistant_text);
+                }
 
                 self.log_trace(trace_entry);
                 
@@ -510,6 +533,9 @@ impl App {
     }
 
     fn process_orchestrator_queue(&mut self) {
+        // Clear any lingering interrupt flag before processing
+        self.orchestrator.clear_interrupt();
+        
         // Execute actions from the queue (single-threaded, one at a time)
         while self.orchestrator.has_pending() {
             match self.orchestrator.execute_next() {
@@ -525,7 +551,7 @@ impl App {
                         if !self.orchestrator.interrupt_handle().load(Ordering::Relaxed) {
                             if let Ok(audio) = self.tts.synthesize(&text) {
                                 // Use interruptible playback with orchestrator's interrupt handle
-                                if let Err(err) = self.speaker.play_interruptible(&audio, self.orchestrator.interrupt_handle()) {
+                                if let Err(err) = self.speaker.play_interruptible(&audio, self.orchestrator.interrupt_handle(), &self.keyboard) {
                                     eprintln!("Failed to speak: {err:?}");
                                 }
                             }
@@ -1058,7 +1084,7 @@ impl SpeechPlayer {
         Ok(())
     }
     
-    fn play_interruptible(&self, audio: &TtsAudio, interrupt: Arc<AtomicBool>) -> Result<()> {
+    fn play_interruptible(&self, audio: &TtsAudio, interrupt: Arc<AtomicBool>, keyboard: &DeviceState) -> Result<()> {
         if audio.bytes.is_empty() {
             return Err(anyhow!("No audio data supplied for playback"));
         }
@@ -1099,10 +1125,21 @@ impl SpeechPlayer {
         
         // Wait for playback to finish or interrupt signal
         while !sink.empty() {
+            // Check for interrupt flag
             if interrupt.load(Ordering::Relaxed) {
                 sink.stop();
                 return Ok(());
             }
+            
+            // Check for keyboard interrupt (Space or Esc)
+            let keys: HashSet<Keycode> = keyboard.get_keys().into_iter().collect();
+            if keys.contains(&PUSH_TO_TALK_KEY) || keys.contains(&EXIT_KEY) {
+                sink.stop();
+                // Don't set global interrupt flag - just stop playback
+                println!("(playback interrupted)");
+                return Ok(());
+            }
+            
             thread::sleep(Duration::from_millis(10));
         }
         
