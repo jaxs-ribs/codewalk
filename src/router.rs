@@ -177,19 +177,62 @@ Examples:
             self.base_url.trim_end_matches('/')
         );
 
-        let response = self
-            .http
-            .post(url)
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .context("Router LLM request failed")?;
-
-        let response = response
-            .error_for_status()
-            .context("Router LLM returned error")?;
-
-        let json: serde_json::Value = response.json().context("Failed to parse router response")?;
+        // Try the request with retry on network errors
+        let mut retries = 2;
+        let json = loop {
+            let result = self
+                .http
+                .post(&url)
+                .bearer_auth(&self.api_key)
+                .json(&body)
+                .send();
+            
+            match result {
+                Ok(response) => {
+                    match response.error_for_status() {
+                        Ok(resp) => {
+                            match resp.json::<serde_json::Value>() {
+                                Ok(json) => break json,
+                                Err(e) => {
+                                    if retries > 0 {
+                                        retries -= 1;
+                                        eprintln!("[router] Parse error, retrying: {}", e);
+                                        std::thread::sleep(std::time::Duration::from_millis(500));
+                                        continue;
+                                    }
+                                    // Fallback to conversational on parse errors
+                                    return Ok(Intent::Info { message: "I understand".to_string() });
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            if retries > 0 && (e.status() == Some(reqwest::StatusCode::SERVICE_UNAVAILABLE) 
+                                || e.status() == Some(reqwest::StatusCode::GATEWAY_TIMEOUT)
+                                || e.status() == Some(reqwest::StatusCode::TOO_MANY_REQUESTS)) {
+                                retries -= 1;
+                                eprintln!("[router] HTTP error {}, retrying...", e.status().unwrap());
+                                std::thread::sleep(std::time::Duration::from_millis(1000));
+                                continue;
+                            }
+                            // Fallback to conversational on non-retryable errors
+                            eprintln!("[router] LLM error, falling back to conversational: {}", e);
+                            return Ok(Intent::Info { message: "I understand".to_string() });
+                        }
+                    }
+                }
+                Err(e) => {
+                    if retries > 0 {
+                        retries -= 1;
+                        eprintln!("[router] Network error, retrying: {}", e);
+                        std::thread::sleep(std::time::Duration::from_millis(1000));
+                        continue;
+                    }
+                    // Fallback to conversational on network errors
+                    eprintln!("[router] Network failure, falling back to conversational: {}", e);
+                    return Ok(Intent::Info { message: "I understand".to_string() });
+                }
+            }
+        };
 
         let content = json["choices"][0]["message"]["content"]
             .as_str()

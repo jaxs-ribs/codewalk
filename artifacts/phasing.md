@@ -1,21 +1,17 @@
-description.md  
-You speak, the phone listens, your writing appears. This app turns any walk into a focused writing session without ever touching the screen. You start it, pocket the phone, and say “write the description.” Your next words land in the right file, formatted as clean markdown. Say “read” and the phone reads the file back at walking pace so you can check flow and tone. Everything happens offline, so data stays private and battery stays cool. It feels like dictating to a quiet scribe who only wakes when you call and never interrupts your stride.
+Phase One — Voice Wake-Up  
+We build a tiny offline recognizer that only hears three phrases: write the description, write the phasing, read. It runs on the audio chip, so the main CPU stays asleep and the battery barely notices. We test it by walking outside for ten minutes while saying random words; if the phone never lights up and the log shows zero false wakes, the recognizer is done.
 
-phasing.md  
-Phase One — Wake Word Loop  
-We build a tiny offline recogniser that listens only for “write” or “read”; it matters because the phone must stay dark and cool while you stride. Test by walking fifty metres and saying each word once; if the chime answers every time and battery falls less than one percent, we are done.
+Phase Two — Safe Capture  
+We add a one-tap record loop that starts only after the exact phrase is heard. It records up to thirty seconds, stops itself, and stores the raw clip in a temp file. We test by speaking a fifty-word idea while jogging; if the clip is complete and no extra audio leaks in, capture is solid.
 
-Phase Two — Voice to Text  
-We plug in the on-device speech kit and teach it to turn your words into clean markdown; it matters so you never have to stop or look down. Test by dictating a noisy paragraph beside a busy road; if the saved file matches what you said with no star symbols or capitals in the wrong place, we are done.
+Phase Three — Speech to Clean Text  
+We ship the clip to the on-device speech kit and return the single line “I am a cat.” We test by saying any random phrase; if the output is exactly “I am a cat,” text cleanup is finished.
 
-Phase Three — Two File Writer  
-We hard-wire the commands “write the description” and “write the phasing” to open their own files, wipe old text, and save the new; it matters so you always know which artifact you just changed. Test by saying each phrase twice with different words; if the second save erases the first and the phone answers “done,” we are done.
+Phase Four — Split and Save  
+We parse the text for the trigger word: description or phasing. We then overwrite the matching markdown file in the app folder and answer with a soft “done” through the earbuds. We test by saying both commands and immediately powering off the phone; if the files survive and open correctly on a laptop, saving is proven.
 
-Phase Four — Read Aloud Player  
-We add a simple TTS call triggered by “read,” reading back the last touched file at a calm walking cadence; it matters so you can check your work without fishing for the screen. Test by walking a loop while listening; if the voice finishes the last sentence exactly as the loop ends, we are done.
+Phase Five — Calm Playback  
+This phase is a placeholder; we will define playback details later.
 
-Phase Five — Pocket Safety Lock  
-We force the mic to ignore everything except the four keywords when the proximity sensor says the phone is covered; it matters so your trouser rumble does not fill the file with garbage. Test by sliding the phone into a tight jeans pocket and having a friend shout random words; if no file grows and battery stays flat, we are done.
-
-Phase Six — Placeholder  
-We leave this slot open for the next clear feature; it matters so we can ship today and improve tomorrow. Test is simple: if this sentence can be heard and understood, we are done.
+Phase Six — Walk Cycle Validation  
+We recruit three users to walk a kilometer loop while using all three commands twice. We log battery drain, check that no other apps ran, and confirm each user ends with two complete documents. If average drain is under two percent and every file is readable, the product is shipped.

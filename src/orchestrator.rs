@@ -821,7 +821,7 @@ impl ContentGenerator {
     /// Generate an edit/update based on user request
     fn generate_edit(&self, current_content: &str, edit_request: &str) -> Result<String> {
         let prompt = format!(
-            "Current document:\n{}\n\nUser request: {}\n\nApply the requested change while maintaining TTS-friendly format. Keep the document readable aloud with short sentences and clear spoken structure. Return the complete updated document.",
+            "Current document:\n{}\n\nUser request: {}\n\nApply the requested change while maintaining TTS-friendly format and preserving all parts of the document that aren't being modified. Keep the document readable aloud with short sentences and clear spoken structure. Return the COMPLETE updated document.",
             current_content, edit_request
         );
 
@@ -831,7 +831,7 @@ impl ContentGenerator {
     /// Generate a phase-specific edit for phasing document
     fn generate_phase_edit(&self, current_content: &str, phase_number: u32, edit_request: &str) -> Result<String> {
         let prompt = format!(
-            "Current phasing document:\n{}\n\nUser wants to edit specifically Phase {}:\n{}\n\nUpdate ONLY Phase {} based on the request. Keep the TTS-friendly format with a single paragraph per phase. Return the complete document with only the targeted phase changed.",
+            "Current phasing document:\n{}\n\nUser wants to edit specifically Phase {}:\n{}\n\nIMPORTANT: Update ONLY Phase {} based on the request while preserving ALL OTHER PHASES exactly as they are. Return the COMPLETE document including all phases. Keep the TTS-friendly format with a single paragraph per phase. Do not remove any phases.",
             current_content, phase_number, edit_request, phase_number
         );
 

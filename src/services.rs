@@ -166,32 +166,73 @@ impl AssistantClient {
             self.base_url.trim_end_matches('/')
         );
 
-        let response = self
-            .http
-            .post(url)
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .context("Groq assistant request failed")?;
+        // Try with retry on network/server errors
+        let mut retries = 2;
+        loop {
+            let result = self
+                .http
+                .post(&url)
+                .bearer_auth(&self.api_key)
+                .json(&body)
+                .send();
+                
+            match result {
+                Ok(response) => {
+                    match response.error_for_status() {
+                        Ok(resp) => {
+                            match resp.json::<AssistantResponse>() {
+                                Ok(payload) => {
+                                    let reply = payload
+                                        .choices
+                                        .into_iter()
+                                        .find_map(|choice| choice.message.content)
+                                        .unwrap_or_default();
 
-        let response = response
-            .error_for_status()
-            .context("Groq assistant returned an error status")?;
-
-        let payload: AssistantResponse = response
-            .json()
-            .context("Failed to parse Groq assistant response")?;
-
-        let reply = payload
-            .choices
-            .into_iter()
-            .find_map(|choice| choice.message.content)
-            .unwrap_or_default();
-
-        if reply.trim().is_empty() {
-            Err(anyhow!("Groq assistant response was empty"))
-        } else {
-            Ok(reply)
+                                    if reply.trim().is_empty() {
+                                        return Err(anyhow!("Groq assistant response was empty"));
+                                    } else {
+                                        return Ok(reply);
+                                    }
+                                }
+                                Err(e) => {
+                                    if retries > 0 {
+                                        retries -= 1;
+                                        eprintln!("[assistant] Parse error, retrying: {}", e);
+                                        std::thread::sleep(std::time::Duration::from_millis(500));
+                                        continue;
+                                    }
+                                    // Fallback response
+                                    return Ok("Let's continue our conversation".to_string());
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            if retries > 0 && (e.status() == Some(reqwest::StatusCode::SERVICE_UNAVAILABLE)
+                                || e.status() == Some(reqwest::StatusCode::GATEWAY_TIMEOUT)
+                                || e.status() == Some(reqwest::StatusCode::TOO_MANY_REQUESTS)) {
+                                retries -= 1;
+                                eprintln!("[assistant] HTTP error {}, retrying...", e.status().unwrap());
+                                std::thread::sleep(std::time::Duration::from_millis(1000));
+                                continue;
+                            }
+                            // Fallback response on non-retryable errors
+                            eprintln!("[assistant] LLM error: {}", e);
+                            return Ok("I understand. Please continue".to_string());
+                        }
+                    }
+                }
+                Err(e) => {
+                    if retries > 0 {
+                        retries -= 1;
+                        eprintln!("[assistant] Network error, retrying: {}", e);
+                        std::thread::sleep(std::time::Duration::from_millis(1000));
+                        continue;
+                    }
+                    // Fallback response on network failure
+                    eprintln!("[assistant] Network failure: {}", e);
+                    return Ok("I understand. Please continue".to_string());
+                }
+            }
         }
     }
 }
