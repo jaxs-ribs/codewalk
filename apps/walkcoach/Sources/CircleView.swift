@@ -70,20 +70,17 @@ struct CircleView: View {
                     .rotationEffect(.degrees(rotation))
                     .offset(y: morphOffset)
             }
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        if viewModel.currentState == .idle {
-                            triggerTapAnimation()
-                            viewModel.handleKeyDown()
-                        }
-                    }
-                    .onEnded { _ in
-                        if viewModel.currentState == .recording {
-                            viewModel.handleKeyUp()
-                        }
-                    }
-            )
+            .onTapGesture {
+                triggerTapAnimation()
+                switch viewModel.currentState {
+                case .idle:
+                    viewModel.handleKeyDown()
+                case .recording:
+                    viewModel.handleKeyUp()
+                default:
+                    break
+                }
+            }
         }
         .frame(width: 300, height: 300)
         .onAppear {
