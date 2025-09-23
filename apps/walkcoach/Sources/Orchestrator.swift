@@ -27,11 +27,16 @@ class Orchestrator: ObservableObject {
 
     private var actionQueue: [ActionQueueItem] = []
     private let artifactManager: ArtifactManager
+    private let assistantClient: AssistantClient
 
-    init() {
+    init(groqApiKey: String) {
         // Initialize artifact manager
         artifactManager = ArtifactManager()
-        print("[Orchestrator] Initialized with ArtifactManager")
+
+        // Initialize assistant client
+        assistantClient = AssistantClient(groqApiKey: groqApiKey)
+
+        print("[Orchestrator] Initialized with ArtifactManager and AssistantClient")
     }
 
     // MARK: - Queue Management
@@ -108,50 +113,46 @@ class Orchestrator: ObservableObject {
     private func writeDescription() async {
         lastResponse = "Writing description..."
 
-        // Simulate write delay
-        try? await Task.sleep(nanoseconds: 500_000_000)
+        do {
+            // Generate content based on conversation history
+            let content = try await assistantClient.generateDescription(
+                conversationHistory: conversationHistory
+            )
 
-        let content = """
-        # Project Description
+            if artifactManager.safeWrite(filename: "description.md", content: content) {
+                lastResponse = "Description written. Say 'read the description' to hear it."
 
-        This is a placeholder description that will be generated based on conversation context in Phase 6.
-
-        The description will be TTS-optimized for reading aloud while walking.
-        """
-
-        if artifactManager.safeWrite(filename: "description.md", content: content) {
-            lastResponse = "Description written. Say 'read the description' to hear it."
-        } else {
-            lastResponse = "Failed to write description"
+                // Add to conversation history
+                addAssistantResponse("I've written the project description based on our conversation.")
+            } else {
+                lastResponse = "Failed to write description"
+            }
+        } catch {
+            print("[Orchestrator] Failed to generate description: \(error)")
+            lastResponse = "Failed to generate description"
         }
     }
 
     private func writePhasing() async {
         lastResponse = "Writing phasing..."
 
-        // Simulate write delay
-        try? await Task.sleep(nanoseconds: 500_000_000)
+        do {
+            // Generate content based on conversation history
+            let content = try await assistantClient.generatePhasing(
+                conversationHistory: conversationHistory
+            )
 
-        let content = """
-        # Project Phasing
+            if artifactManager.safeWrite(filename: "phasing.md", content: content) {
+                lastResponse = "Phasing written. Say 'read the phasing' to hear it."
 
-        ## Phase 1: Foundation
-        Set up the basic project structure and dependencies.
-
-        ## Phase 2: Core Features
-        Implement the main functionality.
-
-        ## Phase 3: Testing
-        Add comprehensive tests for all features.
-
-        ## Phase 4: Polish
-        Refine the UI and fix any remaining issues.
-        """
-
-        if artifactManager.safeWrite(filename: "phasing.md", content: content) {
-            lastResponse = "Phasing written. Say 'read the phasing' to hear it."
-        } else {
-            lastResponse = "Failed to write phasing"
+                // Add to conversation history
+                addAssistantResponse("I've written the project phasing based on our conversation.")
+            } else {
+                lastResponse = "Failed to write phasing"
+            }
+        } catch {
+            print("[Orchestrator] Failed to generate phasing: \(error)")
+            lastResponse = "Failed to generate phasing"
         }
     }
 
@@ -225,17 +226,23 @@ class Orchestrator: ObservableObject {
     }
 
     private func handleConversation(_ content: String) async {
-        // Add to conversation history
-        conversationHistory.append((role: "user", content: content))
+        state = .conversing
 
-        // Keep last 20 exchanges
-        if conversationHistory.count > 40 {
-            conversationHistory = Array(conversationHistory.suffix(40))
+        do {
+            // Generate conversational response
+            let response = try await assistantClient.generateConversationalResponse(
+                conversationHistory: conversationHistory
+            )
+
+            lastResponse = response
+
+            // Add assistant response to history
+            addAssistantResponse(response)
+        } catch {
+            print("[Orchestrator] Failed to generate response: \(error)")
+            lastResponse = "I couldn't process that. Try again?"
         }
 
-        state = .conversing
-        lastResponse = "Conversation mode: \(content)"
-        // Phase 6 will add actual conversation handling
         state = .idle
     }
 

@@ -156,6 +156,16 @@ class Router {
         },
         "reasoning": "brief explanation"
     }
+
+    For conversation intent, use:
+    {
+        "intent": "conversation",
+        "action": {
+            "action": "conversation",
+            "content": "the user's message"
+        },
+        "reasoning": "why this is conversation"
+    }
     """
 
     init(groqApiKey: String) {

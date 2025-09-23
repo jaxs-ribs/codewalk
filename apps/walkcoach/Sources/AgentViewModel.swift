@@ -39,7 +39,7 @@ class AgentViewModel: ObservableObject {
         router = Router(groqApiKey: env.groqApiKey)
         print("[WalkCoach] Router initialized")
 
-        orchestrator = Orchestrator()
+        orchestrator = Orchestrator(groqApiKey: env.groqApiKey)
         print("[WalkCoach] Orchestrator initialized")
 
         // Subscribe to orchestrator updates
@@ -164,7 +164,7 @@ class AgentViewModel: ObservableObject {
     private func routeTranscript(_ transcript: String) async {
         print("[WalkCoach] Routing transcript: \(transcript)")
 
-        // Add to conversation history
+        // ALWAYS add to conversation history first
         await MainActor.run {
             self.orchestrator?.addUserTranscript(transcript)
         }
@@ -187,8 +187,11 @@ class AgentViewModel: ObservableObject {
             }
         } catch {
             print("[WalkCoach] Routing failed: \(error)")
+
+            // Even on routing failure, treat as conversation to maintain context
             await MainActor.run {
-                self.lastMessage = "Failed to understand command"
+                // Enqueue as conversation so user's message is still processed
+                self.orchestrator?.enqueueAction(.conversation(transcript))
                 self.currentState = .idle
             }
         }
