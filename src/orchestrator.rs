@@ -101,6 +101,14 @@ pub struct ActionResult {
     pub artifact_outcome: Option<ArtifactUpdateOutcome>,
     pub read_content: Option<String>,
     pub write_success: bool,
+    pub speak_text: Option<String>,  // Text that should be spoken
+    pub completion_message: Option<String>, // Message to speak when action completes
+}
+
+/// Cache for last response (text and audio)
+pub struct ResponseCache {
+    pub last_text: Option<String>,
+    pub last_audio: Option<Vec<u8>>,
 }
 
 /// The main orchestrator that ensures single-threaded execution of all actions.
@@ -114,6 +122,8 @@ pub struct Orchestrator {
     current_turn: Option<TurnContext>,
     /// Last proposal waiting for confirmation
     last_proposal: Option<ProposedAction>,
+    /// Response cache for repeat last
+    response_cache: ResponseCache,
     /// Flag for debug output
     debug_enabled: bool,
     /// Interrupt flag for stopping operations
@@ -135,6 +145,10 @@ impl Orchestrator {
             action_queue: VecDeque::new(),
             current_turn: None,
             last_proposal: None,
+            response_cache: ResponseCache {
+                last_text: None,
+                last_audio: None,
+            },
             debug_enabled,
             interrupt: Arc::new(AtomicBool::new(false)),
             artifact_manager: None,
@@ -215,18 +229,30 @@ impl Orchestrator {
         
         match action {
             Action::Read { path } => {
-                if self.debug_enabled {
-                    eprintln!("[orchestrator] reading file: {}", path);
-                }
-                
-                let path_buf = PathBuf::from(&path);
-                let content = safe_read(&path_buf)
-                    .with_context(|| format!("Failed to read {}", path))?;
+                // Check if this is a cache read
+                let content = if path == "cache:last" {
+                    self.response_cache.last_text.clone()
+                        .ok_or_else(|| anyhow!("No cached response"))?
+                } else {
+                    if self.debug_enabled {
+                        eprintln!("[orchestrator] reading file: {}", path);
+                    }
+                    
+                    let path_buf = PathBuf::from(&path);
+                    let content = safe_read(&path_buf)
+                        .with_context(|| format!("Failed to read {}", path))?;
+                    
+                    // Cache the content for repeat
+                    self.response_cache.last_text = Some(content.clone());
+                    content
+                };
                 
                 Ok(ActionResult {
                     artifact_outcome: None,
-                    read_content: Some(content),
+                    read_content: Some(content.clone()),
                     write_success: false,
+                    speak_text: Some(content),  // This will be spoken
+                    completion_message: None,  // No completion for reads
                 })
             }
             
@@ -251,6 +277,8 @@ impl Orchestrator {
                     artifact_outcome: None,
                     read_content: None,
                     write_success: true,
+                    speak_text: None,
+                    completion_message: Some("Done".to_string()),  // Narrate completion
                 })
             }
             
@@ -292,6 +320,8 @@ impl Orchestrator {
                     artifact_outcome: None,
                     read_content: None,
                     write_success: true,
+                    speak_text: None,
+                    completion_message: Some("Done".to_string()),  // Narrate completion
                 })
             }
             
@@ -320,6 +350,8 @@ impl Orchestrator {
                     artifact_outcome,
                     read_content: None,
                     write_success: false,
+                    speak_text: None,
+                    completion_message: None,
                 })
             }
         }
@@ -384,17 +416,17 @@ impl Orchestrator {
     fn execute_proposed_action(&mut self, proposed: ProposedAction) -> Result<()> {
         let action = match proposed {
             ProposedAction::WriteDescription => {
-                // For Phase 2, we'll create a placeholder
-                // In Phase 5, this will use generators
+                // Basic content for Phase 3 testing
+                // In Phase 5, this will use generators  
                 Action::Write {
                     path: "artifacts/description.md".to_string(),
-                    content: "# Description\n\n(Generated content will go here)\n".to_string(),
+                    content: "# Project Description\n\nThis is a voice-first project specification tool.\n\nThe system allows you to:\n- Create and manage project descriptions\n- Define project phases\n- Use voice commands for all interactions\n- Get audio feedback through text-to-speech\n\nAll operations are single-threaded and sequential for predictability.\n".to_string(),
                 }
             }
             ProposedAction::WritePhasing => {
                 Action::Write {
                     path: "artifacts/phasing.md".to_string(),
-                    content: "# Phasing\n\n(Generated content will go here)\n".to_string(),
+                    content: "# Project Phases\n\n## Phase 1: Foundation\nSet up core infrastructure and basic voice input.\n\n## Phase 2: Router Implementation  \nAdd intelligent routing of commands through LLM.\n\n## Phase 3: Audio Integration\nImplement text-to-speech for all read operations.\n\n## Phase 4: Content Generation\nAdd real content generation using LLMs.\n\n## Phase 5: Refinement\nPolish user experience and error handling.\n".to_string(),
                 }
             }
             ProposedAction::ReadDescription => {
@@ -417,7 +449,12 @@ impl Orchestrator {
                 return Ok(());
             }
             ProposedAction::RepeatLast => {
-                // Will be implemented in Phase 3
+                // Return cached text to be spoken
+                if self.response_cache.last_text.is_some() {
+                    return self.enqueue(Action::Read { 
+                        path: "cache:last".to_string()  // Special marker for cached content
+                    });
+                }
                 return Ok(());
             }
             ProposedAction::Stop => {

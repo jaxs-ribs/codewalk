@@ -59,6 +59,13 @@ const SMART_SECRETARY_PROMPT: &str = "You are Walkcoach, a smart secretary. Answ
 fn main() -> Result<()> {
     let env_source = load_env_file()?;
     ensure_groq_key(env_source.as_deref())?;
+    
+    // Set default lighter debug output if not explicitly configured
+    if std::env::var("WALKCOACH_DEBUG_ROUTER").is_err() {
+        unsafe {
+            std::env::set_var("WALKCOACH_DEBUG_ROUTER_LITE", "1");
+        }
+    }
 
     let mut app = App::new()?;
     app.run()
@@ -261,9 +268,11 @@ impl App {
                 let saved = match save_result {
                     Ok(Some(saved)) => {
                         let reported_duration = saved.duration_seconds;
+                        // More minimal output
                         println!(
-                            "Saved {} ({reported_duration:.2}s captured, key held for {:.2}s)",
-                            saved.path.display(),
+                            " {:<80} Saved {} ({reported_duration:.2}s captured, key held for {:.2}s)",
+                            "",
+                            saved.path.file_name().unwrap_or_default().to_string_lossy(),
                             elapsed.as_secs_f32()
                         );
                         saved
@@ -285,7 +294,7 @@ impl App {
                 let transcript = match self.transcriber.transcribe(&saved.path) {
                     Ok(transcript) => {
                         trace_entry.durations.stt_ms = stt_start.elapsed().as_millis() as u64;
-                        println!("Transcript: {transcript}");
+                        println!("Transcript:  {transcript}");
                         trace_entry.user_text = Some(transcript.clone());
                         transcript
                     }
@@ -309,18 +318,23 @@ impl App {
                             let action_clone = action.clone();
                             match self.orchestrator.handle_intent(intent) {
                                 Ok(_) => {
-                                    let msg = match action_clone {
-                                        crate::router::ProposedAction::WriteDescription => "Writing description now",
-                                        crate::router::ProposedAction::WritePhasing => "Writing phasing now", 
-                                        crate::router::ProposedAction::ReadDescription => "Reading description",
-                                        crate::router::ProposedAction::ReadPhasing => "Reading phasing",
-                                        crate::router::ProposedAction::Stop => "Stopping",
-                                        crate::router::ProposedAction::RepeatLast => "Repeating last",
-                                        _ => "Executing",
+                                    let (msg, skip_tts) = match action_clone {
+                                        crate::router::ProposedAction::WriteDescription => ("Writing description now...", false),
+                                        crate::router::ProposedAction::WritePhasing => ("Writing phasing now...", false), 
+                                        crate::router::ProposedAction::ReadDescription => ("Reading description", true), // Skip TTS, file will be spoken
+                                        crate::router::ProposedAction::ReadPhasing => ("Reading phasing", true), // Skip TTS, file will be spoken
+                                        crate::router::ProposedAction::Stop => ("Stopping", false),
+                                        crate::router::ProposedAction::RepeatLast => ("Repeating", true), // Skip TTS, cached content will be spoken
+                                        _ => ("Executing...", false),
                                     };
                                     println!("Assistant: {msg}");
                                     trace_entry.assistant_text = Some(msg.to_string());
-                                    (msg.to_string(), true) // Skip artifact processing
+                                    // Return a special marker to skip TTS if this action will speak its own content
+                                    if skip_tts {
+                                        ("[SKIP_TTS]".to_string(), true)
+                                    } else {
+                                        (msg.to_string(), true)
+                                    }
                                 }
                                 Err(err) => {
                                     let msg = format!("Failed: {err}");
@@ -425,33 +439,38 @@ impl App {
                 }
                 };
 
-                let tts_start = Instant::now();
-                let tts_audio = match self.tts.synthesize(&answer) {
-                    Ok(audio) => {
-                        trace_entry.durations.tts_ms = tts_start.elapsed().as_millis() as u64;
-                        if std::env::var("WALKCOACH_DEBUG_TTS").is_ok() {
-                            eprintln!(
-                                "[tts-debug] bytes={} content-type={} note={:?}",
-                                audio.bytes.len(),
-                                audio.content_type,
-                                audio.note
-                            );
+                // Skip TTS synthesis if the answer is our special marker
+                let tts_audio = if answer == "[SKIP_TTS]" {
+                    None
+                } else {
+                    let tts_start = Instant::now();
+                    match self.tts.synthesize(&answer) {
+                        Ok(audio) => {
+                            trace_entry.durations.tts_ms = tts_start.elapsed().as_millis() as u64;
+                            if std::env::var("WALKCOACH_DEBUG_TTS").is_ok() {
+                                eprintln!(
+                                    "[tts-debug] bytes={} content-type={} note={:?}",
+                                    audio.bytes.len(),
+                                    audio.content_type,
+                                    audio.note
+                                );
+                            }
+                            trace_entry.tts = Some(TraceTts {
+                                engine: "groq".to_string(),
+                                voice: self.tts.voice().to_string(),
+                                content_type: audio.content_type.clone(),
+                                note: audio.note.clone(),
+                            });
+                            Some(audio)
                         }
-                        trace_entry.tts = Some(TraceTts {
-                            engine: "groq".to_string(),
-                            voice: self.tts.voice().to_string(),
-                            content_type: audio.content_type.clone(),
-                            note: audio.note.clone(),
-                        });
-                        Some(audio)
-                    }
-                    Err(err) => {
-                        trace_entry.durations.tts_ms = tts_start.elapsed().as_millis() as u64;
-                        let msg = format!("tts failed: {err}");
-                        trace_entry.errors.push(msg);
-                        eprintln!("TTS synthesis failed: {err:?}");
-                        self.log_trace(trace_entry);
-                        continue;
+                        Err(err) => {
+                            trace_entry.durations.tts_ms = tts_start.elapsed().as_millis() as u64;
+                            let msg = format!("tts failed: {err}");
+                            trace_entry.errors.push(msg);
+                            eprintln!("TTS synthesis failed: {err:?}");
+                            self.log_trace(trace_entry);
+                            continue;
+                        }
                     }
                 };
 
@@ -498,6 +517,30 @@ impl App {
                     // Handle artifact processing outcome
                     if let Some(outcome) = result.artifact_outcome {
                         self.report_artifact_outcome(outcome);
+                    }
+                    
+                    // Speak any text that needs to be spoken
+                    if let Some(text) = result.speak_text {
+                        // Check for interrupt before speaking
+                        if !self.orchestrator.interrupt_handle().load(Ordering::Relaxed) {
+                            if let Ok(audio) = self.tts.synthesize(&text) {
+                                // Use interruptible playback with orchestrator's interrupt handle
+                                if let Err(err) = self.speaker.play_interruptible(&audio, self.orchestrator.interrupt_handle()) {
+                                    eprintln!("Failed to speak: {err:?}");
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Speak completion message if present
+                    if let Some(msg) = result.completion_message {
+                        if !self.orchestrator.interrupt_handle().load(Ordering::Relaxed) {
+                            if let Ok(audio) = self.tts.synthesize(&msg) {
+                                if let Err(err) = self.speaker.play(&audio) {
+                                    eprintln!("Failed to speak completion: {err:?}");
+                                }
+                            }
+                        }
                     }
                 }
                 Ok(None) => {
@@ -1012,6 +1055,57 @@ impl SpeechPlayer {
         let buffer = SamplesBuffer::new(channels, sample_rate, samples);
         sink.append(buffer);
         sink.detach();
+        Ok(())
+    }
+    
+    fn play_interruptible(&self, audio: &TtsAudio, interrupt: Arc<AtomicBool>) -> Result<()> {
+        if audio.bytes.is_empty() {
+            return Err(anyhow!("No audio data supplied for playback"));
+        }
+
+        let sink = Sink::try_new(&self.handle).context("Failed to create TTS sink")?;
+        let cursor = Cursor::new(audio.bytes.clone());
+        let mut reader = match AudioReader::new(cursor) {
+            Ok(r) => r,
+            Err(err) => {
+                let dump_path = dump_tts_audio(audio).ok();
+                let info = build_tts_error_info("read", audio, dump_path.as_ref());
+                return Err(err).context(info);
+            }
+        };
+        let desc = reader.description();
+        let channels = u16::try_from(desc.channel_count())
+            .map_err(|_| anyhow!("TTS audio channel count exceeds supported range"))?;
+
+        if channels == 0 {
+            return Err(anyhow!("TTS audio has zero channels"));
+        }
+
+        let sample_rate = desc.sample_rate();
+        let samples: Vec<f32> = match reader
+            .samples::<f32>()
+            .collect::<std::result::Result<Vec<_>, _>>()
+        {
+            Ok(samples) => samples,
+            Err(err) => {
+                let dump_path = dump_tts_audio(audio).ok();
+                let info = build_tts_error_info("decode", audio, dump_path.as_ref());
+                return Err(err).context(info);
+            }
+        };
+
+        let buffer = SamplesBuffer::new(channels, sample_rate, samples);
+        sink.append(buffer);
+        
+        // Wait for playback to finish or interrupt signal
+        while !sink.empty() {
+            if interrupt.load(Ordering::Relaxed) {
+                sink.stop();
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        
         Ok(())
     }
 }

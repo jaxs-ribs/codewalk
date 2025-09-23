@@ -153,6 +153,14 @@ Examples:
             
         if self.debug {
             eprintln!("[router] LLM response: {}", content);
+        } else if std::env::var("WALKCOACH_DEBUG_ROUTER_LITE").is_ok() {
+            // Lighter debug output - just show intent and action
+            if let Ok(parsed) = serde_json::from_str::<RouterResponse>(content) {
+                eprintln!("[router] {} -> {}", 
+                    parsed.intent_type,
+                    parsed.action.as_deref().unwrap_or("none")
+                );
+            }
         }
             
         let router_response: RouterResponse = serde_json::from_str(content)
