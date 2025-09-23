@@ -38,9 +38,11 @@ use serde_json::{Value, json};
 mod artifacts;
 pub mod orchestrator;
 mod io_guard;
+mod router;
 
 use crate::artifacts::{ArtifactManager, ArtifactUpdateOutcome};
 use crate::orchestrator::{Orchestrator, Action};
+use crate::router::Router;
 
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 const PUSH_TO_TALK_KEY: Keycode = Keycode::Space;
@@ -157,6 +159,7 @@ struct App {
     #[allow(dead_code)]
     artifact_manager: Option<ArtifactManager>,  // Moved to orchestrator
     orchestrator: Orchestrator,
+    router: Router,
     output_dir: PathBuf,
 }
 
@@ -204,6 +207,8 @@ impl App {
             orchestrator.set_artifact_manager(manager);
         }
         
+        let router = Router::new()?;
+        
         Ok(Self {
             recorder,
             beep,
@@ -215,6 +220,7 @@ impl App {
             trace_logger,
             artifact_manager: None, // Moved to orchestrator for Phase 0
             orchestrator,
+            router,
             output_dir,
         })
     }
@@ -293,22 +299,130 @@ impl App {
                     }
                 };
 
-                let llm_start = Instant::now();
-                let answer = match self.assistant.reply(&transcript) {
-                    Ok(answer) => {
-                        trace_entry.durations.llm_ms = llm_start.elapsed().as_millis() as u64;
-                        println!("Assistant: {answer}");
-                        trace_entry.assistant_text = Some(answer.clone());
-                        answer
+                // Use router to determine intent (LLM-based or local yes/no)
+                let (answer, skip_artifacts) = match self.router.parse_user_input(&transcript) {
+                    Ok(intent) => {
+                    // Handle local command directly (no LLM needed)
+                    match intent {
+                        crate::router::Intent::Directive { ref action } => {
+                            // Execute directive immediately
+                            let action_clone = action.clone();
+                            match self.orchestrator.handle_intent(intent) {
+                                Ok(_) => {
+                                    let msg = match action_clone {
+                                        crate::router::ProposedAction::WriteDescription => "Writing description now",
+                                        crate::router::ProposedAction::WritePhasing => "Writing phasing now", 
+                                        crate::router::ProposedAction::ReadDescription => "Reading description",
+                                        crate::router::ProposedAction::ReadPhasing => "Reading phasing",
+                                        crate::router::ProposedAction::Stop => "Stopping",
+                                        crate::router::ProposedAction::RepeatLast => "Repeating last",
+                                        _ => "Executing",
+                                    };
+                                    println!("Assistant: {msg}");
+                                    trace_entry.assistant_text = Some(msg.to_string());
+                                    (msg.to_string(), true) // Skip artifact processing
+                                }
+                                Err(err) => {
+                                    let msg = format!("Failed: {err}");
+                                    eprintln!("Intent handling failed: {err:?}");
+                                    println!("Assistant: {msg}");
+                                    trace_entry.assistant_text = Some(msg.clone());
+                                    self.log_trace(trace_entry);
+                                    continue;
+                                }
+                            }
+                        }
+                        crate::router::Intent::Confirmation { .. } => {
+                            // Handle yes/no
+                            match self.orchestrator.handle_intent(intent) {
+                                Ok(response) => {
+                                    let msg = if response == "executing" {
+                                        "Confirmed, executing now"
+                                    } else if response == "cancelled" {
+                                        "Cancelled"  
+                                    } else {
+                                        &response
+                                    };
+                                    println!("Assistant: {msg}");
+                                    trace_entry.assistant_text = Some(msg.to_string());
+                                    (msg.to_string(), true)
+                                }
+                                Err(err) => {
+                                    let msg = format!("Failed: {err}");
+                                    eprintln!("Confirmation failed: {err:?}");
+                                    self.log_trace(trace_entry);
+                                    continue;
+                                }
+                            }
+                        }
+                        crate::router::Intent::Proposal { action: _, ref question } => {
+                            // Store proposal and ask question
+                            let q = question.clone();
+                            self.orchestrator.handle_intent(intent).ok();
+                            println!("Assistant: {}", q);
+                            trace_entry.assistant_text = Some(q.clone());
+                            (q, true)
+                        }
+                        crate::router::Intent::Info { ref message } => {
+                            // Just informational
+                            println!("Assistant: {message}");
+                            trace_entry.assistant_text = Some(message.clone());
+                            (message.clone(), true)
+                        }
                     }
-                    Err(err) => {
-                        trace_entry.durations.llm_ms = llm_start.elapsed().as_millis() as u64;
-                        let msg = format!("assistant failed: {err}");
-                        trace_entry.errors.push(msg);
-                        eprintln!("Assistant reply failed: {err:?}");
-                        self.log_trace(trace_entry);
-                        continue;
+                }
+                Err(err) => {
+                    // Router failed, fall back to regular assistant
+                    eprintln!("Router failed: {err:?}");
+                    
+                    // Need LLM interpretation
+                    let llm_start = Instant::now();
+                    match self.assistant.reply(&transcript) {
+                        Ok(answer) => {
+                            trace_entry.durations.llm_ms = llm_start.elapsed().as_millis() as u64;
+                            
+                            // Parse assistant response for intent
+                            let intent = self.router.parse_assistant_response(&transcript, &answer);
+                            
+                            // Handle the intent
+                            let response = match &intent {
+                                crate::router::Intent::Proposal { action: _, question } => {
+                                    // Store proposal and return question
+                                    let q = question.clone();
+                                    self.orchestrator.handle_intent(intent).ok();
+                                    q
+                                }
+                                crate::router::Intent::Directive { .. } => {
+                                    // LLM suggested a directive, execute it
+                                    match self.orchestrator.handle_intent(intent) {
+                                        Ok(_) => format!("{} Done.", answer),
+                                        Err(err) => {
+                                            eprintln!("Intent handling failed: {err:?}");
+                                            answer.clone()
+                                        }
+                                    }
+                                }
+                                crate::router::Intent::Info { message } => {
+                                    // Just informational
+                                    message.clone()
+                                }
+                                _ => answer.clone(),
+                            };
+                            
+                            println!("Assistant: {response}");
+                            trace_entry.assistant_text = Some(response.clone());
+                            (response, false)
+                        }
+                        Err(err) => {
+                            trace_entry.durations.llm_ms = llm_start.elapsed().as_millis() as u64;
+                            let msg = format!("assistant failed: {err}");
+                            trace_entry.errors.push(msg);
+                            eprintln!("Assistant reply failed: {err:?}");
+                            self.log_trace(trace_entry);
+                            continue;
+                        }
                     }
+                }
                 };
 
                 let tts_start = Instant::now();
@@ -352,14 +466,16 @@ impl App {
                 }
 
                 // Queue artifact processing through orchestrator
-                // Now guaranteed to run single-threaded
-                let action = Action::ProcessArtifacts {
-                    transcript: transcript.clone(),
-                    reply: answer.clone(),
-                };
-                
-                if let Err(err) = self.orchestrator.enqueue(action) {
-                    eprintln!("Failed to queue artifact processing: {err:?}");
+                // Skip if this was a direct command that already executed
+                if !skip_artifacts {
+                    let action = Action::ProcessArtifacts {
+                        transcript: transcript.clone(),
+                        reply: answer.clone(),
+                    };
+                    
+                    if let Err(err) = self.orchestrator.enqueue(action) {
+                        eprintln!("Failed to queue artifact processing: {err:?}");
+                    }
                 }
 
                 self.log_trace(trace_entry);

@@ -9,6 +9,7 @@ use chrono::Utc;
 
 use crate::artifacts::{ArtifactManager, ArtifactUpdateOutcome};
 use crate::io_guard::{IoGuard, safe_read, safe_write_atomic};
+use crate::router::{Intent, ProposedAction};
 
 /// Represents a single action that can be executed by the orchestrator.
 /// All file I/O must go through these actions.
@@ -111,6 +112,8 @@ pub struct Orchestrator {
     action_queue: VecDeque<Action>,
     /// Current turn context
     current_turn: Option<TurnContext>,
+    /// Last proposal waiting for confirmation
+    last_proposal: Option<ProposedAction>,
     /// Flag for debug output
     debug_enabled: bool,
     /// Interrupt flag for stopping operations
@@ -131,6 +134,7 @@ impl Orchestrator {
             state: OrchestratorState::Conversing,
             action_queue: VecDeque::new(),
             current_turn: None,
+            last_proposal: None,
             debug_enabled,
             interrupt: Arc::new(AtomicBool::new(false)),
             artifact_manager: None,
@@ -300,12 +304,6 @@ impl Orchestrator {
                 
                 // Process artifacts through manager
                 let artifact_outcome = if let Some(manager) = &self.artifact_manager {
-                    if self.debug_enabled {
-                        eprintln!(
-                            "[orchestrator] processing artifacts for turn {:?}",
-                            self.current_turn.as_ref().map(|t| &t.turn_id)
-                        );
-                    }
                     
                     match manager.process_turn(&transcript, &reply) {
                         Ok(outcome) => outcome,
@@ -352,15 +350,96 @@ impl Orchestrator {
         Arc::clone(&self.interrupt)
     }
     
+    /// Process an intent from the router.
+    pub fn handle_intent(&mut self, intent: Intent) -> Result<String> {
+        match intent {
+            Intent::Directive { action } => {
+                self.execute_proposed_action(action)?;
+                Ok("executing".to_string())
+            }
+            Intent::Proposal { action, question } => {
+                self.last_proposal = Some(action);
+                Ok(question)
+            }
+            Intent::Confirmation { confirmed } => {
+                if confirmed {
+                    if let Some(action) = self.last_proposal.take() {
+                        self.execute_proposed_action(action)?;
+                        Ok("executing".to_string())
+                    } else {
+                        Ok("no proposal to confirm".to_string())
+                    }
+                } else {
+                    self.last_proposal = None;
+                    Ok("cancelled".to_string())
+                }
+            }
+            Intent::Info { message } => {
+                Ok(message)
+            }
+        }
+    }
+    
+    /// Execute a proposed action by converting it to an Action and enqueueing it.
+    fn execute_proposed_action(&mut self, proposed: ProposedAction) -> Result<()> {
+        let action = match proposed {
+            ProposedAction::WriteDescription => {
+                // For Phase 2, we'll create a placeholder
+                // In Phase 5, this will use generators
+                Action::Write {
+                    path: "artifacts/description.md".to_string(),
+                    content: "# Description\n\n(Generated content will go here)\n".to_string(),
+                }
+            }
+            ProposedAction::WritePhasing => {
+                Action::Write {
+                    path: "artifacts/phasing.md".to_string(),
+                    content: "# Phasing\n\n(Generated content will go here)\n".to_string(),
+                }
+            }
+            ProposedAction::ReadDescription => {
+                Action::Read {
+                    path: "artifacts/description.md".to_string(),
+                }
+            }
+            ProposedAction::ReadPhasing => {
+                Action::Read {
+                    path: "artifacts/phasing.md".to_string(),
+                }
+            }
+            ProposedAction::EditDescription { change: _ } => {
+                // For now, return a placeholder
+                // In Phase 6, this will generate proper diffs
+                return Ok(());
+            }
+            ProposedAction::EditPhasing { phase: _, change: _ } => {
+                // For now, return a placeholder
+                return Ok(());
+            }
+            ProposedAction::RepeatLast => {
+                // Will be implemented in Phase 3
+                return Ok(());
+            }
+            ProposedAction::Stop => {
+                self.interrupt();
+                return Ok(());
+            }
+        };
+        
+        self.enqueue(action)
+    }
+    
     /// Print debug status if debug mode is enabled.
     fn debug_status(&self, context: &str) {
         if self.debug_enabled {
-            eprintln!(
-                "[orchestrator] {}: state={}, queue={}",
-                context,
-                self.state,
-                self.action_queue.len()
-            );
+            // Only log important state changes
+            if context.contains("executing") || context.contains("interrupted") {
+                eprintln!(
+                    "[orchestrator] {}: queue={}",
+                    context,
+                    self.action_queue.len()
+                );
+            }
         }
     }
 }
