@@ -17,14 +17,21 @@ class AssistantClient {
         print("[AssistantClient] Generating description from conversation context")
 
         let systemPrompt = """
-        You are a voice-first project speccer. Generate a project description based on the conversation.
+        You are a voice-first project speccer optimized for text-to-speech while walking.
+
+        CRITICAL TTS RULES:
+        - Write like you're explaining to a friend on a walk
+        - Use simple, clear sentences that flow naturally when spoken
+        - Avoid parentheses, dashes, or complex punctuation
+        - No bullet points or lists - use flowing prose instead
+        - Keep sentences short enough to be said in one breath
+        - Use "we're" instead of "we are", "it's" instead of "it is"
+        - Add natural transitions like "so", "basically", "now"
 
         The description should be:
-        - Written for reading aloud while walking (TTS-optimized)
-        - Clear and conversational, not formal documentation
-        - Focused on what the project does and why it matters
-        - About 3-5 sentences that flow naturally when spoken
-        - Free of markdown formatting except for the title
+        - About 3-5 sentences explaining what we're building
+        - Focused on the core idea and why it's interesting
+        - Natural and conversational, like a casual pitch
 
         Format:
         # Project Description
@@ -43,23 +50,30 @@ class AssistantClient {
         print("[AssistantClient] Generating phasing from conversation context")
 
         let systemPrompt = """
-        You are a voice-first project speccer. Generate a phasing plan based on the conversation.
+        You are a voice-first project speccer optimized for text-to-speech while walking.
+
+        CRITICAL TTS RULES:
+        - Write like you're explaining the plan to a friend on a walk
+        - Each phase gets one flowing paragraph, not bullet points
+        - Start phases with transitions like "So first", "Then", "After that"
+        - Keep sentences short and natural
+        - Use contractions: we'll, you'll, it'll
+        - Avoid technical jargon unless necessary
 
         The phasing should be:
-        - Written for reading aloud while walking (TTS-optimized)
-        - Each phase should have a clear title and a single paragraph description
-        - The paragraph should be conversational, like explaining to a friend
-        - Typically 3-5 phases, but adjust based on project complexity
-        - Free of bullet points or complex formatting
+        - 3-5 phases for most projects
+        - Each phase has a short, clear title (3-5 words max)
+        - Each phase has ONE paragraph explaining what we'll do
+        - The paragraph should sound natural when spoken aloud
 
         Format:
         # Project Phasing
 
-        ## Phase 1: [Clear Title]
-        [One paragraph explaining what happens in this phase, written naturally for speech]
+        ## Phase 1: [Short Clear Title]
+        [One flowing paragraph starting with "So" or "First" that explains this phase naturally]
 
-        ## Phase 2: [Clear Title]
-        [One paragraph explaining what happens in this phase, written naturally for speech]
+        ## Phase 2: [Short Clear Title]
+        [One flowing paragraph starting with "Then" or "Next" that explains this phase naturally]
 
         (Continue as needed)
         """
@@ -129,19 +143,8 @@ class AssistantClient {
 
         print("[AssistantClient] Sending request to Groq...")
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NSError(domain: "AssistantClient", code: -1,
-                         userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
-        }
-
-        if httpResponse.statusCode != 200 {
-            let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-            print("[AssistantClient] API Error (\(httpResponse.statusCode)): \(errorBody)")
-            throw NSError(domain: "AssistantClient", code: httpResponse.statusCode,
-                         userInfo: [NSLocalizedDescriptionKey: errorBody])
-        }
+        // Use retry logic for resilience
+        let data = try await NetworkManager.shared.performRequestWithRetry(request)
 
         // Parse response
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]

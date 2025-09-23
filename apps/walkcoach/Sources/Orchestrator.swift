@@ -92,6 +92,8 @@ class Orchestrator: ObservableObject {
             await readDescription()
         case .readPhasing:
             await readPhasing()
+        case .readSpecificPhase(let phaseNumber):
+            await readSpecificPhase(phaseNumber)
         case .editDescription(let content):
             await editDescription(content: content)
         case .editPhasing(let phaseNumber, let content):
@@ -143,7 +145,18 @@ class Orchestrator: ObservableObject {
             }
         } catch {
             print("[Orchestrator] Failed to generate description: \(error)")
-            lastResponse = "Failed to generate description"
+
+            // Check if it's a network error
+            if (error as NSError).domain == NSURLErrorDomain {
+                lastResponse = "I'll write the description once the network is back"
+
+                // Speak the offline message
+                await MainActor.run {
+                    self.ttsManager.speak(self.lastResponse)
+                }
+            } else {
+                lastResponse = "Failed to generate description"
+            }
         }
     }
 
@@ -230,13 +243,45 @@ class Orchestrator: ObservableObject {
         }
     }
 
+    private func readSpecificPhase(_ phaseNumber: Int) async {
+        if let phaseContent = artifactManager.readPhase(from: "phasing.md", phaseNumber: phaseNumber) {
+            lastResponse = "Reading phase \(phaseNumber)..."
+            print("[Orchestrator] Read phase \(phaseNumber) (\(phaseContent.count) chars)")
+
+            // Speak the phase content using TTS
+            await MainActor.run {
+                self.ttsManager.speak(phaseContent)
+            }
+        } else {
+            lastResponse = "Phase \(phaseNumber) not found. Try 'read the phasing' to hear all phases."
+
+            // Speak the error message
+            await MainActor.run {
+                self.ttsManager.speak(self.lastResponse)
+            }
+        }
+    }
+
     private func editDescription(content: String) async {
         lastResponse = "Editing description..."
 
         if artifactManager.appendToFile(filename: "description.md", content: "\n\(content)") {
-            lastResponse = "Description updated"
+            lastResponse = "Description updated. Say 'read the description' to hear it."
+
+            // Speak the success message
+            await MainActor.run {
+                self.ttsManager.speak(self.lastResponse)
+            }
+
+            // Add to conversation history
+            addAssistantResponse("I've updated the description based on your request.")
         } else {
             lastResponse = "Failed to edit description"
+
+            // Speak the error
+            await MainActor.run {
+                self.ttsManager.speak(self.lastResponse)
+            }
         }
     }
 
@@ -253,16 +298,39 @@ class Orchestrator: ObservableObject {
             lastResponse = "Editing phase \(phase)..."
 
             if artifactManager.editPhase(in: "phasing.md", phaseNumber: phase, newContent: content) {
-                lastResponse = "Phase \(phase) updated"
+                lastResponse = "Phase \(phase) updated. Say 'read phase \(phase)' to hear the changes."
+
+                // Speak the success message
+                await MainActor.run {
+                    self.ttsManager.speak(self.lastResponse)
+                }
+
+                // Add to conversation history
+                addAssistantResponse("I've updated phase \(phase) based on your request.")
             } else {
                 lastResponse = "Failed to edit phase \(phase)"
+
+                // Speak the error
+                await MainActor.run {
+                    self.ttsManager.speak(self.lastResponse)
+                }
             }
         } else {
             // Append to phasing if no specific phase
             if artifactManager.appendToFile(filename: "phasing.md", content: "\n\(content)") {
                 lastResponse = "Phasing updated"
+
+                // Speak the success message
+                await MainActor.run {
+                    self.ttsManager.speak(self.lastResponse)
+                }
             } else {
                 lastResponse = "Failed to edit phasing"
+
+                // Speak the error
+                await MainActor.run {
+                    self.ttsManager.speak(self.lastResponse)
+                }
             }
         }
     }

@@ -168,7 +168,48 @@ class ArtifactManager {
         return safeWrite(filename: filename, content: updated)
     }
 
-    // MARK: - Phase-Specific Editing
+    // MARK: - Phase-Specific Operations
+
+    func readPhase(from filename: String, phaseNumber: Int) -> String? {
+        guard let content = safeRead(filename: filename) else {
+            print("[ArtifactManager] Cannot read phase from non-existent file: \(filename)")
+            return nil
+        }
+
+        // Parse phases
+        let lines = content.components(separatedBy: .newlines)
+        var inTargetPhase = false
+        var phaseCount = 0
+        var phaseContent: [String] = []
+
+        for line in lines {
+            if line.hasPrefix("## Phase") {
+                phaseCount += 1
+
+                if phaseCount == phaseNumber {
+                    inTargetPhase = true
+                    phaseContent.append(line)
+                    continue
+                } else if inTargetPhase {
+                    // We've hit the next phase, stop collecting
+                    break
+                }
+            }
+
+            if inTargetPhase {
+                phaseContent.append(line)
+            }
+        }
+
+        if phaseContent.isEmpty {
+            print("[ArtifactManager] Phase \(phaseNumber) not found")
+            return nil
+        }
+
+        let result = phaseContent.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        print("[ArtifactManager] Read phase \(phaseNumber) (\(result.count) chars)")
+        return result
+    }
 
     func editPhase(in filename: String, phaseNumber: Int, newContent: String) -> Bool {
         guard let existing = safeRead(filename: filename) else {

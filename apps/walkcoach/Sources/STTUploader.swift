@@ -51,18 +51,19 @@ final class STTUploader {
         request.httpBody = body
         
         print("[STTUploader] Uploading \(audioData.count) bytes...")
-        
-        // Perform request
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NSError(domain: "STTUploader", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
-        }
-        
-        if httpResponse.statusCode != 200 {
-            let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-            print("[STTUploader] API Error (\(httpResponse.statusCode)): \(errorBody)")
-            throw NSError(domain: "STTUploader", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: errorBody])
+
+        // Perform request with retry logic
+        let data: Data
+        do {
+            data = try await NetworkManager.shared.performRequestWithRetry(request)
+        } catch {
+            print("[STTUploader] Network request failed after retries: \(error)")
+
+            // Return a fallback message if offline
+            if (error as NSError).domain == NSURLErrorDomain {
+                return "[Network unavailable - please try again]"
+            }
+            throw error
         }
         
         // Parse response

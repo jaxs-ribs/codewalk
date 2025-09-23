@@ -15,6 +15,7 @@ enum ProposedAction: Codable {
     case writePhasing
     case readDescription
     case readPhasing
+    case readSpecificPhase(Int)
     case editDescription(String)
     case editPhasing(phaseNumber: Int?, content: String)
     case conversation(String)
@@ -44,6 +45,9 @@ enum ProposedAction: Codable {
             self = .readDescription
         case "read_phasing":
             self = .readPhasing
+        case "read_specific_phase":
+            let phaseNumber = try container.decode(Int.self, forKey: .phaseNumber)
+            self = .readSpecificPhase(phaseNumber)
         case "edit_description":
             let content = try container.decode(String.self, forKey: .content)
             self = .editDescription(content)
@@ -87,6 +91,9 @@ enum ProposedAction: Codable {
             try container.encode("read_description", forKey: .action)
         case .readPhasing:
             try container.encode("read_phasing", forKey: .action)
+        case .readSpecificPhase(let phaseNumber):
+            try container.encode("read_specific_phase", forKey: .action)
+            try container.encode(phaseNumber, forKey: .phaseNumber)
         case .editDescription(let content):
             try container.encode("edit_description", forKey: .action)
             try container.encode(content, forKey: .content)
@@ -136,6 +143,7 @@ class Router {
     - "write the phasing" or "write phasing" -> write_phasing
     - "read the description" or "read description" -> read_description
     - "read the phasing" or "read phasing" -> read_phasing
+    - "read phase 2" or "read phase two" -> read_specific_phase with phaseNumber
     - "edit the description to..." -> edit_description
     - "change phase 2 to..." or "edit phase 2..." -> edit_phasing with phaseNumber
     - "repeat" or "repeat last" -> repeat_last
@@ -197,18 +205,8 @@ class Router {
 
         print("[Router] Sending request to Groq...")
 
-        // Perform request
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NSError(domain: "Router", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
-        }
-
-        if httpResponse.statusCode != 200 {
-            let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-            print("[Router] API Error (\(httpResponse.statusCode)): \(errorBody)")
-            throw NSError(domain: "Router", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: errorBody])
-        }
+        // Perform request with retry logic
+        let data = try await NetworkManager.shared.performRequestWithRetry(request)
 
         // Parse response
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
