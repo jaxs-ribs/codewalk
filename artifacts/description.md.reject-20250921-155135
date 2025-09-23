@@ -1,9 +1,0 @@
---- /dev/null
-+++ artifacts/description.md
-@@ -0,0 +1,7 @@
-+# Snake App
-+
-+Single-player snake game. Eat food, grow longer, avoid walls and tail.
-+
-+## Platform
-+Language and toolkit still open.

@@ -36,8 +36,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 mod artifacts;
+mod orchestrator;
 
 use crate::artifacts::{ArtifactManager, ArtifactUpdateOutcome};
+use crate::orchestrator::{Orchestrator, Action};
 
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 const PUSH_TO_TALK_KEY: Keycode = Keycode::Space;
@@ -152,6 +154,7 @@ struct App {
     tts: TtsClient,
     trace_logger: Option<TraceLogger>,
     artifact_manager: Option<ArtifactManager>,
+    orchestrator: Orchestrator,
     output_dir: PathBuf,
 }
 
@@ -174,7 +177,7 @@ impl App {
             Ok(val) if matches!(val.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes")
         );
         let trace_logger = TraceLogger::new(logging_enabled)?;
-        let artifact_manager = if logging_enabled {
+        let mut artifact_manager = if logging_enabled {
             match ArtifactManager::new(api_key) {
                 Ok(manager) => {
                     if let Some(reason) = manager.disabled_reason() {
@@ -191,6 +194,14 @@ impl App {
             None
         };
 
+        let mut orchestrator = Orchestrator::new();
+        
+        // Move artifact manager to orchestrator for Phase 0
+        // (In Phase 1, the orchestrator will own all file I/O directly)
+        if let Some(manager) = artifact_manager.take() {
+            orchestrator.set_artifact_manager(manager);
+        }
+        
         Ok(Self {
             recorder,
             beep,
@@ -200,7 +211,8 @@ impl App {
             assistant,
             tts,
             trace_logger,
-            artifact_manager,
+            artifact_manager: None, // Moved to orchestrator for Phase 0
+            orchestrator,
             output_dir,
         })
     }
@@ -212,6 +224,8 @@ impl App {
         let mut started_at: Option<Instant> = None;
 
         loop {
+            // Process any pending orchestrator actions
+            self.process_orchestrator_queue();
             let keys: HashSet<Keycode> = self.keyboard.get_keys().into_iter().collect();
             let is_down = keys.contains(&PUSH_TO_TALK_KEY);
 
@@ -335,15 +349,21 @@ impl App {
                     trace_entry.durations.speak_ms = speak_start.elapsed().as_millis() as u64;
                 }
 
-                if let Some(manager) = &self.artifact_manager {
-                    match manager.process_turn(&transcript, &answer) {
-                        Ok(Some(outcome)) => self.report_artifact_outcome(outcome),
-                        Ok(None) => {}
-                        Err(err) => eprintln!("Artifact update failed: {err:?}"),
-                    }
+                // Queue artifact processing through orchestrator
+                // Now guaranteed to run single-threaded
+                let action = Action::ProcessArtifacts {
+                    transcript: transcript.clone(),
+                    reply: answer.clone(),
+                };
+                
+                if let Err(err) = self.orchestrator.enqueue(action) {
+                    eprintln!("Failed to queue artifact processing: {err:?}");
                 }
 
                 self.log_trace(trace_entry);
+                
+                // Process queued actions (single-threaded execution)
+                self.process_orchestrator_queue();
             }
 
             thread::sleep(Duration::from_millis(12));
@@ -352,6 +372,28 @@ impl App {
         Ok(())
     }
 
+    fn process_orchestrator_queue(&mut self) {
+        // Execute actions from the queue (single-threaded, one at a time)
+        while self.orchestrator.has_pending() {
+            match self.orchestrator.execute_next() {
+                Ok(Some(result)) => {
+                    // Handle artifact processing outcome
+                    if let Some(outcome) = result.artifact_outcome {
+                        self.report_artifact_outcome(outcome);
+                    }
+                }
+                Ok(None) => {
+                    // No action was executed (queue empty or state not ready)
+                    break;
+                }
+                Err(err) => {
+                    eprintln!("Orchestrator execution failed: {err:?}");
+                    break;
+                }
+            }
+        }
+    }
+    
     fn log_trace(&self, entry: TraceEntry) {
         if let Some(logger) = &self.trace_logger {
             if let Err(err) = logger.log(entry) {
