@@ -36,7 +36,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 mod artifacts;
-mod orchestrator;
+pub mod orchestrator;
+mod io_guard;
 
 use crate::artifacts::{ArtifactManager, ArtifactUpdateOutcome};
 use crate::orchestrator::{Orchestrator, Action};
@@ -153,7 +154,8 @@ struct App {
     assistant: AssistantClient,
     tts: TtsClient,
     trace_logger: Option<TraceLogger>,
-    artifact_manager: Option<ArtifactManager>,
+    #[allow(dead_code)]
+    artifact_manager: Option<ArtifactManager>,  // Moved to orchestrator
     orchestrator: Orchestrator,
     output_dir: PathBuf,
 }

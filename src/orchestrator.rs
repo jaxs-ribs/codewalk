@@ -1,24 +1,46 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::PathBuf;
+use std::fs;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, Context};
 use chrono::Utc;
 
 use crate::artifacts::{ArtifactManager, ArtifactUpdateOutcome};
+use crate::io_guard::{IoGuard, safe_read, safe_write_atomic};
 
 /// Represents a single action that can be executed by the orchestrator.
 /// All file I/O must go through these actions.
 #[derive(Debug, Clone)]
 pub enum Action {
-    /// Placeholder for read action (Phase 1)
-    Read { path: String },
-    /// Placeholder for write action (Phase 1)
-    Write { path: String, content: String },
-    /// Placeholder for edit action (Phase 1)
-    Edit { path: String, patch: String },
+    /// Read a file and return its contents
+    Read { 
+        path: String,
+    },
+    /// Write content to a file (full replacement)
+    Write { 
+        path: String, 
+        content: String,
+    },
+    /// Apply an edit patch to a file
+    Edit { 
+        path: String, 
+        patch: String,
+        patch_type: PatchType,
+    },
     /// Process a turn with transcript and reply
-    ProcessArtifacts { transcript: String, reply: String },
+    ProcessArtifacts { 
+        transcript: String, 
+        reply: String,
+    },
+}
+
+/// Type of patch to apply
+#[derive(Debug, Clone, Copy)]
+pub enum PatchType {
+    UnifiedDiff,
+    YamlMerge,
 }
 
 /// The current state of the orchestrator's execution.
@@ -76,6 +98,8 @@ impl TurnContext {
 /// Result of processing an action.
 pub struct ActionResult {
     pub artifact_outcome: Option<ArtifactUpdateOutcome>,
+    pub read_content: Option<String>,
+    pub write_success: bool,
 }
 
 /// The main orchestrator that ensures single-threaded execution of all actions.
@@ -180,9 +204,93 @@ impl Orchestrator {
     }
     
     /// Apply a single action. This is where all I/O happens.
-    /// In Phase 0, we only handle the ProcessArtifacts action.
+    /// All file operations are guarded to ensure only the orchestrator can perform them.
     fn apply_action(&mut self, action: Action) -> Result<ActionResult> {
+        // Enable I/O for the duration of this action
+        let _guard = IoGuard::new();
+        
         match action {
+            Action::Read { path } => {
+                if self.debug_enabled {
+                    eprintln!("[orchestrator] reading file: {}", path);
+                }
+                
+                let path_buf = PathBuf::from(&path);
+                let content = safe_read(&path_buf)
+                    .with_context(|| format!("Failed to read {}", path))?;
+                
+                Ok(ActionResult {
+                    artifact_outcome: None,
+                    read_content: Some(content),
+                    write_success: false,
+                })
+            }
+            
+            Action::Write { path, content } => {
+                if self.debug_enabled {
+                    eprintln!("[orchestrator] writing file: {}", path);
+                }
+                
+                let path_buf = PathBuf::from(&path);
+                
+                // Create parent directory if needed
+                if let Some(parent) = path_buf.parent() {
+                    fs::create_dir_all(parent)
+                        .with_context(|| format!("Failed to create parent directory for {}", path))?;
+                }
+                
+                // Write atomically
+                safe_write_atomic(&path_buf, content.as_bytes())
+                    .with_context(|| format!("Failed to write {}", path))?;
+                
+                Ok(ActionResult {
+                    artifact_outcome: None,
+                    read_content: None,
+                    write_success: true,
+                })
+            }
+            
+            Action::Edit { path, patch, patch_type } => {
+                if self.debug_enabled {
+                    eprintln!("[orchestrator] editing file: {} ({:?})", path, patch_type);
+                }
+                
+                // For Phase 1, we'll delegate to the existing artifact store logic
+                // In future phases, this will be fully implemented here
+                let path_buf = PathBuf::from(&path);
+                
+                // Read current content
+                let current = if path_buf.exists() {
+                    safe_read(&path_buf)?
+                } else {
+                    String::new()
+                };
+                
+                // Apply patch based on type
+                let updated = match patch_type {
+                    PatchType::UnifiedDiff => {
+                        // Use diffy to apply patch
+                        let patch_obj = diffy::Patch::from_str(&patch)
+                            .context("Failed to parse unified diff")?;
+                        diffy::apply(&current, &patch_obj)
+                            .context("Failed to apply diff")?
+                    }
+                    PatchType::YamlMerge => {
+                        // For now, just return an error - will implement in later phase
+                        return Err(anyhow!("YAML merge not yet implemented"));
+                    }
+                };
+                
+                // Write updated content
+                safe_write_atomic(&path_buf, updated.as_bytes())?;
+                
+                Ok(ActionResult {
+                    artifact_outcome: None,
+                    read_content: None,
+                    write_success: true,
+                })
+            }
+            
             Action::ProcessArtifacts { transcript, reply } => {
                 // Update turn context
                 if let Some(turn) = &mut self.current_turn {
@@ -190,7 +298,7 @@ impl Orchestrator {
                     turn.reply = Some(reply.clone());
                 }
                 
-                // Process artifacts through manager (temporary for Phase 0)
+                // Process artifacts through manager
                 let artifact_outcome = if let Some(manager) = &self.artifact_manager {
                     if self.debug_enabled {
                         eprintln!(
@@ -210,14 +318,11 @@ impl Orchestrator {
                     None
                 };
                 
-                Ok(ActionResult { artifact_outcome })
-            }
-            Action::Read { .. } | Action::Write { .. } | Action::Edit { .. } => {
-                // These will be implemented in Phase 1
-                if self.debug_enabled {
-                    eprintln!("[orchestrator] action {:?} not yet implemented", action);
-                }
-                Ok(ActionResult { artifact_outcome: None })
+                Ok(ActionResult {
+                    artifact_outcome,
+                    read_content: None,
+                    write_success: false,
+                })
             }
         }
     }
