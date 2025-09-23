@@ -14,9 +14,11 @@ class AgentViewModel: ObservableObject {
     private var recorder: Recorder?
     private var sttUploader: STTUploader?
     private var router: Router?
+    private var orchestrator: Orchestrator?
     private var recordingStartTime: Date?
     private var recordingTimer: Timer?
     private var currentRecordingURL: URL?
+    private var cancellables = Set<AnyCancellable>()
 
     init() {
         print("[WalkCoach] ViewModel initialized")
@@ -36,6 +38,18 @@ class AgentViewModel: ObservableObject {
 
         router = Router(groqApiKey: env.groqApiKey)
         print("[WalkCoach] Router initialized")
+
+        orchestrator = Orchestrator()
+        print("[WalkCoach] Orchestrator initialized")
+
+        // Subscribe to orchestrator updates
+        orchestrator?.$lastResponse
+            .sink { [weak self] response in
+                if !response.isEmpty {
+                    self?.lastMessage = response
+                }
+            }
+            .store(in: &cancellables)
     }
 
     func startRecording() {
@@ -150,6 +164,11 @@ class AgentViewModel: ObservableObject {
     private func routeTranscript(_ transcript: String) async {
         print("[WalkCoach] Routing transcript: \(transcript)")
 
+        // Add to conversation history
+        await MainActor.run {
+            self.orchestrator?.addUserTranscript(transcript)
+        }
+
         do {
             guard let router = router else {
                 print("[WalkCoach] Router not initialized")
@@ -163,7 +182,7 @@ class AgentViewModel: ObservableObject {
             let response = try await router.route(transcript: transcript)
 
             await MainActor.run {
-                // Handle the routed action
+                // Handle the routed action through orchestrator
                 self.handleRoutedAction(response)
             }
         } catch {
@@ -178,38 +197,23 @@ class AgentViewModel: ObservableObject {
     private func handleRoutedAction(_ response: RouterResponse) {
         print("[WalkCoach] Handling action: \(response.action)")
 
-        switch response.action {
-        case .writeDescription:
-            lastMessage = "Would write description (Phase 4+ needed)"
-        case .writePhasing:
-            lastMessage = "Would write phasing (Phase 4+ needed)"
-        case .readDescription:
-            lastMessage = "Would read description (Phase 5+ needed)"
-        case .readPhasing:
-            lastMessage = "Would read phasing (Phase 5+ needed)"
-        case .editDescription(let content):
-            lastMessage = "Would edit description: \(content)"
-        case .editPhasing(let phase, let content):
-            if let phase = phase {
-                lastMessage = "Would edit phase \(phase): \(content)"
-            } else {
-                lastMessage = "Would edit phasing: \(content)"
-            }
-        case .conversation(let content):
-            lastMessage = "Conversation: \(content)"
-        case .clarification(let question):
-            lastMessage = "Need clarification: \(question)"
-        case .repeatLast:
-            lastMessage = "Would repeat last response"
-        case .nextPhase:
-            lastMessage = "Would go to next phase"
-        case .previousPhase:
-            lastMessage = "Would go to previous phase"
-        case .stop:
-            lastMessage = "Stopping"
+        // Check if orchestrator is busy
+        guard let orchestrator = orchestrator else {
+            lastMessage = "Orchestrator not initialized"
+            currentState = .idle
+            return
         }
 
-        // Return to idle state
+        if orchestrator.isExecuting {
+            lastMessage = "Still processing..."
+            currentState = .idle
+            return
+        }
+
+        // Enqueue the action for execution
+        orchestrator.enqueueAction(response.action)
+
+        // Return to idle state (orchestrator updates will come via subscription)
         currentState = .idle
     }
 }
