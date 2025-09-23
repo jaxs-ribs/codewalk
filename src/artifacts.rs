@@ -169,7 +169,10 @@ impl ArtifactEditor {
         }))
     }
 
-    pub fn propose(&self, input: &ArtifactEditorInput<'_>) -> Result<Option<ArtifactEditorResponse>> {
+    pub fn propose(
+        &self,
+        input: &ArtifactEditorInput<'_>,
+    ) -> Result<Option<ArtifactEditorResponse>> {
         let payload_text = build_editor_payload(input);
         let body = json!({
             "model": self.model,
@@ -323,16 +326,17 @@ impl ArtifactStore {
         let contents = fs::read_to_string(&index_path)
             .with_context(|| format!("Failed to read phasing index at {}", index_path.display()))?;
 
-        let index: PhasingIndex = serde_json::from_str(&contents)
-            .with_context(|| format!("Failed to parse phasing index at {}", index_path.display()))?;
+        let index: PhasingIndex = serde_json::from_str(&contents).with_context(|| {
+            format!("Failed to parse phasing index at {}", index_path.display())
+        })?;
 
         Ok(index)
     }
 
     pub fn write_phasing_index(&self, index: &PhasingIndex) -> Result<()> {
         let path = self.root.join(PHASING_INDEX_FILE);
-        let json = serde_json::to_string_pretty(index)
-            .context("Failed to serialize phasing index")?;
+        let json =
+            serde_json::to_string_pretty(index).context("Failed to serialize phasing index")?;
         write_atomic(&path, json.as_bytes())
     }
 
@@ -353,24 +357,26 @@ impl ArtifactStore {
             let target = self.normalize_patch_path(&patch.path)?;
 
             match patch.kind {
-                ArtifactPatchType::UnifiedDiff => match self.apply_unified_diff(&target, &patch.data) {
-                    Ok(changed) => {
-                        if changed {
-                            if Self::is_phasing_file(&target) {
-                                phasing_changed = true;
+                ArtifactPatchType::UnifiedDiff => {
+                    match self.apply_unified_diff(&target, &patch.data) {
+                        Ok(changed) => {
+                            if changed {
+                                if Self::is_phasing_file(&target) {
+                                    phasing_changed = true;
+                                }
+                                applied.push(target);
                             }
-                            applied.push(target);
+                        }
+                        Err(err) => {
+                            let reject_path = self.write_reject_file(&target, &patch.data)?;
+                            rejected.push(RejectedPatch {
+                                path: target,
+                                reason: err.to_string(),
+                                reject_path,
+                            });
                         }
                     }
-                    Err(err) => {
-                        let reject_path = self.write_reject_file(&target, &patch.data)?;
-                        rejected.push(RejectedPatch {
-                            path: target,
-                            reason: err.to_string(),
-                            reject_path,
-                        });
-                    }
-                },
+                }
                 ArtifactPatchType::YamlMerge => match self.apply_yaml_merge(&target, &patch.data) {
                     Ok(changed) => {
                         if changed {
@@ -459,7 +465,8 @@ impl ArtifactStore {
         let (original, existed, lock) = self.read_for_modify(target)?;
 
         let patch = Patch::from_str(diff).context("Failed to parse unified diff patch")?;
-        let updated = diffy::apply(&original, &patch).context("Failed to apply unified diff patch")?;
+        let updated =
+            diffy::apply(&original, &patch).context("Failed to apply unified diff patch")?;
 
         if updated == original {
             lock.unlock().ok();
@@ -482,8 +489,8 @@ impl ArtifactStore {
                 .with_context(|| format!("Failed to parse YAML at {}", target.display()))?
         };
 
-        let patch_value: YamlValue = serde_yaml::from_str(patch)
-            .context("Failed to parse yaml_merge patch data")?;
+        let patch_value: YamlValue =
+            serde_yaml::from_str(patch).context("Failed to parse yaml_merge patch data")?;
 
         let changed = merge_yaml(&mut base, &patch_value);
 
@@ -501,8 +508,9 @@ impl ArtifactStore {
 
     fn read_for_modify(&self, target: &Path) -> Result<(String, bool, fs::File)> {
         if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create parent directory {}", parent.display()))?;
+            fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create parent directory {}", parent.display())
+            })?;
         }
 
         let lock = acquire_lock(target)?;
@@ -541,9 +549,8 @@ impl ArtifactStore {
             .parent()
             .map(|parent| parent.join(&reject_name))
             .unwrap_or_else(|| PathBuf::from(&reject_name));
-        fs::write(&reject_path, patch.as_bytes()).with_context(|| {
-            format!("Failed to write reject file {}", reject_path.display())
-        })?;
+        fs::write(&reject_path, patch.as_bytes())
+            .with_context(|| format!("Failed to write reject file {}", reject_path.display()))?;
         Ok(reject_path)
     }
 
@@ -689,7 +696,8 @@ fn write_via_temp(target: &Path, data: &[u8]) -> Result<()> {
         .with_context(|| format!("Failed to create temp file in {}", parent.display()))?;
     temp.write_all(data)
         .context("Failed to write temp artifact content")?;
-    temp.flush().context("Failed to flush temp artifact content")?;
+    temp.flush()
+        .context("Failed to flush temp artifact content")?;
     temp.persist(target)
         .with_context(|| format!("Failed to replace artifact {}", target.display()))?;
     Ok(())
@@ -790,11 +798,7 @@ impl PhaseBuilder {
     }
 
     fn finish(self) -> PhasingEntry {
-        let talk_track = self
-            .lines
-            .join("\n")
-            .trim()
-            .to_string();
+        let talk_track = self.lines.join("\n").trim().to_string();
         make_phase_entry(self.number, self.title, talk_track)
     }
 }

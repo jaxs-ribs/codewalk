@@ -1,65 +1,46 @@
 use std::{
-    cell::Cell,
     collections::HashSet,
     fs,
-    fs::OpenOptions,
-    io::{Cursor, Write},
     path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::atomic::Ordering,
     thread,
     time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, anyhow};
-use audrey::Reader as AudioReader;
-use base64::{
-    Engine as _,
-    engine::general_purpose::{STANDARD, URL_SAFE},
-};
-use chrono::{Local, SecondsFormat, Utc};
-use cpal::{
-    SampleFormat, Stream,
-    traits::{DeviceTrait, HostTrait, StreamTrait},
-};
 use device_query::{DeviceQuery, DeviceState, Keycode};
-use reqwest::{
-    blocking::{Client as HttpClient, multipart},
-    header::CONTENT_TYPE,
-};
-use rodio::{
-    OutputStream, OutputStreamHandle, Sink, Source, buffer::SamplesBuffer, source::SineWave,
-};
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
 mod artifacts;
-pub mod orchestrator;
+mod audio;
 mod io_guard;
+pub mod orchestrator;
 mod router;
+mod services;
+mod trace;
+mod tts_backend;
 
 use crate::artifacts::{ArtifactManager, ArtifactUpdateOutcome};
-use crate::orchestrator::{Orchestrator, Action};
+use crate::audio::{BeepPlayer, Recorder, SpeechPlayer, save_recording};
+use crate::orchestrator::{Action, Orchestrator};
 use crate::router::Router;
+use crate::services::{AssistantClient, TranscriptionClient};
+use crate::trace::{TraceEntry, TraceLogger, TraceTts};
+use crate::tts_backend::{LocalTtsBackend, TtsBackend};
 
-const TARGET_SAMPLE_RATE: u32 = 16_000;
-const PUSH_TO_TALK_KEY: Keycode = Keycode::Space;
-const EXIT_KEY: Keycode = Keycode::Escape;
+pub(crate) const TARGET_SAMPLE_RATE: u32 = 16_000;
+pub(crate) const PUSH_TO_TALK_KEY: Keycode = Keycode::Space;
+pub(crate) const EXIT_KEY: Keycode = Keycode::Escape;
 const OUTPUT_DIR: &str = "recordings";
-const DEFAULT_STT_LANGUAGE: &str = "en";
-const DEFAULT_LLM_TEMPERATURE: f32 = 0.3;
-const DEFAULT_LLM_MAX_TOKENS: u32 = 400;
-const DEFAULT_LLM_MODEL: &str = "moonshotai/kimi-k2-instruct-0905";
-const DEFAULT_TTS_MODEL: &str = "playai-tts";
-const DEFAULT_TTS_VOICE: &str = "Fritz-PlayAI";
-const SMART_SECRETARY_PROMPT: &str = "You are Walkcoach, a smart secretary. Answer in one to three short sentences. If one clarifier would change the answer, ask it. Otherwise, give tight, actionable guidance. No filler.";
+pub(crate) const DEFAULT_STT_LANGUAGE: &str = "en";
+pub(crate) const DEFAULT_LLM_TEMPERATURE: f32 = 0.3;
+pub(crate) const DEFAULT_LLM_MAX_TOKENS: u32 = 400;
+pub(crate) const DEFAULT_LLM_MODEL: &str = "moonshotai/kimi-k2-instruct-0905";
+pub(crate) const SMART_SECRETARY_PROMPT: &str = "You are Walkcoach, a smart secretary. Answer in one to three short sentences. If one clarifier would change the answer, ask it. Otherwise, give tight, actionable guidance. No filler.";
 
 fn main() -> Result<()> {
     let env_source = load_env_file()?;
     ensure_groq_key(env_source.as_deref())?;
-    
+
     // Set default lighter debug output if not explicitly configured
     if std::env::var("WALKCOACH_DEBUG_ROUTER").is_err() {
         unsafe {
@@ -161,10 +142,10 @@ struct App {
     keyboard: DeviceState,
     transcriber: TranscriptionClient,
     assistant: AssistantClient,
-    tts: TtsClient,
+    tts: Box<dyn TtsBackend>,
     trace_logger: Option<TraceLogger>,
     #[allow(dead_code)]
-    artifact_manager: Option<ArtifactManager>,  // Moved to orchestrator
+    artifact_manager: Option<ArtifactManager>, // Moved to orchestrator
     orchestrator: Orchestrator,
     router: Router,
     output_dir: PathBuf,
@@ -183,7 +164,16 @@ impl App {
             .context("GROQ_API_KEY disappeared before we could build the Groq clients")?;
         let transcriber = TranscriptionClient::new(api_key.clone())?;
         let assistant = AssistantClient::new(api_key.clone())?;
-        let tts = TtsClient::new(api_key.clone())?;
+        // Choose TTS backend - default to local TTS unless explicitly using Groq
+        let tts: Box<dyn TtsBackend> = if std::env::var("USE_GROQ_TTS").is_ok() {
+            use crate::tts_backend::GroqTtsBackend;
+            eprintln!("Using Groq TTS (costs money, higher quality)");
+            Box::new(GroqTtsBackend::new(api_key.clone())?)
+        } else {
+            eprintln!("Using local TTS (free, lower quality)");
+            eprintln!("Set USE_GROQ_TTS=1 for higher quality paid TTS");
+            Box::new(LocalTtsBackend::new()?)
+        };
         let logging_enabled = !matches!(
             std::env::var("WALKCOACH_NO_LOG"),
             Ok(val) if matches!(val.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes")
@@ -207,15 +197,15 @@ impl App {
         };
 
         let mut orchestrator = Orchestrator::new();
-        
+
         // Move artifact manager to orchestrator for Phase 0
         // (In Phase 1, the orchestrator will own all file I/O directly)
         if let Some(manager) = artifact_manager.take() {
             orchestrator.set_artifact_manager(manager);
         }
-        
+
         let router = Router::new()?;
-        
+
         Ok(Self {
             recorder,
             beep,
@@ -288,18 +278,19 @@ impl App {
                 };
 
                 let mut trace_entry = TraceEntry::new("fast");
-                trace_entry.durations.record_ms = (saved.duration_seconds * 1000.0).round() as u64;
+                trace_entry.durations.record_ms =
+                    Some((saved.duration_seconds * 1000.0).round() as u64);
 
                 let stt_start = Instant::now();
                 let transcript = match self.transcriber.transcribe(&saved.path) {
                     Ok(transcript) => {
-                        trace_entry.durations.stt_ms = stt_start.elapsed().as_millis() as u64;
+                        trace_entry.durations.stt_ms = Some(stt_start.elapsed().as_millis() as u64);
                         println!("Transcript:  {transcript}");
                         trace_entry.user_text = Some(transcript.clone());
                         transcript
                     }
                     Err(err) => {
-                        trace_entry.durations.stt_ms = stt_start.elapsed().as_millis() as u64;
+                        trace_entry.durations.stt_ms = Some(stt_start.elapsed().as_millis() as u64);
                         let msg = format!("transcription failed: {err}");
                         trace_entry.errors.push(msg);
                         eprintln!("Transcription failed for {}: {err:?}", saved.path.display());
@@ -311,150 +302,172 @@ impl App {
                 // Use router to determine intent (LLM-based or local yes/no)
                 let (answer, skip_artifacts) = match self.router.parse_user_input(&transcript) {
                     Ok(intent) => {
-                    // Handle local command directly (no LLM needed)
-                    match intent {
-                        crate::router::Intent::Directive { ref action } => {
-                            // Execute directive immediately
-                            let action_clone = action.clone();
-                            match self.orchestrator.handle_intent(intent) {
-                                Ok(_) => {
-                                    let (msg, skip_tts) = match action_clone {
-                                        crate::router::ProposedAction::WriteDescription => ("Writing description now...", false),
-                                        crate::router::ProposedAction::WritePhasing => ("Writing phasing now...", false), 
-                                        crate::router::ProposedAction::ReadDescription => ("Reading description", true), // Skip TTS, file will be spoken
-                                        crate::router::ProposedAction::ReadPhasing => ("Reading phasing", true), // Skip TTS, file will be spoken
-                                        crate::router::ProposedAction::Stop => ("Stopping", false),
-                                        crate::router::ProposedAction::RepeatLast => ("Repeating", true), // Skip TTS, cached content will be spoken
-                                        _ => ("Executing...", false),
-                                    };
-                                    println!("Assistant: {msg}");
-                                    trace_entry.assistant_text = Some(msg.to_string());
-                                    // Return a special marker to skip TTS if this action will speak its own content
-                                    if skip_tts {
-                                        ("[SKIP_TTS]".to_string(), true)
-                                    } else {
-                                        (msg.to_string(), true)
-                                    }
-                                }
-                                Err(err) => {
-                                    let msg = format!("Failed: {err}");
-                                    eprintln!("Intent handling failed: {err:?}");
-                                    println!("Assistant: {msg}");
-                                    trace_entry.assistant_text = Some(msg.clone());
-                                    self.log_trace(trace_entry);
-                                    continue;
-                                }
-                            }
-                        }
-                        crate::router::Intent::Confirmation { .. } => {
-                            // Handle yes/no
-                            match self.orchestrator.handle_intent(intent) {
-                                Ok(response) => {
-                                    let msg = if response == "executing" {
-                                        "Confirmed, executing now"
-                                    } else if response == "cancelled" {
-                                        "Cancelled"  
-                                    } else {
-                                        &response
-                                    };
-                                    println!("Assistant: {msg}");
-                                    trace_entry.assistant_text = Some(msg.to_string());
-                                    (msg.to_string(), true)
-                                }
-                                Err(err) => {
-                                    let msg = format!("Failed: {err}");
-                                    eprintln!("Confirmation failed: {err:?}");
-                                    self.log_trace(trace_entry);
-                                    continue;
-                                }
-                            }
-                        }
-                        crate::router::Intent::Proposal { action: _, ref question } => {
-                            // Store proposal and ask question
-                            let q = question.clone();
-                            self.orchestrator.handle_intent(intent).ok();
-                            println!("Assistant: {}", q);
-                            trace_entry.assistant_text = Some(q.clone());
-                            (q, true)
-                        }
-                        crate::router::Intent::Info { ref message } => {
-                            // Info intent means it's conversational - pass to assistant
-                            if message == "Got it" {
-                                // This is a generic info response, use the assistant for real conversation
-                                let llm_start = Instant::now();
-                                match self.assistant.reply(&transcript) {
-                                    Ok(answer) => {
-                                        trace_entry.durations.llm_ms = llm_start.elapsed().as_millis() as u64;
-                                        println!("Assistant: {answer}");
-                                        trace_entry.assistant_text = Some(answer.clone());
-                                        (answer, false)  // Don't skip artifacts
-                                    }
-                                    Err(err) => {
-                                        let msg = format!("Assistant failed: {err}");
-                                        eprintln!("{msg}");
-                                        (msg, true)
-                                    }
-                                }
-                            } else {
-                                println!("Assistant: {message}");
-                                trace_entry.assistant_text = Some(message.clone());
-                                (message.clone(), true)
-                            }
-                        }
-                    }
-                }
-                Err(err) => {
-                    // Router failed, fall back to regular assistant
-                    eprintln!("Router failed: {err:?}");
-                    
-                    // Need LLM interpretation
-                    let llm_start = Instant::now();
-                    match self.assistant.reply(&transcript) {
-                        Ok(answer) => {
-                            trace_entry.durations.llm_ms = llm_start.elapsed().as_millis() as u64;
-                            
-                            // Parse assistant response for intent
-                            let intent = self.router.parse_assistant_response(&transcript, &answer);
-                            
-                            // Handle the intent
-                            let response = match &intent {
-                                crate::router::Intent::Proposal { action: _, question } => {
-                                    // Store proposal and return question
-                                    let q = question.clone();
-                                    self.orchestrator.handle_intent(intent).ok();
-                                    q
-                                }
-                                crate::router::Intent::Directive { .. } => {
-                                    // LLM suggested a directive, execute it
-                                    match self.orchestrator.handle_intent(intent) {
-                                        Ok(_) => format!("{} Done.", answer),
-                                        Err(err) => {
-                                            eprintln!("Intent handling failed: {err:?}");
-                                            answer.clone()
+                        // Handle local command directly (no LLM needed)
+                        match intent {
+                            crate::router::Intent::Directive { ref action } => {
+                                // Execute directive immediately
+                                let action_clone = action.clone();
+                                match self.orchestrator.handle_intent(intent) {
+                                    Ok(_) => {
+                                        let (msg, skip_tts) = match action_clone {
+                                            crate::router::ProposedAction::WriteDescription => {
+                                                ("Writing description now...", false)
+                                            }
+                                            crate::router::ProposedAction::WritePhasing => {
+                                                ("Writing phasing now...", false)
+                                            }
+                                            crate::router::ProposedAction::ReadDescription => {
+                                                ("Reading description", true)
+                                            } // Skip TTS, file will be spoken
+                                            crate::router::ProposedAction::ReadPhasing => {
+                                                ("Reading phasing", true)
+                                            } // Skip TTS, file will be spoken
+                                            crate::router::ProposedAction::Stop => {
+                                                ("Stopping", false)
+                                            }
+                                            crate::router::ProposedAction::RepeatLast => {
+                                                ("Repeating", true)
+                                            } // Skip TTS, cached content will be spoken
+                                            _ => ("Executing...", false),
+                                        };
+                                        println!("Assistant: {msg}");
+                                        trace_entry.assistant_text = Some(msg.to_string());
+                                        // Return a special marker to skip TTS if this action will speak its own content
+                                        if skip_tts {
+                                            ("[SKIP_TTS]".to_string(), true)
+                                        } else {
+                                            (msg.to_string(), true)
                                         }
                                     }
+                                    Err(err) => {
+                                        let msg = format!("Failed: {err}");
+                                        eprintln!("Intent handling failed: {err:?}");
+                                        println!("Assistant: {msg}");
+                                        trace_entry.assistant_text = Some(msg.clone());
+                                        self.log_trace(trace_entry);
+                                        continue;
+                                    }
                                 }
-                                crate::router::Intent::Info { message } => {
-                                    // Just informational
-                                    message.clone()
+                            }
+                            crate::router::Intent::Confirmation { .. } => {
+                                // Handle yes/no
+                                match self.orchestrator.handle_intent(intent) {
+                                    Ok(response) => {
+                                        let msg = if response == "executing" {
+                                            "Confirmed, executing now"
+                                        } else if response == "cancelled" {
+                                            "Cancelled"
+                                        } else {
+                                            &response
+                                        };
+                                        println!("Assistant: {msg}");
+                                        trace_entry.assistant_text = Some(msg.to_string());
+                                        (msg.to_string(), true)
+                                    }
+                                    Err(err) => {
+                                        let _msg = format!("Failed: {err}");
+                                        eprintln!("Confirmation failed: {err:?}");
+                                        self.log_trace(trace_entry);
+                                        continue;
+                                    }
                                 }
-                                _ => answer.clone(),
-                            };
-                            
-                            println!("Assistant: {response}");
-                            trace_entry.assistant_text = Some(response.clone());
-                            (response, false)
-                        }
-                        Err(err) => {
-                            trace_entry.durations.llm_ms = llm_start.elapsed().as_millis() as u64;
-                            let msg = format!("assistant failed: {err}");
-                            trace_entry.errors.push(msg);
-                            eprintln!("Assistant reply failed: {err:?}");
-                            self.log_trace(trace_entry);
-                            continue;
+                            }
+                            crate::router::Intent::Proposal {
+                                action: _,
+                                ref question,
+                            } => {
+                                // Store proposal and ask question
+                                let q = question.clone();
+                                self.orchestrator.handle_intent(intent).ok();
+                                println!("Assistant: {}", q);
+                                trace_entry.assistant_text = Some(q.clone());
+                                (q, true)
+                            }
+                            crate::router::Intent::Info { ref message } => {
+                                // Info intent means it's conversational - pass to assistant
+                                if message == "Got it" {
+                                    // This is a generic info response, use the assistant for real conversation
+                                    let llm_start = Instant::now();
+                                    match self.assistant.reply(&transcript) {
+                                        Ok(answer) => {
+                                            trace_entry.durations.llm_ms =
+                                                Some(llm_start.elapsed().as_millis() as u64);
+                                            println!("Assistant: {answer}");
+                                            trace_entry.assistant_text = Some(answer.clone());
+                                            (answer, false) // Don't skip artifacts
+                                        }
+                                        Err(err) => {
+                                            let msg = format!("Assistant failed: {err}");
+                                            eprintln!("{msg}");
+                                            (msg, true)
+                                        }
+                                    }
+                                } else {
+                                    println!("Assistant: {message}");
+                                    trace_entry.assistant_text = Some(message.clone());
+                                    (message.clone(), true)
+                                }
+                            }
                         }
                     }
-                }
+                    Err(err) => {
+                        // Router failed, fall back to regular assistant
+                        eprintln!("Router failed: {err:?}");
+
+                        // Need LLM interpretation
+                        let llm_start = Instant::now();
+                        match self.assistant.reply(&transcript) {
+                            Ok(answer) => {
+                                trace_entry.durations.llm_ms =
+                                    Some(llm_start.elapsed().as_millis() as u64);
+
+                                // Parse assistant response for intent
+                                let intent =
+                                    self.router.parse_assistant_response(&transcript, &answer);
+
+                                // Handle the intent
+                                let response = match &intent {
+                                    crate::router::Intent::Proposal {
+                                        action: _,
+                                        question,
+                                    } => {
+                                        // Store proposal and return question
+                                        let q = question.clone();
+                                        self.orchestrator.handle_intent(intent).ok();
+                                        q
+                                    }
+                                    crate::router::Intent::Directive { .. } => {
+                                        // LLM suggested a directive, execute it
+                                        match self.orchestrator.handle_intent(intent) {
+                                            Ok(_) => format!("{} Done.", answer),
+                                            Err(err) => {
+                                                eprintln!("Intent handling failed: {err:?}");
+                                                answer.clone()
+                                            }
+                                        }
+                                    }
+                                    crate::router::Intent::Info { message } => {
+                                        // Just informational
+                                        message.clone()
+                                    }
+                                    _ => answer.clone(),
+                                };
+
+                                println!("Assistant: {response}");
+                                trace_entry.assistant_text = Some(response.clone());
+                                (response, false)
+                            }
+                            Err(err) => {
+                                trace_entry.durations.llm_ms =
+                                    Some(llm_start.elapsed().as_millis() as u64);
+                                let msg = format!("assistant failed: {err}");
+                                trace_entry.errors.push(msg);
+                                eprintln!("Assistant reply failed: {err:?}");
+                                self.log_trace(trace_entry);
+                                continue;
+                            }
+                        }
+                    }
                 };
 
                 // Skip TTS synthesis if the answer is our special marker
@@ -464,7 +477,8 @@ impl App {
                     let tts_start = Instant::now();
                     match self.tts.synthesize(&answer) {
                         Ok(audio) => {
-                            trace_entry.durations.tts_ms = tts_start.elapsed().as_millis() as u64;
+                            trace_entry.durations.tts_ms =
+                                Some(tts_start.elapsed().as_millis() as u64);
                             if std::env::var("WALKCOACH_DEBUG_TTS").is_ok() {
                                 eprintln!(
                                     "[tts-debug] bytes={} content-type={} note={:?}",
@@ -475,6 +489,7 @@ impl App {
                             }
                             trace_entry.tts = Some(TraceTts {
                                 engine: "groq".to_string(),
+                                model: None,
                                 voice: self.tts.voice().to_string(),
                                 content_type: audio.content_type.clone(),
                                 note: audio.note.clone(),
@@ -482,7 +497,8 @@ impl App {
                             Some(audio)
                         }
                         Err(err) => {
-                            trace_entry.durations.tts_ms = tts_start.elapsed().as_millis() as u64;
+                            trace_entry.durations.tts_ms =
+                                Some(tts_start.elapsed().as_millis() as u64);
                             let msg = format!("tts failed: {err}");
                             trace_entry.errors.push(msg);
                             eprintln!("TTS synthesis failed: {err:?}");
@@ -499,7 +515,7 @@ impl App {
                         trace_entry.errors.push(msg);
                         eprintln!("Playback failed: {err:?}");
                     }
-                    trace_entry.durations.speak_ms = speak_start.elapsed().as_millis() as u64;
+                    trace_entry.durations.speak_ms = Some(speak_start.elapsed().as_millis() as u64);
                 }
 
                 // Queue artifact processing through orchestrator
@@ -509,19 +525,20 @@ impl App {
                         transcript: transcript.clone(),
                         reply: answer.clone(),
                     };
-                    
+
                     if let Err(err) = self.orchestrator.enqueue(action) {
                         eprintln!("Failed to queue artifact processing: {err:?}");
                     }
                 }
-                
+
                 // Add to conversation history if we have both transcript and assistant response
                 if let Some(assistant_text) = trace_entry.assistant_text.as_ref() {
-                    self.orchestrator.add_to_history(&transcript, assistant_text);
+                    self.orchestrator
+                        .add_to_history(&transcript, assistant_text);
                 }
 
                 self.log_trace(trace_entry);
-                
+
                 // Process queued actions (single-threaded execution)
                 self.process_orchestrator_queue();
             }
@@ -535,7 +552,7 @@ impl App {
     fn process_orchestrator_queue(&mut self) {
         // Clear any lingering interrupt flag before processing
         self.orchestrator.clear_interrupt();
-        
+
         // Execute actions from the queue (single-threaded, one at a time)
         while self.orchestrator.has_pending() {
             match self.orchestrator.execute_next() {
@@ -544,26 +561,38 @@ impl App {
                     if let Some(outcome) = result.artifact_outcome {
                         self.report_artifact_outcome(outcome);
                     }
-                    
+
                     // Speak any text that needs to be spoken
                     if let Some(text) = result.speak_text {
                         // Check for interrupt before speaking
                         if !self.orchestrator.interrupt_handle().load(Ordering::Relaxed) {
                             if let Ok(audio) = self.tts.synthesize(&text) {
-                                // Use interruptible playback with orchestrator's interrupt handle
-                                if let Err(err) = self.speaker.play_interruptible(&audio, self.orchestrator.interrupt_handle(), &self.keyboard) {
-                                    eprintln!("Failed to speak: {err:?}");
+                                // For local TTS, the audio has already been spoken during synthesize()
+                                // The returned audio is just a placeholder
+                                // For Groq TTS, we need to play the actual audio
+                                if audio.macos_say_token().is_none() {
+                                    // Use interruptible playback with orchestrator's interrupt handle
+                                    if let Err(err) = self.speaker.play_interruptible(
+                                        &audio,
+                                        self.orchestrator.interrupt_handle(),
+                                        &self.keyboard,
+                                    ) {
+                                        eprintln!("Failed to speak: {err:?}");
+                                    }
                                 }
                             }
                         }
                     }
-                    
+
                     // Speak completion message if present
                     if let Some(msg) = result.completion_message {
                         if !self.orchestrator.interrupt_handle().load(Ordering::Relaxed) {
                             if let Ok(audio) = self.tts.synthesize(&msg) {
-                                if let Err(err) = self.speaker.play(&audio) {
-                                    eprintln!("Failed to speak completion: {err:?}");
+                                // Check if local TTS already spoke it
+                                if audio.macos_say_token().is_none() {
+                                    if let Err(err) = self.speaker.play(&audio) {
+                                        eprintln!("Failed to speak completion: {err:?}");
+                                    }
                                 }
                             }
                         }
@@ -580,7 +609,7 @@ impl App {
             }
         }
     }
-    
+
     fn log_trace(&self, entry: TraceEntry) {
         if let Some(logger) = &self.trace_logger {
             if let Err(err) = logger.log(entry) {
@@ -643,983 +672,4 @@ impl App {
             println!("Phasing index refreshed.");
         }
     }
-}
-
-struct Recorder {
-    _stream: Stream,
-    state: Arc<RecordingState>,
-    input_sample_rate: u32,
-}
-
-impl Recorder {
-    fn new() -> Result<Self> {
-        let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .context("No default audio input device found")?;
-
-        let supported_config = device
-            .default_input_config()
-            .context("No supported input config for default audio device")?;
-
-        let sample_format = supported_config.sample_format();
-        let config: cpal::StreamConfig = supported_config.into();
-        let input_sample_rate = config.sample_rate.0;
-        let channels = config.channels as usize;
-
-        let state = Arc::new(RecordingState::default());
-        let stream = match sample_format {
-            SampleFormat::F32 => build_input_stream_f32(&device, &config, state.clone(), channels)?,
-            SampleFormat::I16 => build_input_stream_i16(&device, &config, state.clone(), channels)?,
-            SampleFormat::U16 => build_input_stream_u16(&device, &config, state.clone(), channels)?,
-            other => return Err(anyhow!("Unsupported input sample format: {other:?}")),
-        };
-
-        stream
-            .play()
-            .context("Failed to start audio capture stream")?;
-
-        Ok(Self {
-            _stream: stream,
-            state,
-            input_sample_rate,
-        })
-    }
-
-    fn start(&self) {
-        {
-            let mut buffer = self.state.buffer.lock().expect("recorder buffer poisoned");
-            buffer.clear();
-        }
-        self.state.recording.store(true, Ordering::SeqCst);
-    }
-
-    fn stop(&self) -> Result<RecordingResult> {
-        if !self.state.recording.swap(false, Ordering::SeqCst) {
-            return Err(anyhow!("Recorder was not active"));
-        }
-
-        // Let the callback drain any buffered frames.
-        thread::sleep(Duration::from_millis(50));
-
-        let mut buffer = self.state.buffer.lock().expect("recorder buffer poisoned");
-        let samples = std::mem::take(&mut *buffer);
-
-        Ok(RecordingResult {
-            samples,
-            sample_rate: self.input_sample_rate,
-        })
-    }
-}
-
-#[derive(Default)]
-struct RecordingState {
-    buffer: Mutex<Vec<f32>>,
-    recording: AtomicBool,
-}
-
-struct RecordingResult {
-    samples: Vec<f32>,
-    sample_rate: u32,
-}
-
-struct TranscriptionClient {
-    http: HttpClient,
-    base_url: String,
-    api_key: String,
-    language: String,
-}
-
-impl TranscriptionClient {
-    fn new(api_key: String) -> Result<Self> {
-        let http = HttpClient::builder()
-            .timeout(Duration::from_secs(45))
-            .build()
-            .context("Failed to build HTTP client for Groq transcription")?;
-
-        let base_url = std::env::var("GROQ_API_BASE_URL")
-            .unwrap_or_else(|_| "https://api.groq.com".to_string());
-        let language =
-            std::env::var("GROQ_STT_LANGUAGE").unwrap_or_else(|_| DEFAULT_STT_LANGUAGE.to_string());
-
-        Ok(Self {
-            http,
-            base_url,
-            api_key,
-            language,
-        })
-    }
-
-    fn transcribe(&self, audio_path: &Path) -> Result<String> {
-        let audio_bytes = fs::read(audio_path)
-            .with_context(|| format!("Failed to read audio file {}", audio_path.display()))?;
-
-        let file_name = audio_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("audio.wav");
-
-        let part = multipart::Part::bytes(audio_bytes)
-            .file_name(file_name.to_string())
-            .mime_str("audio/wav")
-            .context("Failed to prepare audio part for transcription")?;
-
-        let form = multipart::Form::new()
-            .text("model", "whisper-large-v3-turbo")
-            .text("language", self.language.clone())
-            .text("response_format", "json")
-            .part("file", part);
-
-        let url = format!(
-            "{}/openai/v1/audio/transcriptions",
-            self.base_url.trim_end_matches('/')
-        );
-
-        let response = self
-            .http
-            .post(url)
-            .bearer_auth(&self.api_key)
-            .multipart(form)
-            .send()
-            .context("Groq transcription request failed")?;
-
-        let response = response
-            .error_for_status()
-            .context("Groq transcription returned an error status")?;
-
-        let payload: TranscriptionResponse = response
-            .json()
-            .context("Failed to parse Groq transcription response")?;
-
-        if payload.text.trim().is_empty() {
-            Err(anyhow!("Groq transcription response was empty"))
-        } else {
-            Ok(payload.text)
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct TranscriptionResponse {
-    text: String,
-}
-
-struct AssistantClient {
-    http: HttpClient,
-    base_url: String,
-    api_key: String,
-    model: String,
-    temperature: f32,
-    max_tokens: u32,
-}
-
-impl AssistantClient {
-    fn new(api_key: String) -> Result<Self> {
-        let http = HttpClient::builder()
-            .timeout(Duration::from_secs(45))
-            .build()
-            .context("Failed to build HTTP client for Groq assistant")?;
-
-        let base_url = std::env::var("GROQ_API_BASE_URL")
-            .unwrap_or_else(|_| "https://api.groq.com".to_string());
-
-        let model =
-            std::env::var("GROQ_LLM_MODEL").unwrap_or_else(|_| DEFAULT_LLM_MODEL.to_string());
-
-        let temperature = std::env::var("GROQ_LLM_TEMPERATURE")
-            .ok()
-            .and_then(|val| val.parse::<f32>().ok())
-            .unwrap_or(DEFAULT_LLM_TEMPERATURE);
-
-        let max_tokens = std::env::var("GROQ_LLM_MAX_TOKENS")
-            .ok()
-            .and_then(|val| val.parse::<u32>().ok())
-            .unwrap_or(DEFAULT_LLM_MAX_TOKENS);
-
-        Ok(Self {
-            http,
-            base_url,
-            api_key,
-            model,
-            temperature,
-            max_tokens,
-        })
-    }
-
-    fn reply(&self, transcript: &str) -> Result<String> {
-        let body = json!({
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": SMART_SECRETARY_PROMPT},
-                {"role": "user", "content": transcript}
-            ],
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
-            "stream": false
-        });
-
-        let url = format!(
-            "{}/openai/v1/chat/completions",
-            self.base_url.trim_end_matches('/')
-        );
-
-        let response = self
-            .http
-            .post(url)
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .context("Groq assistant request failed")?;
-
-        let response = response
-            .error_for_status()
-            .context("Groq assistant returned an error status")?;
-
-        let payload: ChatCompletionResponse = response
-            .json()
-            .context("Failed to parse Groq assistant response")?;
-
-        let message = payload
-            .choices
-            .into_iter()
-            .find_map(|choice| choice.message.content)
-            .unwrap_or_default();
-
-        if message.trim().is_empty() {
-            Err(anyhow!("Groq assistant response was empty"))
-        } else {
-            Ok(message)
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatCompletionResponse {
-    choices: Vec<ChatChoice>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatChoice {
-    message: ChatMessage,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatMessage {
-    content: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-struct TtsAudio {
-    bytes: Vec<u8>,
-    content_type: String,
-    note: Option<String>,
-}
-
-struct TtsClient {
-    http: HttpClient,
-    base_url: String,
-    api_key: String,
-    model: String,
-    voice: String,
-}
-
-impl TtsClient {
-    fn new(api_key: String) -> Result<Self> {
-        let http = HttpClient::builder()
-            .timeout(Duration::from_secs(45))
-            .build()
-            .context("Failed to build HTTP client for Groq TTS")?;
-
-        let base_url = std::env::var("GROQ_API_BASE_URL")
-            .unwrap_or_else(|_| "https://api.groq.com".to_string());
-
-        let model =
-            std::env::var("GROQ_TTS_MODEL").unwrap_or_else(|_| DEFAULT_TTS_MODEL.to_string());
-
-        let voice =
-            std::env::var("GROQ_TTS_VOICE").unwrap_or_else(|_| DEFAULT_TTS_VOICE.to_string());
-
-        Ok(Self {
-            http,
-            base_url,
-            api_key,
-            model,
-            voice,
-        })
-    }
-
-    fn synthesize(&self, text: &str) -> Result<TtsAudio> {
-        if text.trim().is_empty() {
-            return Err(anyhow!("TTS input text was empty"));
-        }
-
-        let body = json!({
-            "model": self.model,
-            "voice": self.voice,
-            "input": text,
-            "response_format": "wav"
-        });
-
-        let url = format!(
-            "{}/openai/v1/audio/speech",
-            self.base_url.trim_end_matches('/')
-        );
-
-        let response = self
-            .http
-            .post(url)
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .context("Groq TTS request failed")?;
-
-        let response = response
-            .error_for_status()
-            .context("Groq TTS returned an error status")?;
-
-        let content_type = response
-            .headers()
-            .get(CONTENT_TYPE)
-            .and_then(|raw| raw.to_str().ok())
-            .map(|s| s.to_owned())
-            .unwrap_or_default();
-
-        let bytes = response
-            .bytes()
-            .context("Failed to read Groq TTS payload body")?;
-
-        if bytes.is_empty() {
-            return Err(anyhow!("Groq TTS response was empty"));
-        }
-
-        if content_type.contains("application/json") || bytes.starts_with(b"{") {
-            let payload: Value =
-                serde_json::from_slice(&bytes).context("Failed to parse Groq TTS JSON response")?;
-
-            let decoded = extract_audio_bytes(&payload)
-                .ok_or_else(|| anyhow!("Groq TTS JSON response missing audio payload"))?;
-
-            if decoded.is_empty() {
-                Err(anyhow!(
-                    "Groq TTS audio payload was empty after base64 decode"
-                ))
-            } else {
-                let (bytes, repair_note) = maybe_repair_wav(decoded)?;
-                Ok(TtsAudio {
-                    bytes,
-                    content_type: format!("{} (json)", content_type),
-                    note: merge_notes(Some("decoded from JSON payload".to_string()), repair_note),
-                })
-            }
-        } else {
-            let raw = bytes.to_vec();
-            let (bytes, repair_note) = maybe_repair_wav(raw)?;
-            Ok(TtsAudio {
-                bytes,
-                content_type,
-                note: repair_note,
-            })
-        }
-    }
-
-    fn voice(&self) -> &str {
-        &self.voice
-    }
-}
-
-struct SpeechPlayer {
-    _stream: OutputStream,
-    handle: OutputStreamHandle,
-}
-
-impl SpeechPlayer {
-    fn new() -> Result<Self> {
-        let (stream, handle) =
-            OutputStream::try_default().context("Failed to create TTS output stream")?;
-        Ok(Self {
-            _stream: stream,
-            handle,
-        })
-    }
-
-    fn play(&self, audio: &TtsAudio) -> Result<()> {
-        if audio.bytes.is_empty() {
-            return Err(anyhow!("No audio data supplied for playback"));
-        }
-
-        let sink = Sink::try_new(&self.handle).context("Failed to create TTS sink")?;
-        let cursor = Cursor::new(audio.bytes.clone());
-        let mut reader = match AudioReader::new(cursor) {
-            Ok(r) => r,
-            Err(err) => {
-                let dump_path = dump_tts_audio(audio).ok();
-                let info = build_tts_error_info("read", audio, dump_path.as_ref());
-                return Err(err).context(info);
-            }
-        };
-        let desc = reader.description();
-        let channels = u16::try_from(desc.channel_count())
-            .map_err(|_| anyhow!("TTS audio channel count exceeds supported range"))?;
-
-        if channels == 0 {
-            return Err(anyhow!("TTS audio has zero channels"));
-        }
-
-        let sample_rate = desc.sample_rate();
-        let samples: Vec<f32> = match reader
-            .samples::<f32>()
-            .collect::<std::result::Result<Vec<_>, _>>()
-        {
-            Ok(samples) => samples,
-            Err(err) => {
-                let dump_path = dump_tts_audio(audio).ok();
-                let info = build_tts_error_info("decode", audio, dump_path.as_ref());
-                return Err(err).context(info);
-            }
-        };
-
-        let buffer = SamplesBuffer::new(channels, sample_rate, samples);
-        sink.append(buffer);
-        sink.detach();
-        Ok(())
-    }
-    
-    fn play_interruptible(&self, audio: &TtsAudio, interrupt: Arc<AtomicBool>, keyboard: &DeviceState) -> Result<()> {
-        if audio.bytes.is_empty() {
-            return Err(anyhow!("No audio data supplied for playback"));
-        }
-
-        let sink = Sink::try_new(&self.handle).context("Failed to create TTS sink")?;
-        let cursor = Cursor::new(audio.bytes.clone());
-        let mut reader = match AudioReader::new(cursor) {
-            Ok(r) => r,
-            Err(err) => {
-                let dump_path = dump_tts_audio(audio).ok();
-                let info = build_tts_error_info("read", audio, dump_path.as_ref());
-                return Err(err).context(info);
-            }
-        };
-        let desc = reader.description();
-        let channels = u16::try_from(desc.channel_count())
-            .map_err(|_| anyhow!("TTS audio channel count exceeds supported range"))?;
-
-        if channels == 0 {
-            return Err(anyhow!("TTS audio has zero channels"));
-        }
-
-        let sample_rate = desc.sample_rate();
-        let samples: Vec<f32> = match reader
-            .samples::<f32>()
-            .collect::<std::result::Result<Vec<_>, _>>()
-        {
-            Ok(samples) => samples,
-            Err(err) => {
-                let dump_path = dump_tts_audio(audio).ok();
-                let info = build_tts_error_info("decode", audio, dump_path.as_ref());
-                return Err(err).context(info);
-            }
-        };
-
-        let buffer = SamplesBuffer::new(channels, sample_rate, samples);
-        sink.append(buffer);
-        
-        // Wait for playback to finish or interrupt signal
-        while !sink.empty() {
-            // Check for interrupt flag
-            if interrupt.load(Ordering::Relaxed) {
-                sink.stop();
-                return Ok(());
-            }
-            
-            // Check for keyboard interrupt (Space or Esc)
-            let keys: HashSet<Keycode> = keyboard.get_keys().into_iter().collect();
-            if keys.contains(&PUSH_TO_TALK_KEY) || keys.contains(&EXIT_KEY) {
-                sink.stop();
-                // Don't set global interrupt flag - just stop playback
-                println!("(playback interrupted)");
-                return Ok(());
-            }
-            
-            thread::sleep(Duration::from_millis(10));
-        }
-        
-        Ok(())
-    }
-}
-
-#[derive(Serialize)]
-struct TraceEntry {
-    id: String,
-    timestamp: String,
-    mode: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    user_text: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    assistant_text: Option<String>,
-    durations: TraceDurations,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tts: Option<TraceTts>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    errors: Vec<String>,
-}
-
-impl TraceEntry {
-    fn new(mode: &str) -> Self {
-        Self {
-            id: String::new(),
-            timestamp: String::new(),
-            mode: mode.to_string(),
-            user_text: None,
-            assistant_text: None,
-            durations: TraceDurations::default(),
-            tts: None,
-            errors: Vec::new(),
-        }
-    }
-}
-
-#[derive(Serialize, Default)]
-struct TraceDurations {
-    record_ms: u64,
-    stt_ms: u64,
-    llm_ms: u64,
-    tts_ms: u64,
-    speak_ms: u64,
-}
-
-#[derive(Serialize)]
-struct TraceTts {
-    engine: String,
-    voice: String,
-    content_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    note: Option<String>,
-}
-
-struct TraceLogger {
-    enabled: bool,
-    base_dir: PathBuf,
-    counter: Cell<u64>,
-}
-
-impl TraceLogger {
-    fn new(enabled: bool) -> Result<Option<Self>> {
-        if !enabled {
-            return Ok(None);
-        }
-
-        let base_dir = PathBuf::from("logs");
-        fs::create_dir_all(&base_dir).context("Failed to create logs directory")?;
-
-        Ok(Some(Self {
-            enabled,
-            base_dir,
-            counter: Cell::new(0),
-        }))
-    }
-
-    fn next_id(&self) -> String {
-        let seq = self.counter.get();
-        self.counter.set(seq + 1);
-        format!("{}-{:04}", Utc::now().format("%Y%m%dT%H%M%S"), seq)
-    }
-
-    fn log(&self, mut entry: TraceEntry) -> Result<()> {
-        if !self.enabled {
-            return Ok(());
-        }
-
-        entry.id = self.next_id();
-        entry.timestamp = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
-        let date = Local::now().format("%Y%m%d").to_string();
-        let path = self.base_dir.join(format!("trace-{date}.jsonl"));
-        let json = serde_json::to_string(&entry).context("Failed to serialize trace entry")?;
-
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .with_context(|| format!("Failed to open trace log file at {}", path.display()))?;
-        file.write_all(json.as_bytes())
-            .context("Failed to write trace entry")?;
-        file.write_all(b"\n")
-            .context("Failed to finalize trace entry")?;
-        Ok(())
-    }
-}
-
-fn build_tts_error_info(stage: &str, audio: &TtsAudio, dump_path: Option<&PathBuf>) -> String {
-    let content_type = if audio.content_type.is_empty() {
-        "<unknown>"
-    } else {
-        audio.content_type.as_str()
-    };
-    let mut info = format!(
-        "Failed to {} TTS audio stream (content-type: {}, len: {} bytes",
-        stage,
-        content_type,
-        audio.bytes.len()
-    );
-
-    if let Some(note) = &audio.note {
-        info.push_str(&format!(", note: {}", note));
-    }
-
-    let head = audio
-        .bytes
-        .iter()
-        .take(12)
-        .map(|b| format!("{:02X}", b))
-        .collect::<Vec<_>>()
-        .join(" ");
-    if !head.is_empty() {
-        info.push_str(&format!(", head: {}", head));
-    }
-
-    if let Some(path) = dump_path {
-        info.push_str(&format!(", dumped to {}", path.display()));
-    }
-
-    info.push(')');
-    info
-}
-
-fn dump_tts_audio(audio: &TtsAudio) -> Result<PathBuf> {
-    let dir = Path::new("tts_debug");
-    fs::create_dir_all(dir).context("Failed to create tts_debug directory")?;
-
-    let timestamp = Local::now().format("%Y%m%d-%H%M%S%.3f");
-    let mut name = format!("tts-{timestamp}");
-    if let Some(note) = &audio.note {
-        let slug: String = note
-            .chars()
-            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
-            .take(24)
-            .collect();
-        if !slug.is_empty() {
-            name.push('-');
-            name.push_str(&slug);
-        }
-    }
-
-    let ext = guess_audio_extension(&audio.bytes, &audio.content_type);
-    let path = dir.join(format!("{name}.{ext}"));
-    fs::write(&path, &audio.bytes).context("Failed to write TTS debug dump")?;
-    Ok(path)
-}
-
-fn guess_audio_extension(bytes: &[u8], content_type: &str) -> &'static str {
-    if content_type.contains("wav") || bytes.starts_with(b"RIFF") {
-        "wav"
-    } else if content_type.contains("mp3")
-        || content_type.contains("mpeg")
-        || bytes.starts_with(b"ID3")
-    {
-        "mp3"
-    } else if content_type.contains("ogg") || bytes.starts_with(b"OggS") {
-        "ogg"
-    } else {
-        "bin"
-    }
-}
-
-fn maybe_repair_wav(bytes: Vec<u8>) -> Result<(Vec<u8>, Option<String>)> {
-    if bytes.len() < 44 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
-        return Ok((bytes, None));
-    }
-
-    let mut data_found = false;
-    let mut note = None;
-    let mut repaired = bytes;
-
-    if let Ok(fixed) = u32::try_from(repaired.len().saturating_sub(8)) {
-        let current = u32::from_le_bytes(repaired[4..8].try_into().unwrap());
-        if current == 0xFFFF_FFFF || current as usize + 8 != repaired.len() {
-            repaired[4..8].copy_from_slice(&fixed.to_le_bytes());
-            note = Some(format!("patched RIFF size {}->{}", current, fixed));
-        }
-    }
-
-    let mut offset = 12usize;
-    while offset + 8 <= repaired.len() {
-        let chunk_id = &repaired[offset..offset + 4];
-        let chunk_size = u32::from_le_bytes(repaired[offset + 4..offset + 8].try_into().unwrap());
-        let chunk_data_start = offset + 8;
-        if chunk_id == b"data" {
-            data_found = true;
-            let available = repaired.len().saturating_sub(chunk_data_start);
-            if chunk_size == 0xFFFF_FFFF || chunk_size as usize > available {
-                if let Ok(fixed) = u32::try_from(available) {
-                    let old_note = note.take();
-                    let mut pieces = vec![format!("patched data size {}->{}", chunk_size, fixed)];
-                    if let Some(existing) = old_note {
-                        pieces.push(existing);
-                    }
-                    note = Some(pieces.join(", "));
-                    repaired[offset + 4..offset + 8].copy_from_slice(&fixed.to_le_bytes());
-                }
-            }
-            break;
-        }
-
-        let mut next = chunk_data_start + chunk_size as usize;
-        if chunk_size % 2 == 1 {
-            next += 1; // pad byte
-        }
-        if next <= offset {
-            break;
-        }
-        offset = next;
-    }
-
-    if !data_found {
-        return Ok((repaired, note));
-    }
-
-    Ok((repaired, note))
-}
-
-fn merge_notes(lhs: Option<String>, rhs: Option<String>) -> Option<String> {
-    match (lhs, rhs) {
-        (None, None) => None,
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
-        (Some(a), Some(b)) => Some(format!("{}; {}", a, b)),
-    }
-}
-
-fn extract_audio_bytes(value: &Value) -> Option<Vec<u8>> {
-    fn decode_value(value: &Value) -> Option<Vec<u8>> {
-        match value {
-            Value::String(s) => decode_base64_candidate(s),
-            Value::Array(items) => items.iter().find_map(decode_value),
-            Value::Object(map) => {
-                for key in ["audio", "data", "audio_base64", "audioContent", "content"] {
-                    if let Some(val) = map.get(key) {
-                        if let Some(decoded) = decode_value(val) {
-                            return Some(decoded);
-                        }
-                    }
-                }
-                map.values().find_map(decode_value)
-            }
-            _ => None,
-        }
-    }
-
-    decode_value(value)
-}
-
-fn decode_base64_candidate(raw: &str) -> Option<Vec<u8>> {
-    let cleaned: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
-    if cleaned.is_empty() {
-        return None;
-    }
-
-    STANDARD
-        .decode(cleaned.as_bytes())
-        .ok()
-        .or_else(|| URL_SAFE.decode(cleaned.as_bytes()).ok())
-}
-
-fn build_input_stream_f32(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    state: Arc<RecordingState>,
-    channels: usize,
-) -> Result<Stream> {
-    let err_fn = |err| eprintln!("Audio input stream error: {err}");
-
-    let stream = device.build_input_stream(
-        config,
-        move |data: &[f32], _| {
-            if !state.recording.load(Ordering::Relaxed) {
-                return;
-            }
-
-            let mut buffer = state.buffer.lock().expect("recorder buffer poisoned");
-            for frame in data.chunks(channels) {
-                let sum: f32 = frame.iter().copied().sum();
-                buffer.push(sum / channels as f32);
-            }
-        },
-        err_fn,
-        None,
-    )?;
-
-    Ok(stream)
-}
-
-fn build_input_stream_i16(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    state: Arc<RecordingState>,
-    channels: usize,
-) -> Result<Stream> {
-    let err_fn = |err| eprintln!("Audio input stream error: {err}");
-
-    let stream = device.build_input_stream(
-        config,
-        move |data: &[i16], _| {
-            if !state.recording.load(Ordering::Relaxed) {
-                return;
-            }
-
-            let mut buffer = state.buffer.lock().expect("recorder buffer poisoned");
-            for frame in data.chunks(channels) {
-                let mut sum = 0.0f32;
-                for &sample in frame {
-                    let normalized = sample as f32 / i16::MAX as f32;
-                    sum += normalized.clamp(-1.0, 1.0);
-                }
-                buffer.push(sum / channels as f32);
-            }
-        },
-        err_fn,
-        None,
-    )?;
-
-    Ok(stream)
-}
-
-fn build_input_stream_u16(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    state: Arc<RecordingState>,
-    channels: usize,
-) -> Result<Stream> {
-    let err_fn = |err| eprintln!("Audio input stream error: {err}");
-
-    let stream = device.build_input_stream(
-        config,
-        move |data: &[u16], _| {
-            if !state.recording.load(Ordering::Relaxed) {
-                return;
-            }
-
-            let mut buffer = state.buffer.lock().expect("recorder buffer poisoned");
-            for frame in data.chunks(channels) {
-                let mut sum = 0.0f32;
-                for &sample in frame {
-                    let normalized = (sample as f32 / u16::MAX as f32) * 2.0 - 1.0;
-                    sum += normalized.clamp(-1.0, 1.0);
-                }
-                buffer.push(sum / channels as f32);
-            }
-        },
-        err_fn,
-        None,
-    )?;
-
-    Ok(stream)
-}
-
-struct BeepPlayer {
-    _stream: OutputStream,
-    handle: OutputStreamHandle,
-}
-
-impl BeepPlayer {
-    fn new() -> Result<Self> {
-        let (stream, handle) =
-            OutputStream::try_default().context("Failed to create audio output stream")?;
-        Ok(Self {
-            _stream: stream,
-            handle,
-        })
-    }
-
-    fn play(&self) -> Result<()> {
-        let sink = Sink::try_new(&self.handle).context("Failed to create beep sink")?;
-        let source = SineWave::new(880.0)
-            .take_duration(Duration::from_millis(160))
-            .amplify(0.2);
-        sink.append(source);
-        sink.detach();
-        Ok(())
-    }
-}
-
-struct SavedRecording {
-    path: PathBuf,
-    duration_seconds: f32,
-}
-
-fn save_recording(result: &RecordingResult, output_dir: &Path) -> Result<Option<SavedRecording>> {
-    if result.samples.is_empty() {
-        return Ok(None);
-    }
-
-    let resampled = resample_linear(&result.samples, result.sample_rate, TARGET_SAMPLE_RATE);
-    if resampled.is_empty() {
-        return Ok(None);
-    }
-
-    let quantized = quantize_to_i16(&resampled);
-
-    if quantized.is_empty() {
-        return Ok(None);
-    }
-
-    let filename = format!("recording-{}.wav", Local::now().format("%Y%m%d-%H%M%S%.3f"));
-    let path = output_dir.join(filename);
-
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate: TARGET_SAMPLE_RATE,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
-    let duration_seconds = quantized.len() as f32 / TARGET_SAMPLE_RATE as f32;
-    let mut writer = hound::WavWriter::create(&path, spec)
-        .with_context(|| format!("Failed to create wav file at {}", path.display()))?;
-    for sample in &quantized {
-        writer
-            .write_sample(*sample)
-            .context("Failed to write sample to wav file")?;
-    }
-    writer.finalize().context("Failed to finalize wav file")?;
-
-    Ok(Some(SavedRecording {
-        path,
-        duration_seconds,
-    }))
-}
-
-fn resample_linear(samples: &[f32], input_rate: u32, target_rate: u32) -> Vec<f32> {
-    if samples.is_empty() || input_rate == 0 || target_rate == 0 {
-        return Vec::new();
-    }
-
-    if input_rate == target_rate {
-        return samples.to_vec();
-    }
-
-    let ratio = input_rate as f64 / target_rate as f64;
-    let output_len = ((samples.len() as f64) / ratio).round() as usize;
-    let output_len = output_len.max(1);
-
-    let mut out = Vec::with_capacity(output_len);
-    for i in 0..output_len {
-        let src_pos = i as f64 * ratio;
-        let base_idx = src_pos.floor() as usize;
-        let base_idx = base_idx.min(samples.len().saturating_sub(1));
-        let next_idx = (base_idx + 1).min(samples.len().saturating_sub(1));
-        let frac = (src_pos - base_idx as f64) as f32;
-        let s0 = samples[base_idx];
-        let s1 = samples[next_idx];
-        out.push(s0 + (s1 - s0) * frac);
-    }
-
-    out
-}
-
-fn quantize_to_i16(samples: &[f32]) -> Vec<i16> {
-    samples
-        .iter()
-        .map(|&sample| {
-            let clamped = sample.clamp(-1.0, 1.0);
-            (clamped * i16::MAX as f32) as i16
-        })
-        .collect()
 }
