@@ -196,6 +196,11 @@ impl Orchestrator {
             self.conversation_history.drain(0..2);
         }
     }
+    
+    /// Get conversation history for context
+    pub fn get_history(&self) -> &[String] {
+        &self.conversation_history
+    }
 
     /// Enqueue an action for execution.
     /// Actions are processed in FIFO order.

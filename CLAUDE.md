@@ -69,6 +69,9 @@ Research mode and long "thinking mode" can be added later without changing the l
 ## Key Principle
 **A single-threaded, voice-first speccer that writes and reads two artifacts on command, and never does anything behind your back.**
 
+## Development Guidelines
+**ALWAYS run `cargo build` or `cargo check` before claiming something is "fixed" or "complete". Never say "Fixed!" without verifying the code compiles.**
+
 ## Implementation Phases
 
 ### Phase 7: Chunked Reading ✅
@@ -85,8 +88,18 @@ Read artifacts in manageable chunks with pauses between them.
 4. Say "read phase 3" - Should jump directly to phase 3
 5. Say "read description slowly" - Should read first paragraph, then ask to continue
 
-### Phase 8: Context-Aware Assistant (Next)
+### Phase 8: Context-Aware Assistant (Next) ⏳
 Add conversation memory to fix confirmation issues.
+- Track conversation history in orchestrator
+- Pass context to LLM for better responses
+- Remember user's questions and assistant's answers
+- Enable questions like "what did I just ask?"
+
+**Test Procedure:**
+1. Ask a question like "read the description"
+2. Then ask "what did I just ask?" - Should recall the previous question
+3. Say "read phasing slowly", wait for chunk prompt
+4. Say "yes" - Should continue reading (context-aware confirmation)
 
 ### Phase 9: Advanced Edit Operations (Future)
 Targeted edits like "change phase 2 to..." and append/prepend operations.

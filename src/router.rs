@@ -88,11 +88,16 @@ impl Router {
     /// Parse user input using LLM for intelligent routing.
     pub fn parse_user_input(&self, input: &str) -> Result<Intent> {
         // Everything goes through LLM router for natural language understanding
-        self.route_with_llm(input)
+        self.route_with_llm(input, None)
+    }
+    
+    /// Parse user input with conversation context
+    pub fn parse_user_input_with_context(&self, input: &str, context: &[String]) -> Result<Intent> {
+        self.route_with_llm(input, Some(context))
     }
 
     /// Use LLM to determine intent from user input
-    fn route_with_llm(&self, input: &str) -> Result<Intent> {
+    fn route_with_llm(&self, input: &str, context: Option<&[String]>) -> Result<Intent> {
         let system_prompt = r#"You are a router that determines user intent for a voice-controlled artifact editor.
 
 Respond with JSON only:
@@ -122,12 +127,27 @@ Examples:
 "description please" -> {"intent_type": "directive", "action": "read_description"}
 "yes" -> {"intent_type": "confirmation", "confirmed": true}"#;
 
+        // Build messages with optional context
+        let mut messages = vec![
+            json!({"role": "system", "content": system_prompt}),
+        ];
+        
+        // Add conversation context if provided
+        if let Some(ctx) = context {
+            if !ctx.is_empty() {
+                let context_str = ctx.join("\n");
+                messages.push(json!({
+                    "role": "system", 
+                    "content": format!("Recent conversation for context:\n{}", context_str)
+                }));
+            }
+        }
+        
+        messages.push(json!({"role": "user", "content": input}));
+        
         let body = json!({
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": input}
-            ],
+            "messages": messages,
             "temperature": 0.0,
             "max_tokens": 100,
             "response_format": {"type": "json_object"}

@@ -134,12 +134,32 @@ impl AssistantClient {
     }
 
     pub fn reply(&self, transcript: &str) -> Result<String> {
+        self.reply_with_context(transcript, &[])
+    }
+    
+    pub fn reply_with_context(&self, transcript: &str, context: &[String]) -> Result<String> {
+        let mut messages = vec![
+            json!({"role": "system", "content": SMART_SECRETARY_PROMPT}),
+        ];
+        
+        // Add conversation history if provided
+        if !context.is_empty() {
+            let context_str = context.join("\n");
+            eprintln!("[DEBUG] Assistant context: {} messages", context.len());
+            eprintln!("[DEBUG] Context content:\n{}", context_str);
+            messages.push(json!({
+                "role": "system",
+                "content": format!("Recent conversation history:\n{}", context_str)
+            }));
+        } else {
+            eprintln!("[DEBUG] No context provided to assistant");
+        }
+        
+        messages.push(json!({"role": "user", "content": transcript}));
+        
         let body = json!({
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": SMART_SECRETARY_PROMPT},
-                {"role": "user", "content": transcript}
-            ],
+            "messages": messages,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
             "stream": false

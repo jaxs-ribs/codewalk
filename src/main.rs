@@ -21,7 +21,7 @@ mod tts_backend;
 
 use crate::artifacts::{ArtifactManager, ArtifactUpdateOutcome};
 use crate::audio::{BeepPlayer, Recorder, SpeechPlayer, save_recording};
-use crate::orchestrator::{Action, Orchestrator};
+use crate::orchestrator::Orchestrator;
 use crate::router::Router;
 use crate::services::{AssistantClient, TranscriptionClient};
 use crate::trace::{TraceEntry, TraceLogger, TraceTts};
@@ -35,7 +35,7 @@ pub(crate) const DEFAULT_STT_LANGUAGE: &str = "en";
 pub(crate) const DEFAULT_LLM_TEMPERATURE: f32 = 0.3;
 pub(crate) const DEFAULT_LLM_MAX_TOKENS: u32 = 400;
 pub(crate) const DEFAULT_LLM_MODEL: &str = "moonshotai/kimi-k2-instruct-0905";
-pub(crate) const SMART_SECRETARY_PROMPT: &str = "You are Walkcoach, a smart secretary. Answer in one to three short sentences. If one clarifier would change the answer, ask it. Otherwise, give tight, actionable guidance. No filler.";
+pub(crate) const SMART_SECRETARY_PROMPT: &str = "You are Walkcoach, a smart secretary for a voice-controlled artifact editor. Answer in one to three short sentences. You have access to recent conversation history. When asked about previous questions or context, refer to the conversation history. If one clarifier would change the answer, ask it. Otherwise, give tight, actionable guidance. No filler.";
 
 fn main() -> Result<()> {
     let env_source = load_env_file()?;
@@ -301,8 +301,13 @@ impl App {
                     }
                 };
 
+                // Add user's transcript to temporary history for context
+                // (We'll add the full turn later with the assistant's response)
+                let mut temp_history = self.orchestrator.get_history().to_vec();
+                temp_history.push(format!("User: {}", transcript));
+                
                 // Use router to determine intent (LLM-based or local yes/no)
-                let (answer, skip_artifacts) = match self.router.parse_user_input(&transcript) {
+                let (answer, _skip_artifacts) = match self.router.parse_user_input_with_context(&transcript, &temp_history) {
                     Ok(intent) => {
                         // Handle local command directly (no LLM needed)
                         match intent {
@@ -396,29 +401,22 @@ impl App {
                                 trace_entry.assistant_text = Some(q.clone());
                                 (q, true)
                             }
-                            crate::router::Intent::Info { ref message } => {
-                                // Info intent means it's conversational - pass to assistant
-                                if message == "Got it" {
-                                    // This is a generic info response, use the assistant for real conversation
-                                    let llm_start = Instant::now();
-                                    match self.assistant.reply(&transcript) {
-                                        Ok(answer) => {
-                                            trace_entry.durations.llm_ms =
-                                                Some(llm_start.elapsed().as_millis() as u64);
-                                            println!("Assistant: {answer}");
-                                            trace_entry.assistant_text = Some(answer.clone());
-                                            (answer, false) // Don't skip artifacts
-                                        }
-                                        Err(err) => {
-                                            let msg = format!("Assistant failed: {err}");
-                                            eprintln!("{msg}");
-                                            (msg, true)
-                                        }
+                            crate::router::Intent::Info { message: _ } => {
+                                // Info intent means it's conversational - always pass to assistant with context
+                                let llm_start = Instant::now();
+                                match self.assistant.reply_with_context(&transcript, &temp_history) {
+                                    Ok(answer) => {
+                                        trace_entry.durations.llm_ms =
+                                            Some(llm_start.elapsed().as_millis() as u64);
+                                        println!("Assistant: {answer}");
+                                        trace_entry.assistant_text = Some(answer.clone());
+                                        (answer, false) // Don't skip artifacts
                                     }
-                                } else {
-                                    println!("Assistant: {message}");
-                                    trace_entry.assistant_text = Some(message.clone());
-                                    (message.clone(), true)
+                                    Err(err) => {
+                                        let msg = format!("Assistant failed: {err}");
+                                        eprintln!("{msg}");
+                                        (msg, true)
+                                    }
                                 }
                             }
                         }
@@ -429,7 +427,7 @@ impl App {
 
                         // Need LLM interpretation
                         let llm_start = Instant::now();
-                        match self.assistant.reply(&transcript) {
+                        match self.assistant.reply_with_context(&transcript, &temp_history) {
                             Ok(answer) => {
                                 trace_entry.durations.llm_ms =
                                     Some(llm_start.elapsed().as_millis() as u64);
