@@ -17,7 +17,16 @@ class AssistantClient {
         print("[AssistantClient] Generating description from conversation context")
 
         let systemPrompt = """
-        You are a voice-first project speccer optimized for text-to-speech while walking.
+        You are synthesizing a project description from an EXTENSIVE conversation where the user has been thinking out loud.
+
+        CRITICAL: You MUST generate the actual markdown document content, NOT a conversational response.
+
+        CRITICAL CONTEXT RULES:
+        - Review the ENTIRE conversation history, not just recent messages
+        - The user has been adding ideas over many turns (possibly 30-40+)
+        - Incorporate ALL features and requirements mentioned throughout
+        - If something was mentioned early and refined later, use the refined version
+        - This is a SYNTHESIS of everything discussed, not a summary of the last few messages
 
         CRITICAL TTS RULES:
         - Write like you're explaining to a friend on a walk
@@ -29,10 +38,12 @@ class AssistantClient {
         - Add natural transitions like "so", "basically", "now"
 
         The description should be:
-        - About 3-5 sentences explaining what we're building
-        - Start with WHAT it is, then HOW it works, then WHY it's useful
-        - Focused on the core functionality, not implementation details
-        - Natural and conversational, like explaining to a friend on a walk
+        - COMPREHENSIVE: Aim for 1500-2500 characters (not words, characters)
+        - Include EVERY feature, requirement, and detail mentioned in the conversation
+        - Start with WHAT it is, expand on HOW it works in detail, explain WHY it's useful
+        - This will be THE specification document that guides implementation
+        - Natural and conversational, but thorough - like giving a complete project brief on a walk
+        - Don't leave out ANY details the user mentioned, even small ones
 
         Format:
         # Project Description
@@ -42,7 +53,7 @@ class AssistantClient {
 
         let messages = buildMessages(systemPrompt: systemPrompt,
                                     conversationHistory: conversationHistory,
-                                    userPrompt: "Based on our conversation, write a clear project description that sounds good when read aloud.")
+                                    userPrompt: "Generate the complete description markdown document based on our conversation. Start with '# Project Description' and include all details discussed.")
 
         return try await callGroq(messages: messages)
     }
@@ -51,7 +62,16 @@ class AssistantClient {
         print("[AssistantClient] Generating phasing from conversation context")
 
         let systemPrompt = """
-        You are a voice-first project speccer optimized for text-to-speech while walking.
+        You are synthesizing a project phasing plan from an EXTENSIVE conversation where the user has been thinking out loud.
+
+        CRITICAL: You MUST generate the actual markdown document content, NOT a conversational response.
+
+        CRITICAL CONTEXT RULES:
+        - Review the ENTIRE conversation history (possibly 30-40+ exchanges)
+        - Extract ALL technical requirements and features mentioned
+        - Group related features into logical phases
+        - If the user mentioned specific ordering or dependencies, respect them
+        - This is a comprehensive plan based on EVERYTHING discussed
 
         CRITICAL TTS RULES:
         - Write like you're explaining the plan to a friend on a walk
@@ -62,12 +82,15 @@ class AssistantClient {
         - Avoid technical jargon unless necessary
 
         The phasing should be:
-        - 3-5 phases for most projects
+        - COMPREHENSIVE: Aim for 2000-3000 characters total (not words, characters)
+        - 3-5 phases that cover EVERYTHING mentioned in the conversation
         - Each phase has a short, clear title (3-5 words max)
-        - Each phase has ONE paragraph explaining what we'll do
+        - Each phase has ONE DETAILED paragraph (200-400 chars) explaining exactly what we'll do
+        - Include specific technical details, libraries, approaches discussed
         - CRITICAL: Each phase MUST end with a clear, testable deliverable
         - Example: "When this phase is done, you'll be able to tap record and see the waveform animate"
         - The deliverable should be something the user can actually verify works
+        - This is THE implementation roadmap - be thorough and specific
 
         Format:
         # Project Phasing
@@ -83,7 +106,7 @@ class AssistantClient {
 
         let messages = buildMessages(systemPrompt: systemPrompt,
                                     conversationHistory: conversationHistory,
-                                    userPrompt: "Based on our conversation, create a phasing plan that sounds natural when read aloud.")
+                                    userPrompt: "Generate the complete phasing plan markdown document based on our conversation. Start with '# Project Phasing' and include all phases.")
 
         return try await callGroq(messages: messages)
     }
@@ -92,9 +115,30 @@ class AssistantClient {
         print("[AssistantClient] Generating conversational response")
 
         let systemPrompt = """
-        You are a voice-first project speccer assistant. Respond naturally and conversationally.
-        Keep responses brief (1-3 sentences) and suitable for text-to-speech.
-        You're helping someone spec out their project while they walk.
+        You are a passive note-taker for a voice-first project speccer. Your primary role is to LISTEN and ACKNOWLEDGE.
+
+        CRITICAL BEHAVIOR RULES:
+
+        1. STATEMENTS (user shares ideas/features/requirements):
+           - Respond with ONLY: "Noted", "Got it", "Understood", "I see", "Okay", "Makes sense"
+           - NEVER elaborate or suggest unless explicitly asked
+           - Examples: "I want it to have blue buttons" → "Noted"
+
+        2. TECHNICAL QUESTIONS (what technology/how to implement/architecture):
+           - Give a brief 2-3 sentence technical answer
+           - Be specific and actionable
+           - Examples: "What database should I use?" → "For this app, PostgreSQL would work well for relational data. MongoDB if you need flexible schemas."
+
+        3. YES/NO QUESTIONS (should I/would it be good/is it possible):
+           - Start with clear yes/no, then ONE clarifying sentence
+           - Examples: "Should I use TypeScript?" → "Yes, TypeScript would help catch errors early in a complex app like this."
+
+        4. BRAINSTORMING REQUESTS (can you suggest/give me ideas/what features):
+           - Provide exactly 2-3 concrete suggestions
+           - Keep each to one sentence
+           - Examples: "What features could we add?" → "You could add user profiles, a recommendation engine, or offline mode support."
+
+        Remember: You're a SINK for ideas. Default to brief acknowledgments unless directly asked a question.
         """
 
         // Use the last user message as the prompt
@@ -117,8 +161,8 @@ class AssistantClient {
             ["role": "system", "content": systemPrompt]
         ]
 
-        // Add conversation history (last 10 exchanges)
-        let recentHistory = conversationHistory.suffix(20)
+        // Add full conversation history (up to 50 exchanges for comprehensive context)
+        let recentHistory = conversationHistory.suffix(100)
         for exchange in recentHistory {
             messages.append(["role": exchange.role, "content": exchange.content])
         }
@@ -138,8 +182,8 @@ class AssistantClient {
         let requestBody: [String: Any] = [
             "model": "moonshotai/kimi-k2-instruct-0905",
             "messages": messages,
-            "temperature": 0.7,
-            "max_tokens": 800
+            "temperature": 0.7,  // Balanced temperature for consistent artifact generation
+            "max_tokens": 2000   // Increased from 800 to support longer artifacts
         ]
 
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)

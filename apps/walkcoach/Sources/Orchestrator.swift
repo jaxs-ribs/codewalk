@@ -286,18 +286,35 @@ class Orchestrator: ObservableObject {
     }
 
     private func editDescription(content: String) async {
-        lastResponse = "Editing description..."
+        lastResponse = "Updating description..."
 
-        if artifactManager.appendToFile(filename: "description.md", content: "\n\(content)") {
-            lastResponse = "Description updated. Say 'read the description' to hear it."
+        do {
+            // Add the edit request to conversation history as a requirement
+            addUserTranscript("Additional requirement for the description: \(content)")
 
-            // Speak the success message
-            await speak(self.lastResponse)
+            // Regenerate the description with the new requirement included
+            let updatedContent = try await assistantClient.generateDescription(
+                conversationHistory: conversationHistory
+            )
 
-            // Add to conversation history
-            addAssistantResponse("I've updated the description based on your request.")
-        } else {
-            lastResponse = "Failed to edit description"
+            // Save the regenerated description
+            if artifactManager.safeWrite(filename: "description.md", content: updatedContent) {
+                lastResponse = "Description updated with your changes. Say 'read the description' to hear it."
+
+                // Speak the success message
+                await speak(self.lastResponse)
+
+                // Add to conversation history
+                addAssistantResponse("I've regenerated the description with your new requirement.")
+            } else {
+                lastResponse = "Failed to update description"
+
+                // Speak the error
+                await speak(self.lastResponse)
+            }
+        } catch {
+            print("[Orchestrator] Failed to regenerate description: \(error)")
+            lastResponse = "Failed to regenerate description"
 
             // Speak the error
             await speak(self.lastResponse)
@@ -305,44 +322,46 @@ class Orchestrator: ObservableObject {
     }
 
     private func editPhasing(phaseNumber: Int?, content: String) async {
-        // Create default phasing if it doesn't exist
-        if !artifactManager.fileExists("phasing.md") {
-            print("[Orchestrator] Creating default phasing.md first...")
-            await writePhasing()
-            // Small delay to ensure write completes
-            try? await Task.sleep(nanoseconds: 100_000_000)
-        }
+        lastResponse = "Updating phasing..."
 
-        if let phase = phaseNumber {
-            lastResponse = "Editing phase \(phase)..."
+        do {
+            // Add the edit request to conversation history as a requirement
+            if let phase = phaseNumber {
+                addUserTranscript("Additional requirement for phase \(phase): \(content)")
+            } else {
+                addUserTranscript("Additional requirement for the phasing: \(content)")
+            }
 
-            if artifactManager.editPhase(in: "phasing.md", phaseNumber: phase, newContent: content) {
-                lastResponse = "Phase \(phase) updated. Say 'read phase \(phase)' to hear the changes."
+            // Regenerate the phasing with the new requirement included
+            let updatedContent = try await assistantClient.generatePhasing(
+                conversationHistory: conversationHistory
+            )
+
+            // Save the regenerated phasing
+            if artifactManager.safeWrite(filename: "phasing.md", content: updatedContent) {
+                if let phase = phaseNumber {
+                    lastResponse = "Phasing updated with changes to phase \(phase). Say 'read the phasing' to hear it."
+                } else {
+                    lastResponse = "Phasing updated with your changes. Say 'read the phasing' to hear it."
+                }
 
                 // Speak the success message
                 await speak(self.lastResponse)
 
                 // Add to conversation history
-                addAssistantResponse("I've updated phase \(phase) based on your request.")
+                addAssistantResponse("I've regenerated the phasing with your new requirement.")
             } else {
-                lastResponse = "Failed to edit phase \(phase)"
+                lastResponse = "Failed to update phasing"
 
                 // Speak the error
                 await speak(self.lastResponse)
             }
-        } else {
-            // Append to phasing if no specific phase
-            if artifactManager.appendToFile(filename: "phasing.md", content: "\n\(content)") {
-                lastResponse = "Phasing updated"
+        } catch {
+            print("[Orchestrator] Failed to regenerate phasing: \(error)")
+            lastResponse = "Failed to regenerate phasing"
 
-                // Speak the success message
-                await speak(self.lastResponse)
-            } else {
-                lastResponse = "Failed to edit phasing"
-
-                // Speak the error
-                await speak(self.lastResponse)
-            }
+            // Speak the error
+            await speak(self.lastResponse)
         }
     }
 
@@ -406,9 +425,10 @@ class Orchestrator: ObservableObject {
     func addUserTranscript(_ transcript: String) {
         conversationHistory.append((role: "user", content: transcript))
 
-        // Keep last 20 exchanges
-        if conversationHistory.count > 40 {
-            conversationHistory = Array(conversationHistory.suffix(40))
+        // Keep last 50 exchanges (100 messages) for extensive context
+        // This allows for 30-40+ turns of conversation before artifacts
+        if conversationHistory.count > 100 {
+            conversationHistory = Array(conversationHistory.suffix(100))
         }
     }
 

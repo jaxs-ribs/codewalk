@@ -149,18 +149,28 @@ class Router {
     private let apiURL = "https://api.groq.com/openai/v1/chat/completions"
 
     private let systemPrompt = """
-    You are a router for a voice-first speccer app. Analyze the user's transcript and determine:
-    1. The intent (directive, conversation, or clarification)
-    2. The proposed action to take
+    You are a router for a voice-first note-taking speccer app. The app is designed for users to think out loud.
 
-    Common voice commands:
+    CRITICAL ROUTING PHILOSOPHY:
+    - DEFAULT to conversation unless there's an EXPLICIT command
+    - Users will mostly be sharing ideas, not giving commands
+    - Be very conservative about interpreting as directives
+
+    ONLY route as directive for these EXPLICIT commands:
     - "write the description" or "write description" -> write_description
+    - "write me a description" or "can you write a description" -> write_description
     - "write the phasing" or "write phasing" -> write_phasing
     - "read the description" or "read description" -> read_description
     - "read the phasing" or "read phasing" -> read_phasing
     - "read phase 2" or "read phase two" -> read_specific_phase with phaseNumber
-    - "edit the description to..." -> edit_description
+    - "edit the description to..." or "edit it to..." -> edit_description
+    - "add... to the description" or "can you add... to the description" -> edit_description
+    - "please include... in the description" -> edit_description
+    - "make sure to edit it so..." or "update the description to..." -> edit_description
+    - "regenerate the description" or "rewrite the description" -> write_description
     - "change phase 2 to..." or "edit phase 2..." -> edit_phasing with phaseNumber
+    - "add... to phase 2" or "include... in the phasing" -> edit_phasing
+    - "regenerate the phasing" or "rewrite the phasing" -> write_phasing
     - "repeat" or "repeat last" -> repeat_last
     - "next" or "next phase" -> next_phase
     - "previous" or "previous phase" -> previous_phase
@@ -169,8 +179,14 @@ class Router {
     - "copy the phasing" or "copy phasing" -> copy_phasing
     - "copy everything" or "copy both" -> copy_both
 
-    For general project discussion, use intent=conversation.
-    For unclear requests, use intent=clarification.
+    EVERYTHING ELSE is conversation:
+    - Project ideas and features
+    - Requirements and constraints
+    - Questions about the project
+    - Thinking out loud
+    - Vague mentions of description/phasing without "write" or "read"
+
+    When in doubt, choose conversation over directive.
 
     Respond with valid JSON:
     {
@@ -192,6 +208,18 @@ class Router {
         },
         "reasoning": "why this is conversation"
     }
+
+    For unclear/ambiguous commands, use:
+    {
+        "intent": "conversation",
+        "action": {
+            "action": "conversation",
+            "content": "the user's message"
+        },
+        "reasoning": "unclear command, treating as conversation"
+    }
+
+    IMPORTANT: Never use "clarify" or "clarification" as an action - always route unclear requests as conversation.
     """
 
     init(groqApiKey: String) {
@@ -200,6 +228,11 @@ class Router {
 
     func route(transcript: String) async throws -> RouterResponse {
         print("[Router] Routing transcript: \(transcript)")
+
+        // Truncate very long transcripts to prevent token limit errors
+        let truncatedTranscript = transcript.count > 1500
+            ? String(transcript.prefix(1500)) + "..."
+            : transcript
 
         // Create request
         var request = URLRequest(url: URL(string: apiURL)!)
@@ -212,10 +245,10 @@ class Router {
             "model": "moonshotai/kimi-k2-instruct-0905",  // Using Kimi K2
             "messages": [
                 ["role": "system", "content": systemPrompt],
-                ["role": "user", "content": transcript]
+                ["role": "user", "content": truncatedTranscript]
             ],
             "temperature": 0.1,
-            "max_tokens": 200,
+            "max_tokens": 400,  // Increased from 200 to handle longer responses
             "response_format": ["type": "json_object"]
         ]
 
