@@ -6,9 +6,15 @@ class AssistantClient {
     private let groqApiKey: String
     private let apiURL = "https://api.groq.com/openai/v1/chat/completions"
 
+    // Constants
+    private let maxTokens = 2000
+    private let temperature = 0.7
+    private let conversationHistoryLimit = 100
+    private let modelName = "moonshotai/kimi-k2-instruct-0905"
+
     init(groqApiKey: String) {
         self.groqApiKey = groqApiKey
-        print("[AssistantClient] Initialized")
+        // print("[AssistantClient] Initialized")
     }
 
     // MARK: - Content Generation
@@ -120,7 +126,7 @@ class AssistantClient {
         CRITICAL BEHAVIOR RULES:
 
         1. STATEMENTS (user shares ideas/features/requirements):
-           - Respond with ONLY: "Noted", "Got it", "Understood", "I see", "Okay", "Makes sense"
+           - Respond with ONLY: "Noted"
            - NEVER elaborate or suggest unless explicitly asked
            - Examples: "I want it to have blue buttons" → "Noted"
 
@@ -161,8 +167,8 @@ class AssistantClient {
             ["role": "system", "content": systemPrompt]
         ]
 
-        // Add full conversation history (up to 50 exchanges for comprehensive context)
-        let recentHistory = conversationHistory.suffix(100)
+        // Add full conversation history (up to limit for comprehensive context)
+        let recentHistory = conversationHistory.suffix(conversationHistoryLimit)
         for exchange in recentHistory {
             messages.append(["role": exchange.role, "content": exchange.content])
         }
@@ -180,10 +186,10 @@ class AssistantClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let requestBody: [String: Any] = [
-            "model": "moonshotai/kimi-k2-instruct-0905",
+            "model": modelName,
             "messages": messages,
-            "temperature": 0.7,  // Balanced temperature for consistent artifact generation
-            "max_tokens": 2000   // Increased from 800 to support longer artifacts
+            "temperature": temperature,
+            "max_tokens": maxTokens
         ]
 
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)

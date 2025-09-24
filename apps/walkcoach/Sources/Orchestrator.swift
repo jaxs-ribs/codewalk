@@ -115,15 +115,13 @@ class Orchestrator: ObservableObject {
             await editPhasing(phaseNumber: phaseNumber, content: content)
         case .conversation(let content):
             await handleConversation(content)
-        case .clarification(let question):
-            lastResponse = question
         case .repeatLast:
             // Already displayed in lastResponse
             break
         case .nextPhase:
-            lastResponse = "Next phase navigation coming in Phase 7"
+            lastResponse = "Next phase"
         case .previousPhase:
-            lastResponse = "Previous phase navigation coming in Phase 7"
+            lastResponse = "Previous phase"
         case .stop:
             lastResponse = "Stopped"
         case .copyDescription:
@@ -171,7 +169,7 @@ class Orchestrator: ObservableObject {
             )
 
             if artifactManager.safeWrite(filename: "description.md", content: content) {
-                lastResponse = "Description written. Say 'read the description' to hear it."
+                lastResponse = "Description written."
 
                 // Speak the success message
                 await speak(self.lastResponse)
@@ -185,17 +183,8 @@ class Orchestrator: ObservableObject {
                 await speak(self.lastResponse)
             }
         } catch {
-            print("[Orchestrator] Failed to generate description: \(error)")
-
-            // Check if it's a network error
-            if (error as NSError).domain == NSURLErrorDomain {
-                lastResponse = "I'll write the description once the network is back"
-
-                // Speak the offline message
-                await speak(self.lastResponse)
-            } else {
-                lastResponse = "Failed to generate description"
-            }
+            lastResponse = handleGenerationError(error, for: "description")
+            await speak(self.lastResponse)
         }
     }
 
@@ -209,7 +198,7 @@ class Orchestrator: ObservableObject {
             )
 
             if artifactManager.safeWrite(filename: "phasing.md", content: content) {
-                lastResponse = "Phasing written. Say 'read the phasing' to hear it."
+                lastResponse = "Phasing written."
 
                 // Speak the success message
                 await speak(self.lastResponse)
@@ -223,8 +212,8 @@ class Orchestrator: ObservableObject {
                 await speak(self.lastResponse)
             }
         } catch {
-            print("[Orchestrator] Failed to generate phasing: \(error)")
-            lastResponse = "Failed to generate phasing"
+            lastResponse = handleGenerationError(error, for: "phasing")
+            await speak(self.lastResponse)
         }
     }
 
@@ -238,7 +227,7 @@ class Orchestrator: ObservableObject {
             // Speak the content using TTS
             await speak(content)
         } else {
-            lastResponse = "No description yet. Say 'write the description' first."
+            lastResponse = "No description yet."
 
             // Speak the error message
             await speak(self.lastResponse)
@@ -259,7 +248,7 @@ class Orchestrator: ObservableObject {
             // Speak the content using TTS
             await speak(content)
         } else {
-            lastResponse = "No phasing yet. Say 'write the phasing' first."
+            lastResponse = "No phasing yet."
 
             // Speak the error message
             await speak(self.lastResponse)
@@ -278,7 +267,7 @@ class Orchestrator: ObservableObject {
             // Speak the phase content using TTS
             await speak(phaseContent)
         } else {
-            lastResponse = "Phase \(phaseNumber) not found. Try 'read the phasing' to hear all phases."
+            lastResponse = "Phase \(phaseNumber) not found."
 
             // Speak the error message
             await speak(self.lastResponse)
@@ -286,81 +275,64 @@ class Orchestrator: ObservableObject {
     }
 
     private func editDescription(content: String) async {
-        lastResponse = "Updating description..."
-
-        do {
-            // Add the edit request to conversation history as a requirement
-            addUserTranscript("Additional requirement for the description: \(content)")
-
-            // Regenerate the description with the new requirement included
-            let updatedContent = try await assistantClient.generateDescription(
-                conversationHistory: conversationHistory
-            )
-
-            // Save the regenerated description
-            if artifactManager.safeWrite(filename: "description.md", content: updatedContent) {
-                lastResponse = "Description updated with your changes. Say 'read the description' to hear it."
-
-                // Speak the success message
-                await speak(self.lastResponse)
-
-                // Add to conversation history
-                addAssistantResponse("I've regenerated the description with your new requirement.")
-            } else {
-                lastResponse = "Failed to update description"
-
-                // Speak the error
-                await speak(self.lastResponse)
-            }
-        } catch {
-            print("[Orchestrator] Failed to regenerate description: \(error)")
-            lastResponse = "Failed to regenerate description"
-
-            // Speak the error
-            await speak(self.lastResponse)
-        }
+        await editArtifact(type: .description, content: content, phaseNumber: nil)
     }
 
     private func editPhasing(phaseNumber: Int?, content: String) async {
-        lastResponse = "Updating phasing..."
+        await editArtifact(type: .phasing, content: content, phaseNumber: phaseNumber)
+    }
+
+    private enum ArtifactType {
+        case description
+        case phasing
+
+        var filename: String {
+            switch self {
+            case .description: return "description.md"
+            case .phasing: return "phasing.md"
+            }
+        }
+
+        var displayName: String {
+            switch self {
+            case .description: return "description"
+            case .phasing: return "phasing"
+            }
+        }
+    }
+
+    private func editArtifact(type: ArtifactType, content: String, phaseNumber: Int?) async {
+        lastResponse = "Updating \(type.displayName)..."
 
         do {
             // Add the edit request to conversation history as a requirement
-            if let phase = phaseNumber {
+            if type == .phasing, let phase = phaseNumber {
                 addUserTranscript("Additional requirement for phase \(phase): \(content)")
             } else {
-                addUserTranscript("Additional requirement for the phasing: \(content)")
+                addUserTranscript("Additional requirement for the \(type.displayName): \(content)")
             }
 
-            // Regenerate the phasing with the new requirement included
-            let updatedContent = try await assistantClient.generatePhasing(
-                conversationHistory: conversationHistory
-            )
+            // Regenerate the artifact with the new requirement included
+            let updatedContent: String
+            switch type {
+            case .description:
+                updatedContent = try await assistantClient.generateDescription(conversationHistory: conversationHistory)
+            case .phasing:
+                updatedContent = try await assistantClient.generatePhasing(conversationHistory: conversationHistory)
+            }
 
-            // Save the regenerated phasing
-            if artifactManager.safeWrite(filename: "phasing.md", content: updatedContent) {
-                if let phase = phaseNumber {
-                    lastResponse = "Phasing updated with changes to phase \(phase). Say 'read the phasing' to hear it."
-                } else {
-                    lastResponse = "Phasing updated with your changes. Say 'read the phasing' to hear it."
-                }
-
-                // Speak the success message
+            // Save the regenerated artifact
+            if artifactManager.safeWrite(filename: type.filename, content: updatedContent) {
+                lastResponse = "\(type.displayName.capitalized) updated."
                 await speak(self.lastResponse)
-
-                // Add to conversation history
-                addAssistantResponse("I've regenerated the phasing with your new requirement.")
+                addAssistantResponse("I've regenerated the \(type.displayName) with your new requirement.")
             } else {
-                lastResponse = "Failed to update phasing"
-
-                // Speak the error
+                lastResponse = "Failed to update \(type.displayName)"
                 await speak(self.lastResponse)
             }
         } catch {
-            print("[Orchestrator] Failed to regenerate phasing: \(error)")
-            lastResponse = "Failed to regenerate phasing"
-
-            // Speak the error
+            print("[Orchestrator] Failed to regenerate \(type.displayName): \(error)")
+            lastResponse = "Failed to regenerate \(type.displayName)"
             await speak(self.lastResponse)
         }
     }
@@ -390,6 +362,34 @@ class Orchestrator: ObservableObject {
         }
 
         state = .idle
+    }
+
+    // MARK: - Error Handling
+
+    private func handleGenerationError(_ error: Error, for artifact: String) -> String {
+        print("[Orchestrator] Failed to generate \(artifact): \(error)")
+
+        let nsError = error as NSError
+
+        // Check for network errors
+        if nsError.domain == NSURLErrorDomain {
+            return "Network error. Try again later."
+        }
+
+        // Check for API errors
+        if nsError.domain == "NetworkManager" {
+            switch nsError.code {
+            case 429:
+                return "Rate limit reached. Wait a moment."
+            case 401:
+                return "Authentication failed."
+            default:
+                return "API error. Try again."
+            }
+        }
+
+        // Generic error
+        return "Failed to generate \(artifact)."
     }
 
     // MARK: - TTS Control
@@ -425,10 +425,10 @@ class Orchestrator: ObservableObject {
     func addUserTranscript(_ transcript: String) {
         conversationHistory.append((role: "user", content: transcript))
 
-        // Keep last 50 exchanges (100 messages) for extensive context
-        // This allows for 30-40+ turns of conversation before artifacts
-        if conversationHistory.count > 100 {
-            conversationHistory = Array(conversationHistory.suffix(100))
+        // Keep conversation history within limit for extensive context
+        let historyLimit = 100
+        if conversationHistory.count > historyLimit {
+            conversationHistory = Array(conversationHistory.suffix(historyLimit))
         }
     }
 

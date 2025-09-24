@@ -142,31 +142,6 @@ class ArtifactManager {
         }
     }
 
-    // MARK: - Edit Operations
-
-    func appendToFile(filename: String, content: String) -> Bool {
-        if let existing = safeRead(filename: filename) {
-            return safeWrite(filename: filename, content: existing + "\n\n" + content)
-        } else {
-            return safeWrite(filename: filename, content: content)
-        }
-    }
-
-    func replaceInFile(filename: String, searchText: String, replacement: String) -> Bool {
-        guard let existing = safeRead(filename: filename) else {
-            print("[ArtifactManager] Cannot replace in non-existent file: \(filename)")
-            return false
-        }
-
-        let updated = existing.replacingOccurrences(of: searchText, with: replacement)
-
-        if updated == existing {
-            print("[ArtifactManager] No changes made - search text not found")
-            return false
-        }
-
-        return safeWrite(filename: filename, content: updated)
-    }
 
     // MARK: - Phase-Specific Operations
 
@@ -211,49 +186,6 @@ class ArtifactManager {
         return result
     }
 
-    func editPhase(in filename: String, phaseNumber: Int, newContent: String) -> Bool {
-        guard let existing = safeRead(filename: filename) else {
-            print("[ArtifactManager] Cannot edit phase in non-existent file: \(filename)")
-            return false
-        }
-
-        // Parse phases
-        let lines = existing.components(separatedBy: .newlines)
-        var inTargetPhase = false
-        var phaseCount = 0
-        var result: [String] = []
-        var foundPhase = false
-
-        for line in lines {
-            if line.hasPrefix("## Phase") {
-                phaseCount += 1
-                inTargetPhase = (phaseCount == phaseNumber)
-
-                if inTargetPhase {
-                    foundPhase = true
-                    // Keep the phase header
-                    result.append(line)
-                    // Add new content
-                    result.append(newContent)
-                    continue
-                }
-            } else if inTargetPhase && line.hasPrefix("##") {
-                // End of target phase
-                inTargetPhase = false
-            }
-
-            if !inTargetPhase {
-                result.append(line)
-            }
-        }
-
-        if !foundPhase {
-            print("[ArtifactManager] Phase \(phaseNumber) not found")
-            return false
-        }
-
-        return safeWrite(filename: filename, content: result.joined(separator: "\n"))
-    }
 
     // MARK: - File Listing
 

@@ -5,7 +5,6 @@ import Foundation
 enum Intent: String, Codable {
     case directive = "directive"
     case conversation = "conversation"
-    case clarification = "clarification"
 }
 
 // MARK: - Proposed Actions
@@ -19,7 +18,6 @@ enum ProposedAction: Codable {
     case editDescription(String)
     case editPhasing(phaseNumber: Int?, content: String)
     case conversation(String)
-    case clarification(String)
     case repeatLast
     case nextPhase
     case previousPhase
@@ -61,9 +59,6 @@ enum ProposedAction: Codable {
         case "conversation":
             let content = try container.decode(String.self, forKey: .content)
             self = .conversation(content)
-        case "clarification":
-            let content = try container.decode(String.self, forKey: .content)
-            self = .clarification(content)
         case "repeat_last":
             self = .repeatLast
         case "next_phase":
@@ -113,9 +108,6 @@ enum ProposedAction: Codable {
         case .conversation(let content):
             try container.encode("conversation", forKey: .action)
             try container.encode(content, forKey: .content)
-        case .clarification(let content):
-            try container.encode("clarification", forKey: .action)
-            try container.encode(content, forKey: .content)
         case .repeatLast:
             try container.encode("repeat_last", forKey: .action)
         case .nextPhase:
@@ -161,6 +153,7 @@ class Router {
     - "write me a description" or "can you write a description" -> write_description
     - "write the phasing" or "write phasing" -> write_phasing
     - "read the description" or "read description" -> read_description
+    - "read it" or "can you read it" or "yes read it" (after writing) -> read_description
     - "read the phasing" or "read phasing" -> read_phasing
     - "read phase 2" or "read phase two" -> read_specific_phase with phaseNumber
     - "edit the description to..." or "edit it to..." -> edit_description
@@ -190,7 +183,7 @@ class Router {
 
     Respond with valid JSON:
     {
-        "intent": "directive|conversation|clarification",
+        "intent": "directive|conversation",
         "action": {
             "action": "action_name",
             "content": "optional content",
