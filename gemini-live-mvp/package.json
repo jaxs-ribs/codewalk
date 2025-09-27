@@ -1,0 +1,22 @@
+{
+  "name": "gemini-live-voice",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Gemini Live API Voice Assistant",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "tools": "node app-with-tools.js",
+    "speccer": "node speccer.js",
+    "phase2": "node phase2-router.js",
+    "phase3": "node phase3-writing.js",
+    "phase45": "node phase4-5-combined.js"
+  },
+  "dependencies": {
+    "@google/genai": "^1.21.0",
+    "dotenv": "^16.3.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
