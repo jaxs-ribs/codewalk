@@ -39,7 +39,7 @@ class AgentViewModel: ObservableObject {
         router = Router(groqApiKey: env.groqApiKey)
         print("[WalkCoach] Router initialized")
 
-        orchestrator = Orchestrator(groqApiKey: env.groqApiKey)
+        orchestrator = Orchestrator(config: env)
         print("[WalkCoach] Orchestrator initialized")
 
         // Subscribe to orchestrator updates

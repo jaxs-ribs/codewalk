@@ -25,12 +25,14 @@ enum ProposedAction: Codable {
     case copyDescription
     case copyPhasing
     case copyBoth
+    case search(String)  // New action for search
 
     // Custom coding for enum with associated values
     enum CodingKeys: String, CodingKey {
         case action
         case content
         case phaseNumber
+        case query  // For search
     }
 
     init(from decoder: Decoder) throws {
@@ -73,6 +75,9 @@ enum ProposedAction: Codable {
             self = .copyPhasing
         case "copy_both":
             self = .copyBoth
+        case "search":
+            let query = try container.decode(String.self, forKey: .query)
+            self = .search(query)
         default:
             throw DecodingError.dataCorrupted(
                 DecodingError.Context(
@@ -122,6 +127,9 @@ enum ProposedAction: Codable {
             try container.encode("copy_phasing", forKey: .action)
         case .copyBoth:
             try container.encode("copy_both", forKey: .action)
+        case .search(let query):
+            try container.encode("search", forKey: .action)
+            try container.encode(query, forKey: .query)
         }
     }
 }
@@ -171,6 +179,15 @@ class Router {
     - "copy the description" or "copy description" -> copy_description
     - "copy the phasing" or "copy phasing" -> copy_phasing
     - "copy everything" or "copy both" -> copy_both
+    - "search for..." or "look up..." or "find information about..." -> search with query
+    - "what does the internet say about..." -> search with query
+    - "can you search for..." or "please search..." -> search with query
+    - "do a search on..." or "run a search for..." -> search with query
+
+    SPECIAL CASE - Contextual search:
+    - "search again" or "do another search" or "fresh search" or "new search" -> conversation
+    - "run a fresh live search" or "do that search now" -> conversation
+    - These require context from previous messages, so route as conversation
 
     EVERYTHING ELSE is conversation:
     - Project ideas and features
@@ -187,7 +204,8 @@ class Router {
         "action": {
             "action": "action_name",
             "content": "optional content",
-            "phaseNumber": optional_number
+            "phaseNumber": optional_number,
+            "query": "optional search query"
         },
         "reasoning": "brief explanation"
     }
@@ -200,6 +218,16 @@ class Router {
             "content": "the user's message"
         },
         "reasoning": "why this is conversation"
+    }
+
+    For search commands, use:
+    {
+        "intent": "directive",
+        "action": {
+            "action": "search",
+            "query": "the search query extracted from user's request"
+        },
+        "reasoning": "user requested a search"
     }
 
     For unclear/ambiguous commands, use:

@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import UIKit
+import AudioToolbox
 
 // MARK: - Orchestrator State
 
@@ -32,13 +33,15 @@ class Orchestrator: ObservableObject {
     private let ttsManager: TTSManager
     private let groqTTSManager: GroqTTSManager?
     private let useGroqTTS: Bool
+    private var searchService: SearchService?  // For Phase 1 testing
+    private var searchSoundTimer: Timer?  // Timer for search feedback sounds
 
-    init(groqApiKey: String) {
+    init(config: EnvConfig) {
         // Initialize artifact manager
         artifactManager = ArtifactManager()
 
         // Initialize assistant client
-        assistantClient = AssistantClient(groqApiKey: groqApiKey)
+        assistantClient = AssistantClient(groqApiKey: config.groqApiKey)
 
         // Initialize TTS manager (iOS native)
         ttsManager = TTSManager()
@@ -48,7 +51,7 @@ class Orchestrator: ObservableObject {
 
         // Initialize Groq TTS if enabled
         if useGroqTTS {
-            groqTTSManager = GroqTTSManager(groqApiKey: groqApiKey)
+            groqTTSManager = GroqTTSManager(groqApiKey: config.groqApiKey)
             print("[Orchestrator] Using Groq TTS with PlayAI voices")
         } else {
             groqTTSManager = nil
@@ -56,6 +59,38 @@ class Orchestrator: ObservableObject {
         }
 
         print("[Orchestrator] Initialized with ArtifactManager, AssistantClient, and TTS")
+
+        // Initialize SearchService if Brave API key is available (Phase 1 testing)
+        if !config.braveApiKey.isEmpty {
+            searchService = SearchService(config: config)
+            print("[Orchestrator] SearchService initialized for testing")
+        }
+    }
+
+    // MARK: - Phase 1 Test Method
+
+    func testSearch(query: String) async {
+        guard let searchService = searchService else {
+            print("[Orchestrator] SearchService not initialized. Check BRAVE_API_KEY in .env")
+            lastResponse = "Search service not available"
+            return
+        }
+
+        print("[Orchestrator] TEST: Starting search for '\(query)'")
+        lastResponse = "Searching for \(query)..."
+
+        do {
+            let summary = try await searchService.search(query: query)
+            print("[Orchestrator] TEST: Search successful!")
+            print("[Orchestrator] TEST: Summary (\(summary.count) chars): \(summary.prefix(200))...")
+            lastResponse = summary
+
+            // Test TTS with the summary
+            await speak(summary)
+        } catch {
+            print("[Orchestrator] TEST: Search failed - \(error)")
+            lastResponse = "Search failed: \(error.localizedDescription)"
+        }
     }
 
     // MARK: - Queue Management
@@ -130,6 +165,49 @@ class Orchestrator: ObservableObject {
             await copyPhasingAction()
         case .copyBoth:
             await copyBothAction()
+        case .search(let query):
+            await executeSearch(query: query)
+        }
+    }
+
+    // MARK: - Search Execution
+
+    private func executeSearch(query: String) async {
+        guard let searchService = searchService else {
+            lastResponse = "Search service not available. Check BRAVE_API_KEY in .env"
+            await speak(lastResponse)
+            return
+        }
+
+        print("[Orchestrator] Executing search for: '\(query)'")
+        lastResponse = "Searching for \(query)..."
+
+        // Start search with tick sounds
+        playSearchTickSound()  // Initial tick
+        startSearchSoundTimer()
+
+        do {
+            let summary = try await searchService.search(query: query)
+            print("[Orchestrator] Search successful, summary: \(summary.count) chars")
+            lastResponse = summary
+
+            // Stop search sounds (no completion chime)
+            stopSearchSoundTimer()
+
+            // Add search result to conversation history
+            addUserTranscript("Search for: \(query)")
+            addAssistantResponse(summary)
+
+            // Speak the search results
+            await speak(summary)
+        } catch {
+            print("[Orchestrator] Search failed: \(error)")
+            lastResponse = "Search failed: \(error.localizedDescription)"
+
+            // Stop search sounds (no error sound)
+            stopSearchSoundTimer()
+
+            await speak("The search didn't work. \(error.localizedDescription)")
         }
     }
 
@@ -340,6 +418,27 @@ class Orchestrator: ObservableObject {
     private func handleConversation(_ content: String) async {
         state = .conversing
 
+        // Check if user wants to re-run a previous search
+        let lowerContent = content.lowercased()
+        if (lowerContent.contains("search") || lowerContent.contains("look") || lowerContent.contains("find")) &&
+           (lowerContent.contains("again") || lowerContent.contains("fresh") || lowerContent.contains("new") || lowerContent.contains("live")) {
+
+            // Find the last search query from conversation history
+            var lastSearchQuery: String? = nil
+            for (role, message) in conversationHistory.reversed() {
+                if role == "user" && message.hasPrefix("Search for:") {
+                    lastSearchQuery = String(message.dropFirst("Search for:".count)).trimmingCharacters(in: .whitespaces)
+                    break
+                }
+            }
+
+            if let query = lastSearchQuery {
+                print("[Orchestrator] Detected request to re-search: '\(query)'")
+                await executeSearch(query: query)
+                return
+            }
+        }
+
         do {
             // Generate conversational response
             let response = try await assistantClient.generateConversationalResponse(
@@ -480,5 +579,42 @@ class Orchestrator: ObservableObject {
         UIPasteboard.general.string = combined
         lastResponse = "Both artifacts copied to clipboard!"
         return true
+    }
+
+    // MARK: - Search Sound Feedback
+
+    private func playSearchStartSound() {
+        // Tink sound - gentle start
+        AudioServicesPlaySystemSound(1057)
+    }
+
+    private func playSearchTickSound() {
+        // Keyboard tap sound - much more pleasant than 1103
+        AudioServicesPlaySystemSound(1057)
+    }
+
+    private func playSearchCompleteSound() {
+        // Success chime
+        AudioServicesPlaySystemSound(1025)
+    }
+
+    private func playSearchErrorSound() {
+        // Error/failure sound
+        AudioServicesPlaySystemSound(1053)
+    }
+
+    private func startSearchSoundTimer() {
+        // Stop any existing timer
+        stopSearchSoundTimer()
+
+        // Play tick sound every 1.5 seconds
+        searchSoundTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            self?.playSearchTickSound()
+        }
+    }
+
+    private func stopSearchSoundTimer() {
+        searchSoundTimer?.invalidate()
+        searchSoundTimer = nil
     }
 }
