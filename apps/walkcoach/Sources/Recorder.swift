@@ -42,13 +42,13 @@ final class Recorder: NSObject {
             // Activate session immediately and keep it active
             try session.setActive(true, options: [])
             
-            print("[Recorder] Audio session configured and ACTIVE with 5ms buffer")
+            log("Audio session configured and ACTIVE with 5ms buffer", category: .system, component: "Recorder")
             
             // Pre-create a recorder to warm up the recording pipeline
             prepareRecorder()
             
         } catch {
-            print("[Recorder] Failed to setup audio session: \(error)")
+            logError("Failed to setup audio session: \(error)", component: "Recorder")
         }
     }
     
@@ -68,19 +68,19 @@ final class Recorder: NSObject {
             try? FileManager.default.removeItem(at: tempURL)
             
             isPrepared = true
-            print("[Recorder] Recording pipeline warmed up")
+            log("Recording pipeline warmed up", category: .system, component: "Recorder")
             
         } catch {
-            print("[Recorder] Failed to warm up recorder: \(error)")
+            logError("Failed to warm up recorder: \(error)", component: "Recorder")
         }
     }
     
     private func requestPermission() {
         AVAudioSession.sharedInstance().requestRecordPermission { granted in
             if !granted {
-                print("[Recorder] Microphone permission denied")
+                logError("Microphone permission denied", component: "Recorder")
             } else {
-                print("[Recorder] Microphone permission granted")
+                log("Microphone permission granted", category: .system, component: "Recorder")
             }
         }
     }
@@ -100,25 +100,25 @@ final class Recorder: NSObject {
             newRecorder.prepareToRecord()
             
             guard newRecorder.record() else {
-                print("[Recorder] Failed to start recording")
+                logError("Failed to start recording", component: "Recorder")
                 return false
             }
             
             self.recorder = newRecorder
             self.fileURL = url
             
-            print("[Recorder] Recording started INSTANTLY: \(url.lastPathComponent)")
+            log("Recording started: \(url.lastPathComponent)", category: .recorder)
             return true
             
         } catch {
-            print("[Recorder] Failed to create recorder: \(error)")
+            logError("Failed to create recorder: \(error)", component: "Recorder")
             return false
         }
     }
     
     func stop() -> URL? {
         guard let recorder = recorder else {
-            print("[Recorder] No active recording")
+            log("No active recording", category: .recorder)
             return nil
         }
         
@@ -129,7 +129,7 @@ final class Recorder: NSObject {
         fileURL = nil
         
         if let url = url {
-            print("[Recorder] Recording stopped: \(url.lastPathComponent)")
+            log("Recording stopped: \(url.lastPathComponent)", category: .recorder)
         }
         
         // Keep session active for next recording (no deactivation)

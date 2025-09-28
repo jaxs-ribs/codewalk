@@ -21,13 +21,13 @@ final class ElevenLabsTTS: NSObject {
         self.apiKey = apiKey
         self.voiceId = voiceId
         super.init()
-        print("[ElevenLabsTTS] Initialized with voice: \(voiceId)")
+        log("Initialized with voice: \(voiceId)", category: .system, component: "ElevenLabsTTS")
     }
 
     /// Synthesizes text to speech and plays it with ULTRA LOW LATENCY
     /// - Parameter text: The text to convert to speech
     func synthesizeAndPlay(_ text: String) async throws {
-        print("[ElevenLabsTTS] Synthesizing: \(text.prefix(50))...")
+        log("Synthesizing text to speech...", category: .tts, component: "ElevenLabsTTS")
 
         // Clean markdown from text
         let cleanedText = cleanMarkdown(text)
@@ -39,7 +39,7 @@ final class ElevenLabsTTS: NSObject {
             outputFormat: "mp3_22050_32"  // Small file for faster transfer
         )
 
-        print("[ElevenLabsTTS] Audio file synthesized at: \(audioFileURL.path)")
+        log("Audio synthesized successfully", category: .tts, component: "ElevenLabsTTS")
 
         // Play the audio
         try await playAudio(from: audioFileURL)
@@ -47,7 +47,7 @@ final class ElevenLabsTTS: NSObject {
 
     /// Stops any currently playing audio
     func stop() {
-        print("[ElevenLabsTTS] Stopping playback")
+        log("Stopping playback", category: .tts, component: "ElevenLabsTTS")
         player?.stop()
         player = nil
 
@@ -69,7 +69,7 @@ final class ElevenLabsTTS: NSObject {
         outputFormat: String
     ) async throws -> URL {
         let url = baseURL.appendingPathComponent("/v1/text-to-speech/\(voiceId)")
-        print("[ElevenLabsTTS] Calling API at: \(url.absoluteString)")
+        log("Calling ElevenLabs API...", category: .network, component: "ElevenLabsTTS")
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -87,26 +87,26 @@ final class ElevenLabsTTS: NSObject {
             ]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        print("[ElevenLabsTTS] Request with speed 1.2x (20% faster)")
+        log("Speech speed: 1.2x", category: .tts, component: "ElevenLabsTTS")
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        print("[ElevenLabsTTS] Received \(data.count) bytes")
+        log("Received \(data.count) bytes of audio", category: .network, component: "ElevenLabsTTS")
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            print("[ElevenLabsTTS] ERROR: Invalid HTTP response")
+            logError("Invalid HTTP response", component: "ElevenLabsTTS")
             throw URLError(.badServerResponse)
         }
 
-        print("[ElevenLabsTTS] HTTP Status: \(httpResponse.statusCode)")
+        log("HTTP Status: \(httpResponse.statusCode)", category: .network, component: "ElevenLabsTTS")
 
         guard (200..<300).contains(httpResponse.statusCode) else {
             let errorBody = String(data: data, encoding: .utf8) ?? "No error body"
-            print("[ElevenLabsTTS] ERROR: Bad HTTP status \(httpResponse.statusCode), body: \(errorBody)")
+            logError("Bad HTTP status \(httpResponse.statusCode): \(errorBody)", component: "ElevenLabsTTS")
             throw ElevenTTSError.badHTTPStatus(httpResponse.statusCode)
         }
 
         guard !data.isEmpty else {
-            print("[ElevenLabsTTS] ERROR: Empty audio data received")
+            logError("Empty audio data received", component: "ElevenLabsTTS")
             throw ElevenTTSError.emptyAudio
         }
 
@@ -117,7 +117,7 @@ final class ElevenLabsTTS: NSObject {
             .appendingPathExtension(ext)
         try data.write(to: fileURL)
 
-        print("[ElevenLabsTTS] Audio saved to: \(fileURL.path), size: \(data.count) bytes")
+        log("Audio saved (\(data.count) bytes)", category: .tts, component: "ElevenLabsTTS")
 
         return fileURL
     }
@@ -142,7 +142,7 @@ final class ElevenLabsTTS: NSObject {
                 // Ensure session is active
                 try audioSession.setActive(true, options: [])
 
-                print("[ElevenLabsTTS] Audio session configured for loud playback")
+                log("Audio session configured for playback", category: .tts, component: "ElevenLabsTTS")
 
                 player = try AVAudioPlayer(contentsOf: url)
                 player?.prepareToPlay()
@@ -159,13 +159,13 @@ final class ElevenLabsTTS: NSObject {
                     return
                 }
 
-                print("[ElevenLabsTTS] Playing audio, duration: \(player?.duration ?? 0) seconds")
+                log(String(format: "Playing audio (%.1f seconds)", player?.duration ?? 0), category: .tts, component: "ElevenLabsTTS")
 
                 // Clean up the temporary file after a delay
                 Task {
                     try? await Task.sleep(nanoseconds: 10_000_000_000) // 10 seconds
                     try? FileManager.default.removeItem(at: url)
-                    print("[ElevenLabsTTS] Cleaned up temp audio file")
+                    log("Audio playback completed", category: .tts, component: "ElevenLabsTTS")
                 }
 
             } catch {
@@ -211,7 +211,7 @@ final class ElevenLabsTTS: NSObject {
 extension ElevenLabsTTS: AVAudioPlayerDelegate {
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor in
-            print("[ElevenLabsTTS] Finished playing audio successfully: \(flag)")
+            log("Playback finished: \(flag ? "success" : "interrupted")", category: .tts, component: "ElevenLabsTTS")
 
             // Resume continuation
             if let continuation = playbackContinuation {
@@ -233,7 +233,7 @@ extension ElevenLabsTTS: AVAudioPlayerDelegate {
 
     nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
         Task { @MainActor in
-            print("[ElevenLabsTTS] Audio decode error: \(error?.localizedDescription ?? "unknown")")
+            logError("Audio decode error: \(error?.localizedDescription ?? "unknown")", component: "ElevenLabsTTS")
 
             if let continuation = playbackContinuation {
                 playbackContinuation = nil

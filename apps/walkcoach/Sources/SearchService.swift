@@ -74,7 +74,7 @@ class SearchService {
         let summary = try await callGroq(prompt: prompt)
 
         let elapsed = Date().timeIntervalSince(startTime)
-        print("[SearchService] Search completed in \(String(format: "%.2f", elapsed))s")
+        log("Search completed in \(String(format: "%.2f", elapsed))s", category: .search, component: "SearchService")
 
         // Return clean TTS-friendly summary
         return cleanForTTS(summary)

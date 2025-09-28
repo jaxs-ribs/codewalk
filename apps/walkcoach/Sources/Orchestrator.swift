@@ -60,25 +60,25 @@ class Orchestrator: ObservableObject {
             ttsProvider = .elevenLabs
             elevenLabsTTS = ElevenLabsTTS(apiKey: config.elevenLabsApiKey)
             groqTTSManager = nil
-            print("[Orchestrator] Using ElevenLabs TTS")
+            log("Using ElevenLabs TTS", category: .tts, component: "Orchestrator")
         } else if CommandLine.arguments.contains("--UseGroqTTS") {
             ttsProvider = .groq
             groqTTSManager = GroqTTSManager(groqApiKey: config.groqApiKey)
             elevenLabsTTS = nil
-            print("[Orchestrator] Using Groq TTS with PlayAI voices")
+            log("Using Groq TTS with PlayAI voices", category: .tts, component: "Orchestrator")
         } else {
             ttsProvider = .native
             groqTTSManager = nil
             elevenLabsTTS = nil
-            print("[Orchestrator] Using iOS native TTS")
+            log("Using iOS native TTS", category: .tts, component: "Orchestrator")
         }
 
-        print("[Orchestrator] Initialized with ArtifactManager, AssistantClient, and TTS")
+        log("Initialized with ArtifactManager, AssistantClient, and TTS", category: .system, component: "Orchestrator")
 
         // Initialize SearchService if Brave API key is available (Phase 1 testing)
         if !config.braveApiKey.isEmpty {
             searchService = SearchService(config: config)
-            print("[Orchestrator] SearchService initialized for testing")
+            log("SearchService initialized", category: .system, component: "Orchestrator")
         }
     }
 
@@ -86,7 +86,7 @@ class Orchestrator: ObservableObject {
 
     func testSearch(query: String) async {
         guard let searchService = searchService else {
-            print("[Orchestrator] SearchService not initialized. Check BRAVE_API_KEY in .env")
+            logError("SearchService not initialized. Check BRAVE_API_KEY in .env", component: "Orchestrator")
             lastResponse = "Search service not available"
             return
         }
@@ -111,7 +111,7 @@ class Orchestrator: ObservableObject {
     // MARK: - Queue Management
 
     func enqueueAction(_ action: ProposedAction) {
-        print("[Orchestrator] Enqueueing action: \(action)")
+        log("Enqueueing action: \(action)", category: .orchestrator)
 
         let item = ActionQueueItem(action: action)
         actionQueue.append(item)
@@ -127,7 +127,7 @@ class Orchestrator: ObservableObject {
     private func processQueue() async {
         guard !actionQueue.isEmpty, !isExecuting else { return }
 
-        print("[Orchestrator] Processing queue with \(actionQueue.count) items")
+        log("Processing queue with \(actionQueue.count) items", category: .orchestrator)
 
         // Set executing flag (IoGuard)
         isExecuting = true
@@ -146,7 +146,7 @@ class Orchestrator: ObservableObject {
     // MARK: - Action Execution
 
     private func executeAction(_ action: ProposedAction) async {
-        print("[Orchestrator] Executing action: \(action)")
+        log("Executing action: \(action)", category: .orchestrator)
 
         switch action {
         case .writeDescription:
@@ -194,7 +194,7 @@ class Orchestrator: ObservableObject {
             return
         }
 
-        print("[Orchestrator] Executing search for: '\(query)'")
+        log("Executing search for: '\(query)'", category: .search, component: "Orchestrator")
         lastResponse = "Searching for \(query)..."
 
         // Start search with tick sounds
@@ -203,7 +203,7 @@ class Orchestrator: ObservableObject {
 
         do {
             let summary = try await searchService.search(query: query)
-            print("[Orchestrator] Search successful, summary: \(summary.count) chars")
+            logSuccess("Search successful, summary: \(summary.count) chars", component: "Orchestrator")
             lastResponse = summary
 
             // Stop search sounds (no completion chime)
@@ -216,7 +216,7 @@ class Orchestrator: ObservableObject {
             // Speak the search results
             await speak(summary)
         } catch {
-            print("[Orchestrator] Search failed: \(error)")
+            logError("Search failed: \(error)", component: "Orchestrator")
             lastResponse = "Search failed: \(error.localizedDescription)"
 
             // Stop search sounds (no error sound)
@@ -509,13 +509,16 @@ class Orchestrator: ObservableObject {
     // MARK: - TTS Control
 
     private func speak(_ text: String) async {
+        // Log the AI response
+        logAIResponse(text)
+
         switch ttsProvider {
         case .elevenLabs:
             if let elevenLabs = elevenLabsTTS {
                 do {
                     try await elevenLabs.synthesizeAndPlay(text)
                 } catch {
-                    print("[Orchestrator] ElevenLabs TTS failed, falling back to iOS TTS: \(error)")
+                    logError("ElevenLabs TTS failed, falling back to iOS TTS: \(error)", component: "TTS")
                     // Fallback to iOS TTS
                     await MainActor.run {
                         self.ttsManager.speak(text)
@@ -531,7 +534,7 @@ class Orchestrator: ObservableObject {
                 do {
                     try await groqTTS.synthesizeAndPlay(text)
                 } catch {
-                    print("[Orchestrator] Groq TTS failed, falling back to iOS TTS: \(error)")
+                    logError("Groq TTS failed, falling back to iOS TTS: \(error)", component: "TTS")
                     // Fallback to iOS TTS
                     await MainActor.run {
                         self.ttsManager.speak(text)

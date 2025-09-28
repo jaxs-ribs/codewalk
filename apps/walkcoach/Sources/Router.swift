@@ -248,7 +248,7 @@ class Router {
     }
 
     func route(transcript: String) async throws -> RouterResponse {
-        print("[Router] Routing transcript: \(transcript)")
+        log("Analyzing user intent...", category: .router)
 
         // Truncate very long transcripts to prevent token limit errors
         let truncatedTranscript = transcript.count > 1500
@@ -275,7 +275,7 @@ class Router {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
-        print("[Router] Sending request to Groq...")
+        log("Sending request to Groq API...", category: .router)
 
         // Perform request with retry logic
         let data = try await NetworkManager.shared.performRequestWithRetry(request)
@@ -289,7 +289,11 @@ class Router {
             throw NSError(domain: "Router", code: -2, userInfo: [NSLocalizedDescriptionKey: "Invalid response format"])
         }
 
-        print("[Router] Raw response: \(content)")
+        log("Response received from LLM", category: .router)
+        // Log detailed response in debug mode
+        #if DEBUG
+        log("Raw LLM response: \(content)", category: .router)
+        #endif
 
         // Parse the JSON content
         guard let contentData = content.data(using: .utf8) else {
@@ -298,7 +302,7 @@ class Router {
 
         let routerResponse = try JSONDecoder().decode(RouterResponse.self, from: contentData)
 
-        print("[Router] Parsed intent: \(routerResponse.intent), action: \(routerResponse.action)")
+        log("Intent: \(routerResponse.intent), Action: \(routerResponse.action)", category: .router)
 
         return routerResponse
     }

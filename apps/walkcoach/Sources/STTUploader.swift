@@ -12,11 +12,11 @@ final class STTUploader {
     
     init(groqApiKey: String) {
         self.apiKey = groqApiKey
-        print("[STTUploader] Initialized with API key: \(apiKey.prefix(10))...")
+        log("Initialized with API key: \(apiKey.prefix(10))...", category: .system, component: "STT")
     }
     
     func transcribe(audioURL: URL) async throws -> String {
-        print("[STTUploader] Starting transcription of: \(audioURL.lastPathComponent)")
+        log("Starting transcription of: \(audioURL.lastPathComponent)", category: .stt)
         
         // Create multipart form data
         let boundary = UUID().uuidString
@@ -50,14 +50,14 @@ final class STTUploader {
         
         request.httpBody = body
         
-        print("[STTUploader] Uploading \(audioData.count) bytes...")
+        log("Uploading \(audioData.count) bytes to Groq...", category: .network, component: "STT")
 
         // Perform request with retry logic
         let data: Data
         do {
             data = try await NetworkManager.shared.performRequestWithRetry(request)
         } catch {
-            print("[STTUploader] Network request failed after retries: \(error)")
+            logError("Network request failed after retries: \(error)", component: "STT")
 
             // Return a fallback message if offline
             if (error as NSError).domain == NSURLErrorDomain {
@@ -73,7 +73,7 @@ final class STTUploader {
             throw NSError(domain: "STTUploader", code: -2, userInfo: [NSLocalizedDescriptionKey: "Empty transcription"])
         }
         
-        print("[STTUploader] Transcription successful: \(text.prefix(50))...")
+        logSuccess("Transcription completed", component: "STT")
         return text
     }
 }

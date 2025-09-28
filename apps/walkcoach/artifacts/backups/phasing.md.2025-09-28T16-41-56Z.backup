@@ -1,0 +1,16 @@
+# Project Phasing
+
+## Phase 1: Core VM Skeleton
+So first we'll build a minimal RISC-V core that can fetch, decode, and execute a handful of instructions like ADD, SUB, and LW. We'll wire up a tiny memory-mapped address space and a register file, all in pure Rust with no_std so it can later run inside a zk circuit. Every module gets its own test file: step_one_fetch_works, test_add_immediate, test_load_word_aligned, etc., so when CI runs you’ll see a wall of green. When this phase is done, you'll be able to cargo test and watch 20+ unit tests pass while a simple Fibonacci binary prints 55.
+
+## Phase 2: AIR Arithmetization
+Next we'll design an Algebraic Intermediate Representation that describes the same VM as a set of polynomial constraints. We'll pick a 64-bit Goldilocks field for speed, lay out execution traces in fixed-height matrices, and write Rust code that generates those traces from the VM’s JSON execution log. The test harness will compare trace rows against hand-checked CSV files, plus a STARK verifier that flips from accept to reject if you flip one trace cell. Once complete, you can test by running cargo test prove_fibonacci and see the verifier accept a 1,000-row trace in under a second.
+
+## Phase 3: Polynomial Prover/Verifier
+Then we'll implement the concrete zk proof system: commit to traces with a Blake3-based Merkle tree, open segments via FRI, and batch all openings through a single Fiat-Shamir challenge. We'll keep the prover parallel with Rayon and make the verifier no_std friendly so it can live on-chain later. Robust property-tests will generate random execution traces, prove them, and assert the verifier never fails, plus a differential test that checks our proofs against the RISC Zero public verifier on identical inputs. When this phase is done, you'll be able to type make bench_fibonacci and watch it produce a 200 KB proof in 3 s on a laptop, then verify in 30 ms.
+
+## Phase 4: ISA & Toolchain Extension
+After that we'll grow the ISA to include jumps, branches, and multiplication so we can compile real C or Rust programs. We'll write a LLVM- based target triple (rv32zk_zkvm) and a linker script that packs ELF segments into the Merkle-ized memory image the prover expects. Unit tests will compile hello-world, run it natively, run it in the VM, and assert both logs match bit-for-bit; integration tests will do the same inside the zk circuit. When this phase is done, you'll be able to cargo build --example rsa_verify and obtain a self-contained proof that you verified a 2048-bit RSA signature without revealing the key.
+
+## Phase 5: Recursion & Production Hardening
+Finally we'll add recursive proofs so the zkVM can prove it verified another proof, letting us compress long running programs into a single constant-size receipt. We'll plumb a secondary circuit that verifies the previous verifier, use cyclic curves for efficiency, and gate every new feature behind a compile flag so audit surface stays minimal. End-to-end tests will chain ten proofs together, verify the final receipt in under 50 ms, and assert the whole stack still compiles to a 300 kB wasm blob. Once this phase is complete, you'll be able to run cargo test release_profile and see a full CI pass plus a flamegraph showing every constraint evaluates under 100 ns.

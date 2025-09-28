@@ -1,11 +1,13 @@
 # Project Description
 
-We're building a zero-knowledge virtual machine in Haskell. Basically, it's a VM that can prove computations happened correctly without revealing what was actually computed. The way we're doing this is by combining Haskell's pure functional strengths with Rust's battle-tested zkSNARK libraries.
+We're building a zero knowledge virtual machine from scratch in Rust. The goal is a high performance zkVM that can prove general purpose computations without revealing the data. We're taking a test driven approach where every phase has comprehensive tests so we can always fall back on them for safety.
 
-So here's how it works. We'll keep all our VM logic pure in Haskell - that's where we'll handle the virtual machine state, instruction execution, and memory management. But when we need to generate or verify zero-knowledge proofs, we'll call out to Rust through an FFI bridge using inline-rust or Haskell-Rust FFI bindings. The Rust side will use the arkworks family of crates for all the heavy cryptographic lifting.
+The core idea is simple. We'll design a minimal 32 bit RISC instruction set architecture with as few opcodes as possible. This keeps the trace width small which directly translates to smaller proofs and faster proving times. Each instruction will be carefully benchmarked using Criterion dot rs to catch any performance regressions immediately in our CI pipeline.
 
-Now, the VM itself will be structured as a state monad using Maps to represent memory and state. Each instruction gets compiled down to a rank-1 constraint system - think of these as the mathematical equations that prove our computation is valid. We're exposing the necessary zcash primitives and ff-ffi functions through our FFI layer so Haskell can talk to them.
+For the cryptographic backend we're going with either Halo 2 or Plonky 3. Both give us modern proof systems with excellent performance characteristics. We'll implement GPU kernels for the heavy finite field operations and write hand tuned assembly for the most critical paths. The finite field arithmetic is where most zkVMs lose time so we're going to optimize the hell out of that.
 
-The beautiful part is that users can run computations on this VM and get back a cryptographic proof. They can then share this proof with anyone to convince them the computation ran correctly, all without revealing any details about the actual inputs or intermediate steps. It's like being able to prove you solved a puzzle without showing anyone your solution method.
+The VM itself will be memory safe thanks to Rust's ownership system. No garbage collection means predictable performance which is crucial for proving times. We'll expose the VM through a clean Rust API first. Later we can add REST endpoints if we want HTTP access but the core VM is pure Rust.
 
-This is useful for privacy-preserving applications, verifiable computation in blockchain systems, or anywhere you need to prove something happened correctly while keeping the details secret. We're basically creating a way to have trustless verification of arbitrary computations with strong privacy guarantees.
+Testing is fundamental here. Every constraint in our proof system gets unit tests. Every optimization gets benchmark tests against the previous version. We'll know immediately if something breaks because the tests will fail before we even commit. This way we can iterate quickly without fear of breaking existing functionality.
+
+The end result should be a zkVM that can compete with the current leaders like SP1 and RISC Zero in terms of speed while maintaining the flexibility to prove arbitrary computations. We're not targeting any specific use case yet just building a fast general purpose proving engine that we can trust.

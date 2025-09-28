@@ -21,26 +21,26 @@ class AgentViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     init() {
-        print("[WalkCoach] ViewModel initialized")
+        log("ViewModel initialized", category: .system)
         setupServices()
     }
 
     private func setupServices() {
         // Initialize recorder immediately to pre-warm audio session
         recorder = Recorder()
-        print("[WalkCoach] Recorder initialized and pre-warming audio session")
+        log("Recorder initialized and pre-warming audio session", category: .system)
 
         // Load environment config
         let env = EnvConfig.load()
 
         sttUploader = STTUploader(groqApiKey: env.groqApiKey)
-        print("[WalkCoach] STTUploader initialized")
+        log("STTUploader initialized", category: .system)
 
         router = Router(groqApiKey: env.groqApiKey)
-        print("[WalkCoach] Router initialized")
+        log("Router initialized", category: .system)
 
         orchestrator = Orchestrator(config: env)
-        print("[WalkCoach] Orchestrator initialized")
+        log("Orchestrator initialized", category: .system)
 
         // Subscribe to orchestrator updates
         orchestrator?.$lastResponse
@@ -53,7 +53,7 @@ class AgentViewModel: ObservableObject {
     }
 
     func startRecording() {
-        print("[WalkCoach] Starting recording")
+        log("🎙️ Starting recording...", category: .recorder)
 
         // Stop any ongoing TTS speech
         orchestrator?.stopSpeaking()
@@ -75,14 +75,14 @@ class AgentViewModel: ObservableObject {
                 self?.recordingDuration = Date().timeIntervalSince(start)
             }
         } else {
-            print("[WalkCoach] Failed to start recording")
+            logError("Failed to start recording")
             currentState = .idle
         }
     }
 
     func stopRecording() {
-        print("[WalkCoach] Stopping recording")
-        print("[WalkCoach] Recording duration: \(recordingDuration) seconds")
+        log("Stopping recording", category: .recorder)
+        log(String(format: "Recording duration: %.2f seconds", recordingDuration), category: .recorder)
 
         // Stop the recording
         currentRecordingURL = recorder?.stop()
@@ -97,29 +97,29 @@ class AgentViewModel: ObservableObject {
 
         // Process the recording
         if let url = currentRecordingURL {
-            print("[WalkCoach] Recording saved to: \(url.lastPathComponent)")
+            log("Recording saved: \(url.lastPathComponent)", category: .recorder)
             currentState = .transcribing
             Task {
                 await uploadAudio(url: url)
             }
         } else {
-            print("[WalkCoach] WARNING: No recording URL returned")
+            logError("No recording URL returned")
             lastMessage = "Recording failed - no audio captured"
             currentState = .idle
         }
     }
 
     private func uploadAudio(url: URL) async {
-        print("[WalkCoach] Uploading audio to Groq")
+        log("Uploading audio to Groq API...", category: .network)
 
         // Check file size
         if let fileSize = try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int {
-            print("[WalkCoach] Audio file size: \(fileSize) bytes")
+            log("Audio file size: \(fileSize) bytes", category: .network)
         }
 
         do {
             guard let uploader = sttUploader else {
-                print("[WalkCoach] STTUploader is nil")
+                logError("STTUploader is nil")
                 await MainActor.run {
                     self.lastMessage = "Transcription service not configured"
                     self.currentState = .idle
@@ -132,13 +132,15 @@ class AgentViewModel: ObservableObject {
 
             await MainActor.run {
                 self.transcription = result
-                print("[WalkCoach] Transcription successful: \(result)")
+                logSuccess("Transcription successful", component: "STT")
+                // Log full user transcript in beautiful format
+                logUserTranscript(result)
             }
 
             // Route the transcript to determine intent
             await routeTranscript(result)
         } catch {
-            print("[WalkCoach] Failed to upload audio: \(error)")
+            logError("Failed to upload audio: \(error)")
             await MainActor.run {
                 let errorMessage = "Transcription failed - check GROQ_API_KEY"
                 self.lastMessage = errorMessage
@@ -166,7 +168,7 @@ class AgentViewModel: ObservableObject {
     }
 
     private func routeTranscript(_ transcript: String) async {
-        print("[WalkCoach] Routing transcript: \(transcript)")
+        log("Routing user intent...", category: .router)
 
         // ALWAYS add to conversation history first
         await MainActor.run {
@@ -175,7 +177,7 @@ class AgentViewModel: ObservableObject {
 
         do {
             guard let router = router else {
-                print("[WalkCoach] Router not initialized")
+                logError("Router not initialized")
                 await MainActor.run {
                     self.lastMessage = "Router not configured"
                     self.currentState = .idle
@@ -190,7 +192,7 @@ class AgentViewModel: ObservableObject {
                 self.handleRoutedAction(response)
             }
         } catch {
-            print("[WalkCoach] Routing failed: \(error)")
+            logError("Routing failed: \(error)", component: "Router")
 
             // Even on routing failure, treat as conversation to maintain context
             await MainActor.run {
@@ -202,7 +204,7 @@ class AgentViewModel: ObservableObject {
     }
 
     private func handleRoutedAction(_ response: RouterResponse) {
-        print("[WalkCoach] Handling action: \(response.action)")
+        log("Handling action: \(response.action)", category: .orchestrator)
 
         // Check if orchestrator is busy
         guard let orchestrator = orchestrator else {
