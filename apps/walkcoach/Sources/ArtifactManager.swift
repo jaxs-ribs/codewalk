@@ -8,9 +8,10 @@ class ArtifactManager {
     private let fileManager = FileManager.default
 
     init() {
-        // Setup paths
-        let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
-        artifactsPath = documentsPath.appendingPathComponent("artifacts")
+        // Use the project directory for artifacts (accessible from host)
+        // This allows artifacts to be visible in the repo, not hidden in simulator
+        let projectPath = "/Users/fresh/Documents/codewalk/apps/walkcoach"
+        artifactsPath = URL(fileURLWithPath: projectPath).appendingPathComponent("artifacts")
         backupsPath = artifactsPath.appendingPathComponent("backups")
 
         // Create directories
