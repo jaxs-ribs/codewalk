@@ -1,0 +1,16 @@
+# Project Phasing
+
+## Phase 1: Core Setup & Dog Profiles
+So first we'll get the basic app running with a simple Express backend and React frontend. We'll create a PostgreSQL database to store our dogs with fields for their name, age, breed, a short bio, and a photo URL. The backend will have REST endpoints for creating profiles and fetching random dogs to swipe on. We'll use React Router for navigation between the profile creation form and the main swiping interface. The UI will be super clean - just cards showing each dog's photo and basic info with swipe buttons.
+
+**Definition of Done:** Create a dog profile through the form with name "Buddy", age 3, breed "Golden Retriever", and bio "Loves tennis balls". Then visit the swipe page and verify Buddy appears as the first card with all details displaying correctly.
+
+## Phase 2: Swipe Mechanics & Matches
+Then we'll implement the core swipe functionality using React state to track likes and passes. When you swipe right (like) on a dog, we'll store that in the database. When two dogs like each other, we'll create a match and show a simple notification. We'll add localStorage to persist your swipes so you won't see the same dogs again in your session. The swipe buttons will give visual feedback - they'll highlight briefly when clicked, and we'll prevent multiple swipes on the same profile by disabling the buttons after the first swipe.
+
+**Definition of Done:** Like a dog named "Max", then create a second profile and like the first profile back. Verify you see a "It's a match!" notification appear and that both profiles now appear in a matches list view.
+
+## Phase 3: Photo Upload & Polish
+After that we'll make it feel more real by adding photo upload functionality using multer to handle file uploads to a local uploads folder. We'll improve the UI with smooth CSS transitions when cards change, add a simple loading spinner while fetching dogs, and create a basic navigation bar to switch between swiping and viewing your matches. We'll also add form validation to ensure all required fields are filled before creating a profile, and give better error messages if something goes wrong like "Please add your dog's name" or "Photo is required".
+
+**Definition of Done:** Create a new dog profile with all fields including uploading a photo from your computer. Verify the photo appears in both the profile list and when that dog shows up as a swipe card, and that you can't submit the form without filling all required fields.

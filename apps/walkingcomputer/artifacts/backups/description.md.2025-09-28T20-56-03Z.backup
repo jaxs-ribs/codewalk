@@ -1,0 +1,11 @@
+# Project Description
+
+We're building a zero-knowledge virtual machine that runs entirely in the browser using WebGPU. The idea is simple: users can generate and verify ZK proofs on their phones or laptops without installing anything, because every modern browser already ships the graphics drivers we need.
+
+The VM itself is written in Rust, then compiled to WebGPU compute shaders through rust-gpu. A thin TypeScript wrapper handles the browser glue, so developers can import a npm package and call prove() or verify() just like any async web API. Under the hood we stream the proving key from a CDN, split the work into WebGPU workgroups that fit even low-end mobile GPUs, and return a 200-byte proof that any EVM chain can check for a few thousand gas.
+
+The first demo will be a private payment: one sender, one receiver, a fixed amount, and a nullifier to prevent double spends. The circuit is tiny—only a few thousand constraints—so the whole job finishes in under a second on an average Android phone. Later we'll open the VM to arbitrary WASM bytecode, but the payment gives us an end-to-end test that includes key download, witness loading, GPU dispatch, and on-chain verification.
+
+What makes this worthwhile is reach. CUDA only talks to NVIDIA cards; our code runs on iPhones, Surfaces, ThinkPads and Chromebooks without a driver install. Early tests with StarkWare's Stwo prover show a two-times speed-up over CPU proving, and that's before we've hand-tuned workgroup sizes or cached shaders. No one is shipping a browser ZKVM today, so there's room to set the performance baseline and own the developer tooling.
+
+Scope is strictly client-side. We provide the VM, the browser runtime, and a CLI that spits out verifier contracts. The chain, the relay, the wallet—those are someone else's job. Our job is to make the world's fastest browser proof, and to make it so easy that the next hackathon team can add privacy to a web app in an afternoon.

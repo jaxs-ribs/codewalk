@@ -1,21 +1,21 @@
 # Project Phasing
 
-## Phase 1: Core Swipe Interface
-So first we'll build the heart of the app - that satisfying swipe mechanism everyone's familiar with. We'll set up React Native with Expo to get us going fast, then create the swipeable card component using react-native-deck-swiper. Each card needs to show a name, age, brief bio, and a photo placeholder we'll add later. We'll implement swipe gestures for left (nope) and right (yep), plus those handy yes/no buttons for folks who prefer tapping. The cards will stack nicely and animate smoothly as you swipe through them.
-**Definition of Done:** Open the app and swipe five cards - you should be able to swipe left or right on each card with smooth animations, and see them stack naturally with visible name/age/bio fields on every card.
+## Phase 1: Basic Swipe Interface
+So first we'll build the core swipe mechanism with React Native and the Tinder card animation library. You'll create a simple card component showing a dog's photo, name, and basic info that users can swipe left (pass) or right (like). We'll use AsyncStorage to temporarily store swipe data locally and set up the basic navigation between the main swipe screen and a simple matches list.
+**Definition of Done:** Open the app, swipe right on three dogs, then check the matches screen - you should see those three dogs listed as matches that persist when you restart the app.
 
-## Phase 2: Data Management
-Then we'll wire up the brains behind all that swiping. We'll create a simple array of mock profiles with all the essential info - names, ages, bios, and photo URLs we'll fetch later. We'll implement basic state management to track whose profile we're showing, handle the swipe decisions, and manage the deck as cards get swiped away. When someone swipes right (yep), we'll store that in a "matches" array we can check later. We'll also add a reset function to shuffle the deck back when you run out of profiles.
-**Definition of Done:** Swipe through all profiles to the end, verify the app shows an "out of profiles" message, press reset to reload the deck, then check console logs to confirm right swipes are being saved to the matches array.
+## Phase 2: Firebase Backend Setup
+Next we'll connect everything to Firebase for real user accounts and dog profiles. You'll set up Firebase Authentication with email/password login, create a Firestore database to store dog profiles with photos, names, ages and breeds, and implement the matching logic where two users only match if they both swipe right on each other's dogs. We'll also add proper error handling for network issues and loading states.
+**Definition of Done:** Create a new account, add your dog with photo and details, then have a friend create their account and swipe right on your dog - you should see their dog appear in your swipe queue and get a match notification when you swipe right back.
 
-## Phase 3: Chat System
-We will do this later, this is just a placeholder for now.
-**Definition of Done:** This is just a placeholder.
+## Phase 3: Dog Profiles & Photos
+Then we'll make the dog profiles much richer with multiple photos, detailed breed info, personality traits like "friendly with kids" or "needs lots of exercise", age and size categories. You'll add a photo upload system using Firebase Storage, create an edit profile screen where owners can update their dog's info, and implement photo verification to ensure dogs look like their pictures.
+**Definition of Done:** Upload 4 photos of your dog, fill out all profile fields including personality traits, then view your profile - it should display as a complete card with smooth photo carousel and all details formatted nicely.
 
-## Phase 4: Profile Polish
-After that we'll make those profiles actually look good. We'll fetch real photos from placeholder services and display them properly in the cards. We'll add smooth animations when cards appear and disappear, plus little visual cues like colored borders when you swipe (green for yes, red for no). The card layout will get refined with better spacing, readable fonts, and a clean gradient background. We'll also add the profile indicator dots at the bottom showing how many profiles are left in the deck.
-**Definition of Done:** Swipe through three profiles and verify photos load properly with smooth fade-in effects, check that yes/no swipes show green/red borders, confirm the profile counter dots update correctly, and verify all text is cleanly readable with good spacing.
+## Phase 4: Chat & Social Features
+After that we'll add the social layer with real-time chat between matched users using Firebase's real-time database, push notifications for new matches and messages, and the ability to share dog photos in chat. You'll create a chat interface similar to WhatsApp but simpler, with typing indicators and read receipts, plus a way to report inappropriate messages.
+**Definition of Done:** Match with another user, send them a message saying "Want to meet at the park?", and receive their reply within 10 seconds with a push notification appearing on your phone.
 
-## Phase 5: Match & Store
-Finally we'll add that satisfying match notification when two people both swipe right. When a successful match happens, we'll show a celebratory modal with both names and a big "It's a match!" message. We'll persist the matches using AsyncStorage so they survive app restarts, and add a simple matches screen where you can see everyone you've matched with. We'll also implement basic profile persistence so the app remembers where you left off, and add the ability to clear all data if someone wants a fresh start.
-**Definition of Done:** Create a test scenario where profile A likes profile B, then go back and like profile A with profile B - verify the match modal appears with both names, check that both profiles appear in the matches list, close and reopen the app to confirm matches persist, then test the clear data button to ensure everything resets properly.
+## Phase 5: Discovery & Safety
+Finally we'll add location-based discovery to find dogs nearby using GPS, implement reporting and blocking features for safety, create breed-specific search filters, and add premium features like unlimited swipes or seeing who liked your dog first. You'll optimize everything for performance with proper indexing and caching, plus add analytics to track which features users love most.
+**Definition of Done:** Filter dogs by "Golden Retriever" within 5 miles, successfully block a user and confirm they can't see your profile anymore, then check that the premium upgrade button appears after you've swiped 20 times.

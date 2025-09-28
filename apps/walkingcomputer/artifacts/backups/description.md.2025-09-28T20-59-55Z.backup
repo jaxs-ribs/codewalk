@@ -1,0 +1,11 @@
+# Project Description
+
+So basically we're building a dating app for dogs. Think Tinder but instead of people swiping on people, it's dog owners swiping on other dogs in their area. The main idea is super simple - you create a profile for your dog with photos, basic info like breed and age, then you swipe through other dogs nearby.
+
+Now here's how it works. When you first open the app, you'll need to sign up with your email or phone number. Then you add your dog - you'll upload a few photos, put in their name, breed, age, size, and maybe a fun bio. Once your dog's profile is set up, you can start swiping. Swipe right if you think your dog would get along with them, left if not. When two owners both swipe right on each other's dogs, it's a match and you can start messaging.
+
+We're keeping it really basic to start. The main screen shows you one dog at a time with their photo, name, age and a short bio. You can tap to see more photos if they have them. There's just three buttons - heart for yes, X for no, and maybe a little info button to see more details. We need location services so it only shows dogs within like 10 miles of you. 
+
+For profiles, we're talking the essentials - dog name, breed, age, size category like small medium or large, and a bio up to like 150 characters. Photos should be square like Instagram. We'll need user accounts so people can manage multiple dogs if they have them. Messaging will be super basic text chat once you match - no photos or anything fancy yet.
+
+The whole point is to help dog owners find playmates for their pets. Maybe you just moved to a new city and want to find friends for your pup, or you're looking for walking buddies, or even thinking about breeding down the line. It's way less pressure than human dating apps since it's just about dogs being friends. Plus dog people love talking about their dogs, so this gives them an excuse to do that while maybe making new friends themselves.

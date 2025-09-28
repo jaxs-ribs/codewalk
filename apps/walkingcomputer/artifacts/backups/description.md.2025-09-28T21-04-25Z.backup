@@ -1,0 +1,19 @@
+# Project Description
+
+So basically we're building this fun little app that's like Tinder but for dogs. The main idea is simple - people can create profiles for their dogs and then swipe through other dogs in their area. When you see a dog you think would be good friends with yours, you swipe right. If both owners swipe right on each other's dogs, it's a match and they can start chatting to set up playdates.
+
+Now here's how it actually works. We're keeping everything super basic to start. Users sign up with just an email and password, then they create a profile for their dog. The profile needs a name, age, breed, and a short bio where owners can write something cute about their pup. They can upload up to three photos of their dog. That's it for the profile stuff.
+
+The main screen shows one dog profile at a time. You see the dog's main photo front and center, then their name and age right below. You can tap to see more photos and read their bio. To keep things moving, we're adding those swipe cards - swipe right if you like them, left if you want to pass. There's also little heart and X buttons if people prefer tapping instead of swiping.
+
+For the matching part, we're using that classic Tinder approach. When two people both swipe right on each other's dogs, boom, it's a match. Both users get a notification saying "You've got a new dog friend!" Then they can open up a chat and figure out when to meet up at the park or whatever works.
+
+We're keeping the chat feature really simple too. Just basic text messaging, no photos or videos for now. People can share their location if they want to meet up, but that's totally optional. The chat stays open forever once you match, so people can plan multiple playdates.
+
+The discover feed shows dogs within a 25 mile radius by default, but people can adjust that in settings. We're also adding basic filters - you can filter by dog size from small to large, age range, and whether they're good with kids or other dogs. Nothing too fancy, just the essentials.
+
+For user management, people can have multiple dog profiles under one account. So if you've got two or three dogs, you can make profiles for each and switch between them when you're swiping. Each dog has their own separate matches and chats.
+
+We're building this as a mobile app first, probably just iOS to start since that's what most of our friends use. The design is clean and colorful with lots of dog photos everywhere. We're thinking light backgrounds with accent colors in blues and greens, keeping it friendly and approachable.
+
+The whole point is just to make it easier for dog owners to find playmates for their pets. So many people live in neighborhoods where they never meet their neighbors, but their dogs might be perfect friends. This way you can find dogs with similar energy levels and temperaments without the awkwardness of approaching strangers at the dog park.

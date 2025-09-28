@@ -1,0 +1,37 @@
+# Project Phasing
+
+## Phase 1: WebGPU Hello World
+So first we’ll scaffold a fresh Rust-WASM repo, drop in the wasm-bindgen and web-sys crates, and write a teeny WebGPU compute shader that multiplies two 256-element i32 buffers; the host page will hold a single button that, when clicked, runs the kernel and console-logs the first ten products so we know the pipeline is alive.
+**Definition of Done:** open index.html in Chrome, hit “Run,” and see the ten numbers printed in the console without any GPU validation errors.
+
+## Phase 2: Device Limits Probe
+Next we’ll ship a micro-bench that spawns 1, 2, 4… up to 1 024 workgroups on the same buffer and records which size trips the browser’s “too-many-invocations” error; we’ll store the safe max in a const LIMITS_URL so later shaders never oversubscribe.
+**Definition of Done:** reload the page, open dev-tools, and watch the table print “maxWorkgroups=256” on a two-year-old Android phone without crashing.
+
+## Phase 3: BN254 Field Arithmetic
+Then we’ll port constant-time BN254 field add, sub, mul to WGSL, expose them through a tiny WASM glue layer, and unit-test every op against the ark-bn254 crate; buffers will live in read-write storage so we can reuse them for MSM later.
+**Definition of Done:** cargo test passes all 1 000 randomly generated field op pairs and the browser console shows zero differences versus the ark results.
+
+## Phase 4: 2¹⁰ MSM Kernel
+After that we’ll implement the cuzk multi-scalar-multiplication algorithm in WGSL for 1 024 points, dispatch exactly the safe workgroup count from Phase 2, and time the run; the kernel will ingest a buffer of scalars and return the resulting G1 affine x, y as two u256s.
+**Definition of Done:** click “Bench MSM” and see the page report < 150 ms on a mid-range laptop Chromebook and < 400 ms on a Pixel 6.
+
+## Phase 5: Private-Coin Transaction Circuit
+We’ll now hard-code a rank-1 constraint system for a minimal private transfer: one sender, one receiver, amount = 100, check balance ≥ amount, check Ed25519 sig; the circuit will have ≤ 4 000 constraints so the proving key stays under 2 MB.
+**Definition of Done:** cargo test eval_circuit() prints “satisfied” for a valid witness and “unsatisfied” for an overspend attempt.
+
+## Phase 6: Proving Key Fetch & Cache
+Next we’ll host the 2 MB proving key on a static CDN, teach the service-worker to cache it locally after first fetch, and expose a JS promise downloadKey() that resolves only when the file is stored in IndexedDB; offline reloads must reuse the cached blob.
+**Definition of Done:** throttle network to 3G, load the page, watch the spinner until “Key cached” appears, then kill wifi and still prove successfully on refresh.
+
+## Phase 7: Full Browser Prover
+Then we wire the Phase 4 MSM kernel into the Phase 5 circuit: witness-map, polynomial eval, opening via MSM, and final proof blob; the whole pipeline runs in WebGPU workgroups and returns a 192-byte proof plus public inputs; we’ll cap max memory at 150 MB to stay within mobile tab limits.
+**Definition of Done:** hit “Prove” and see “Proof generated in 1.8 s” on a M1 Mac and “3.2 s” on a Galaxy S23 without the tab getting killed.
+
+## Phase 8: On-Chain Verifier Stub
+We’ll deploy a minimal Solidity verifier contract that accepts the 192-byte proof and public inputs, emits an event Verified(sender,receiver,amount), and revert on failure; the contract will live on a cheap L2 so gas stays under 300 k.
+**Definition of Done:** paste the proof into the verified contract on Remix, hit transact, and watch the green tick plus event appear in under five seconds.
+
+## Phase 9: End-to-End Demo
+Finally we’ll bundle everything into a single-page app: user enters a secret key, clicks “Send,” the page proves locally, posts the proof to the verifier contract, and displays “Sent 100 tokens privately” with an Etherscan link; no server ever sees the secret key.
+**Definition of Done:** open the page on a phone, complete the flow, and confirm the 100-token event on-chain within 30 seconds start-to-finish.

@@ -1,0 +1,51 @@
+# Project Phasing
+
+## Phase 1: GPU-Hello
+So first we'll get a minimal WebGPU compute shader running in the browser. We'll write a tiny rust-gpu module that adds two 2048-element vectors on the GPU and returns the result to JavaScript. We'll expose one async function from WASM that takes two Float32Array buffers, copies them to a storage buffer, dispatches a single compute pass with 32 invocations per workgroup, and reads the sum back through a mapped buffer. This proves our Rust→SPIR-V→WebGPU pipeline works end-to-end.
+
+**Definition of Done:** Open index.html in Chrome, click "Add Vectors", and the page prints "Sum[0] = 6.0" within 200 ms without crashing.
+
+## Phase 2: Curve-Setup
+Next we'll hard-code the BN254 scalar field and generator point into the GPU. We'll add a new rust-gpu crate that holds the 254-bit prime, implements modular addition and multiplication with Montgomery reduction, and stores the G1 generator in affine coordinates. We'll also write a host helper that creates a 1 M-point random-access buffer on the GPU once at start-up so later phases can do elliptic-curve operations. The JavaScript side only needs to call initCurve() and receives "true" when the buffer is ready.
+
+**Definition of Done:** Run npm test and the last line shows "msm 2^10: 47 ms" meaning 1024 MSM operations finished on the GPU in under 50 ms.
+
+## Phase 3: Key-Gen
+After that we'll generate the proving and verifying keys for our toy transaction. We'll define a JSON format with fields "from", "to", "amount", and "nonce", hash it with Poseidon (t=3), and build a rank-1 constraint system with 64 gates. We'll pre-compute a structured reference string of length 2^14 and save two small files: proving-key.bin (≈400 kB) and verify-key.json (≈3 kB). A CLI tool outputs these files to the dist/ folder so the browser can fetch them with fetch().
+
+**Definition of Done:** Run cargo run --bin gen-keys and dist/ contains both files; running sha256sum on each returns the exact hashes listed in keys.hash.
+
+## Phase 4: Wallet-Flow
+Then we'll wire up the user wallet. When the page loads we'll generate an ephemeral BabyJubJub key pair with window.crypto, store the secret key in IndexedDB, and display the compressed public key as a QR code. A simple HTML form lets the user enter "To" (another BabyJubJub point encoded in base58) and "Amount" (0-1000). On submit we create a JSON payload, sign it with the stored key, and keep the signature in memory for the next phase.
+
+**Definition of Done:** Open the page, fill in amount 42, click Sign, and console logs "sig: 64 bytes" plus the hex representation of the signature.
+
+## Phase 5: Proof-Gen
+Now we'll run the actual WebGPU prover. We'll take the signed JSON payload, convert it to field elements, and execute the 64-gate circuit. The GPU shader performs the witness assignment, multiplies the selectors, and evaluates the copy-constraints with a grand-product polynomial. We'll stream the SRS from proving-key.bin in 32 kB chunks to stay under browser memory limits, run the FFT on the GPU, and write the resulting proof (three G1 points and one G2 point) into a compact 256-byte buffer. The WASM function returns a base64-encoded string that JavaScript can POST to an endpoint.
+
+**Definition of Done:** Click "Generate Proof" in Chrome; after ~2 s the page shows "Proof size: 256 B" and the console prints the base64 string starting with "AgEBB...".
+
+## Phase 6: Verify-GPU
+We'll move verification to the GPU as well. We'll write a second shader that takes the 256-byte proof, deserialises the points, performs the two required pairing checks using the pre-computed verify-key.json, and outputs a single 32-bit flag. JavaScript receives a Promise that resolves true only if both Miller loops and the final exponentiation succeed. This keeps the main thread free and shows that WebGPU can handle verification workloads on mobile.
+
+**Definition of Done:** Click "Verify Locally" and within 300 ms the UI turns green and prints "Proof OK".
+
+## Phase 7: Network-Send
+Next we'll post the proof to a tiny HTTP relay. We'll add a fetch('/submit', {method:'POST', body:proof}) call that expects a 200 status and a JSON response {"txHash":"0x..."}. We'll also display a hyperlink to a mock block-explorer page so the user sees the transaction hash immediately. No chain is involved yet; the relay just echoes the hash of the proof.
+
+**Definition of Done:** Click "Send" and the page shows a clickable link https://mock-explorer/tx/0x123... within 1 s.
+
+## Phase 8: Mobile-Tune
+We'll optimise for phones. We'll shrink the SRS to 2^12, cut the workgroup size to 64, and reuse GPU buffers between runs. We'll add a benchmark button that runs the whole flow ten times and prints the median proof time; our target is under 1.5 s on a Pixel 6. We'll also throttle the GPU queue to leave one CPU core free so the UI stays responsive.
+
+**Definition of Done:** On a fresh Chrome install on Pixel 6, tap "Benchmark"; the result line reads "Median: 1.4 s" and the UI never drops frames.
+
+## Phase 9: Privacy-Check
+We'll audit privacy leaks. We'll ensure the secret key never leaves IndexedDB, the witness values are overwritten in GPU memory after use, and the posted proof contains no identifying data beyond the public inputs. We'll add a unit test that decrypts local-storage and confirms only the public key is present. We'll also run Mozilla Observatory against the demo page and require a score of 100/100 for security headers.
+
+**Definition of Done:** Run npm run audit; the last line shows "Secrets: 0 leaked, Observatory: 100/100".
+
+## Phase 10: Doc-Deploy
+Finally we'll ship. We'll write a one-page README with architecture diagrams, publish the npm package as web-zkvm-poc, and host the demo on GitHub Pages with HTTPS. We'll tag the repo v0.1.0 and open a pull request that includes a CI workflow running every phase in headless Chrome so future regressions are caught automatically.
+
+**Definition of Done:** Visit https://your-org.github.io/web-zkvm-poc/, click "Generate Proof", and the entire flow completes in under 3 s on first visit without console errors.

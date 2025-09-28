@@ -265,11 +265,23 @@ extension AgentViewModel {
     private func normalizeTranscriptForRouting(_ transcript: String) -> String {
         var output = transcript
 
-        output = output.replacingOccurrences(
-            of: "(?i)readme\\s+(phase\\b)",
-            with: "read me $1",
-            options: .regularExpression
-        )
+        let replacements: [(pattern: String, template: String)] = [
+            ("(?i)readme\\s+(phase\\b)", "read me $1"),
+            ("(?i)rate\\s+me\\s+(the\\s+)?(phase\\b)", "read me $1$2"),
+            ("(?i)rate\\s+me\\s+(the\\s+)?(phasing\\b)", "read me $1$2"),
+            ("(?i)phasing\\s*(?:\\.|dot)\\s*m\\b", "phasing"),
+            ("(?i)description\\s*(?:\\.|dot)\\s*m\\b", "description"),
+            ("(?i)phasing\\s+plan\\b", "phasing"),
+            ("(?i)phase\\s+plan\\b", "phase")
+        ]
+
+        for replacement in replacements {
+            output = output.replacingOccurrences(
+                of: replacement.pattern,
+                with: replacement.template,
+                options: .regularExpression
+            )
+        }
 
         return output
     }

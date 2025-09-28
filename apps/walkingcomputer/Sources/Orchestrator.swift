@@ -200,6 +200,7 @@ class Orchestrator: ObservableObject {
         log("Executing search for: '\(query)'", category: .search, component: "Orchestrator")
         lastSearchQuery = query
         lastResponse = "Searching for \(query)..."
+        await speak("Searching for \(query)...")
 
         // Start search with tick sounds
         playSearchTickSound()  // Initial tick
@@ -257,67 +258,92 @@ class Orchestrator: ObservableObject {
     // MARK: - Artifact Operations (Placeholder for Phase 5)
 
     private func writeDescription() async {
-        lastResponse = "Writing description..."
-
-        do {
-            // Generate content based on conversation history
-            let content = try await assistantClient.generateDescription(
-                conversationHistory: conversationHistory
-            )
-
-            if artifactManager.safeWrite(filename: "description.md", content: content) {
-                lastResponse = "Description written."
-
-                // Speak the success message
-                await speak(self.lastResponse)
-
-                // Add to conversation history
-                addAssistantResponse("I've written the project description based on our conversation.")
-            } else {
-                lastResponse = "Failed to write description"
-
-                // Speak the error
-                await speak(self.lastResponse)
-            }
-        } catch {
-            lastResponse = handleGenerationError(error, for: "description")
-            await speak(self.lastResponse)
-        }
+        _ = await writeArtifact(.description)
     }
 
     private func writePhasing() async {
-        lastResponse = "Writing phasing..."
-
-        do {
-            // Generate content based on conversation history
-            let content = try await assistantClient.generatePhasing(
-                conversationHistory: conversationHistory
-            )
-
-            if artifactManager.safeWrite(filename: "phasing.md", content: content) {
-                lastResponse = "Phasing written."
-
-                // Speak the success message
-                await speak(self.lastResponse)
-
-                // Add to conversation history
-                addAssistantResponse("I've written the project phasing based on our conversation.")
-            } else {
-                lastResponse = "Failed to write phasing"
-
-                // Speak the error
-                await speak(self.lastResponse)
-            }
-        } catch {
-            lastResponse = handleGenerationError(error, for: "phasing")
-            await speak(self.lastResponse)
-        }
+        _ = await writeArtifact(.phasing)
     }
 
     private func writeDescriptionAndPhasing() async {
-        await writeDescription()
-        await writePhasing()
-        lastResponse = "Description and phasing written."
+        await speak("Writing description...")
+        let descriptionSuccess = await writeArtifact(.description, shouldSpeak: false)
+        await speak(descriptionSuccess ? "Description written." : "Failed to write description")
+
+        await speak("Writing phasing...")
+        let phasingSuccess = await writeArtifact(.phasing, shouldSpeak: false)
+        await speak(phasingSuccess ? "Phasing written." : "Failed to write phasing")
+
+        switch (descriptionSuccess, phasingSuccess) {
+        case (true, true):
+            lastResponse = "Description and phasing written."
+        case (true, false):
+            lastResponse = "Description written, but writing phasing failed."
+        case (false, true):
+            lastResponse = "Phasing written, but writing description failed."
+        case (false, false):
+            lastResponse = "Failed to write description and phasing."
+        }
+
+        if !descriptionSuccess || !phasingSuccess {
+            await speak(lastResponse)
+        }
+    }
+
+    @discardableResult
+    private func writeArtifact(_ type: ArtifactType, shouldSpeak: Bool = true) async -> Bool {
+        lastResponse = "Writing \(type.displayName)..."
+        if shouldSpeak {
+            await speak(lastResponse)
+        }
+
+        do {
+            let content = try await generateContent(for: type)
+
+            if artifactManager.safeWrite(filename: type.filename, content: content) {
+                lastResponse = "\(type.displayName.capitalized) written."
+                addAssistantWriteConfirmation(for: type)
+
+                if shouldSpeak {
+                    await speak(lastResponse)
+                }
+                return true
+            } else {
+                lastResponse = "Failed to write \(type.displayName)"
+                if shouldSpeak {
+                    await speak(lastResponse)
+                }
+                return false
+            }
+        } catch {
+            lastResponse = handleGenerationError(error, for: type.displayName)
+            if shouldSpeak {
+                await speak(lastResponse)
+            }
+            return false
+        }
+    }
+
+    private func generateContent(for type: ArtifactType) async throws -> String {
+        switch type {
+        case .description:
+            return try await assistantClient.generateDescription(
+                conversationHistory: conversationHistory
+            )
+        case .phasing:
+            return try await assistantClient.generatePhasing(
+                conversationHistory: conversationHistory
+            )
+        }
+    }
+
+    private func addAssistantWriteConfirmation(for type: ArtifactType) {
+        switch type {
+        case .description:
+            addAssistantResponse("I've written the project description based on our conversation.")
+        case .phasing:
+            addAssistantResponse("I've written the project phasing based on our conversation.")
+        }
     }
 
     private func readDescription() async {

@@ -1,0 +1,21 @@
+# Project Phasing
+
+## Phase 1: GPU-MSM Kernel
+So first we'll port cuZK's BN254 multi-scalar-multiplication to WebGPU using rust-gpu, target SPIR-V, and expose one function that takes a list of 2²⁰ points and scalars and returns the MSM result.
+**Definition of Done:** Run `cargo webgpu-msm --bench 20` in Chrome; it should finish in <2 s on a mid-tier laptop and print the same 64-byte result as the CUDA reference.
+
+## Phase 2: WASM Glue & TS Wrapper
+Then we'll compile the Rust host logic to WASM with wasm-bindgen, add a TypeScript wrapper that creates a WebGPU device, uploads the point buffer, and hands a clean `proveMsm(points, scalars) → Uint8Array` API to any web app.
+**Definition of Done:** Open `demo.html` in Chrome; click "Run MSM" and see the same 64-byte hex string logged to console within 3 s without blocking the page.
+
+## Phase 3: Simple Transaction Circuit
+After that we'll write a min-circuit in arkworks-rs that checks a private-balance transfer: one Pedersen commitment difference plus one Schnorr signature, compile it to R1CS with 2¹⁶ constraints, and wire the MSM kernel to commit the witness polynomials.
+**Definition of Done:** Run `cargo test --release tx_circuit` and watch the test pass, printing "Constraints: 65536, Degree: 16".
+
+## Phase 4: Proof Generation & Verification
+Next we'll glue everything together: the browser JS loads the circuit, feeds the witness into the WebGPU prover, gets a Groth16 proof, and immediately verifies it in the same tab using the exported verification key; we'll time full end-to-end latency.
+**Definition of Done:** Reload `demo.html`, paste a valid witness JSON, click "Prove"; within 5 s the page shows "Proof verified: true" and the console logs the elapsed milliseconds.
+
+## Phase 5: Demo Wallet UI
+Finally we'll polish a tiny wallet UI: enter a private key and recipient, hit "Send", watch the prover spin, and on success display the tx-hash and a link to a block-explorer mock; we'll also add basic iOS Safari support so the same flow runs on an iPhone 13.
+**Definition of Done:** Open the page on iOS 18.2, send 42 tokens, and within 7 s see "Sent: tx0x…" with the correct amount and a green check-mark.
