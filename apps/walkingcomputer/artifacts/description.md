@@ -1,9 +1,7 @@
 # Project Description
 
-We're building a simple dog-matching app that works like Tinder for pups. The core experience is swipe-to-match: you'll see photos of dogs nearby, swipe right if your dog wants to meet them, left to pass. When two owners both swipe right on each other's dogs, it's a match and you'll get notified.
+We're building a classic Snake game for iOS that brings back all the nostalgia in a clean, modern package. The game features smooth touch controls where you simply swipe to change direction, making it feel natural on any iPhone. We'll use SpriteKit for silky-smooth animations and reliable collision detection, so when the snake hits the wall or itself, the game ends cleanly.
 
-Each dog profile shows their photo, name, breed, age and a short description so you can quickly decide if they seem like a good fit for your pup. We'll keep it super simple - no messaging, no complicated features, just the fun swiping and matching experience.
+The snake grows longer each time it eats food, making the game progressively more challenging as you navigate around your own tail. The food spawns randomly across the board, keeping each playthrough fresh and exciting. We've designed a simple scoring system that tracks your current score and displays your best run, so you always know when you're beating your personal record.
 
-The app uses your location to find dogs in your area, and you can set preferences for distance and age range. Once you match with another dog, you'll see them in your matches list and can always unmatch later if needed.
-
-It's perfect for finding playmates for your dog or even just seeing cute pups nearby. The interface will be clean and mobile-first, making it easy to swipe through profiles while you're at the park or relaxing at home.
+The interface stays minimal with a game board that fills most of the screen, leaving just enough room at the top for your score and high score display. When the game ends, you'll see a clear game over screen with options to start fresh. The whole experience loads fast and runs smoothly, whether you're playing for thirty seconds or thirty minutes.
