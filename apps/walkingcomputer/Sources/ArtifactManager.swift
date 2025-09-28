@@ -10,16 +10,16 @@ class ArtifactManager {
     init() {
         // Use the project directory for artifacts (accessible from host)
         // This allows artifacts to be visible in the repo, not hidden in simulator
-        let projectPath = "/Users/fresh/Documents/codewalk/apps/walkcoach"
+        let projectPath = "/Users/fresh/Documents/codewalk/apps/walkingcomputer"
         artifactsPath = URL(fileURLWithPath: projectPath).appendingPathComponent("artifacts")
         backupsPath = artifactsPath.appendingPathComponent("backups")
 
         // Create directories
         createDirectories()
 
-        print("[ArtifactManager] Initialized")
-        print("[ArtifactManager] Artifacts: \(artifactsPath.path)")
-        print("[ArtifactManager] Backups: \(backupsPath.path)")
+        log("Initialized", category: .artifacts, component: "ArtifactManager")
+        log("Artifacts: \(artifactsPath.path)", category: .artifacts, component: "ArtifactManager")
+        log("Backups: \(backupsPath.path)", category: .artifacts, component: "ArtifactManager")
     }
 
     private func createDirectories() {
@@ -27,7 +27,7 @@ class ArtifactManager {
             try fileManager.createDirectory(at: artifactsPath, withIntermediateDirectories: true)
             try fileManager.createDirectory(at: backupsPath, withIntermediateDirectories: true)
         } catch {
-            print("[ArtifactManager] Failed to create directories: \(error)")
+            logError("Failed to create directories: \(error)", component: "ArtifactManager")
         }
     }
 
@@ -37,17 +37,17 @@ class ArtifactManager {
         let url = artifactsPath.appendingPathComponent(filename)
 
         guard fileManager.fileExists(atPath: url.path) else {
-            print("[ArtifactManager] File not found: \(filename)")
+            log("File not found: \(filename)", category: .artifacts, component: "ArtifactManager")
             return nil
         }
 
         do {
             let content = try String(contentsOf: url, encoding: .utf8)
-            print("[ArtifactManager] Successfully read \(filename) (\(content.count) chars)")
+            log("Successfully read \(filename) (\(content.count) chars)", category: .artifacts, component: "ArtifactManager")
 
             // Log preview of content
             let preview = content.prefix(200).replacingOccurrences(of: "\n", with: " ")
-            print("[ArtifactManager] Content preview: \(preview)...")
+            log("Content preview: \(preview)...", category: .artifacts, component: "ArtifactManager")
 
             return content
         } catch {
