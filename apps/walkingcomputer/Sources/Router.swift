@@ -158,46 +158,41 @@ struct RouterContext {
 
 class Router {
     private let groqApiKey: String
+    private let modelId: String
     private let apiURL = "https://api.groq.com/openai/v1/chat/completions"
 
     private let systemPrompt = """
-    Voice router for project speccer. DEFAULT to conversation unless EXPLICIT command.
+    Voice router. Default to conversation unless clear command intent.
 
-    DIRECTIVES only for these commands:
-    - "write the description" → write_description
-    - "write the phasing" → write_phasing
-    - "write both" → write_both
-    - "read the description" → read_description
-    - "read the phasing" → read_phasing
-    - "read phase X" → read_specific_phase with phaseNumber
-    - "edit the description to..." → edit_description
-    - "change phase X to..." → edit_phasing with phaseNumber
-    - "repeat last" → repeat_last
-    - "next/previous phase" → next_phase/previous_phase
-    - "stop" → stop
-    - "copy description/phasing/both" → copy_description/copy_phasing/copy_both
-    - "search for..." → search with query
+    COMMAND PATTERNS:
+    - Contains "write" + "description/phasing" → write_*
+    - Contains "read" + "description/phasing/phase X" → read_*
+    - Contains "edit/change/update" + target → edit_*
+    - Contains "search" + anything → search (extract query after "search")
+    - Contains "copy" + target → copy_*
+    - Exact: "repeat/stop/next/previous" → respective action
 
-    EVERYTHING ELSE is conversation (ideas, features, questions, thinking out loud).
+    CONVERSATION:
+    - Project ideas, features, requirements
+    - Questions without command verbs
+    - Statements and acknowledgments
 
-    JSON response format:
+    JSON format:
     {
         "intent": "directive|conversation",
         "action": {
-            "action": "action_name",
-            "content": "user message or edit content",
-            "phaseNumber": optional_number,
-            "query": "search query if applicable"
+            "action": "name",
+            "content": "message/edit content",
+            "phaseNumber": if_applicable,
+            "query": "if_search"
         },
-        "reasoning": "brief reason"
+        "reasoning": "brief"
     }
-
-    For conversation, always include content field with user's message.
-    Never use "clarify" action. Route unclear as conversation.
     """
 
-    init(groqApiKey: String) {
+    init(groqApiKey: String, modelId: String) {
         self.groqApiKey = groqApiKey
+        self.modelId = modelId
     }
 
     func route(transcript: String, context: RouterContext) async throws -> RouterResponse {
@@ -218,7 +213,7 @@ class Router {
 
         // Build request body
         let requestBody: [String: Any] = [
-            "model": "moonshotai/kimi-k2-instruct-0905",  // Using Kimi K2
+            "model": modelId,  // Using configured model
             "messages": [
                 ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": userContent]

@@ -41,7 +41,7 @@ class SearchService {
         self.groqApiKey = config.groqApiKey
         self.resultCount = config.searchResultCount
         self.fetchTimeoutSeconds = TimeInterval(config.fetchTimeoutMs) / 1000.0
-        self.modelId = config.searchModelId
+        self.modelId = config.llmModelId
         print("[SearchService] Initialized with model: \(modelId), \(resultCount) results, \(fetchTimeoutSeconds)s timeout")
     }
 

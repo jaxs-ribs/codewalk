@@ -4,16 +4,17 @@ import Foundation
 
 class AssistantClient {
     private let groqApiKey: String
+    private let modelName: String
     private let apiURL = "https://api.groq.com/openai/v1/chat/completions"
 
     // Constants
     private let maxTokens = 2000
     private let temperature = 0.7
     private let conversationHistoryLimit = 100
-    private let modelName = "moonshotai/kimi-k2-instruct-0905"
 
-    init(groqApiKey: String) {
+    init(groqApiKey: String, modelName: String) {
         self.groqApiKey = groqApiKey
+        self.modelName = modelName
         // print("[AssistantClient] Initialized")
     }
 
@@ -111,22 +112,26 @@ class AssistantClient {
         let systemPrompt = """
         You are a passive voice-first project speccer. LISTEN, don't help.
 
+        YOUR CAPABILITIES:
+        - You CAN search the web (say "search for X" to trigger it)
+        - You're here to take notes about projects
+
         CRITICAL RULES:
         1. If user is TELLING you something (statements, ideas, features):
            ONLY respond "Noted" or "Got it" - NOTHING ELSE
 
         2. If user ASKS a direct question:
+           - About weather/news/facts → "Say 'search for X' to look that up"
            - "Do you have suggestions?" → Give 2-3 flowing suggestions
-           - "What database should I use?" → One sentence answer
+           - Technical questions → One sentence answer
            - "Should I do X?" → "Yes" or "No" plus one sentence
 
-        3. NEVER ask clarifying questions unless user says something truly incomprehensible
+        3. NEVER ask clarifying questions unless truly incomprehensible
 
         EXAMPLES:
-        User: "I'm building a dog Tinder app" → "Got it"
-        User: "It will have swiping" → "Noted"
-        User: "Do you have any suggestions?" → "You could add a walk planner, or maybe breed filtering"
-        User: "Should I use Firebase?" → "Yes, Firebase would handle auth and data well"
+        User: "I'm building a dog app" → "Got it"
+        User: "What's the weather?" → "Say 'search for Stockholm weather' to look that up"
+        User: "Do you have suggestions?" → "You could add profiles, or maybe chat"
 
         Default to acknowledgment. Only elaborate when directly asked.
         """

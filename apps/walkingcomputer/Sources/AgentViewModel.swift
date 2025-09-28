@@ -46,7 +46,7 @@ class AgentViewModel: ObservableObject {
             log("Using Groq STT for transcription", category: .system)
         }
 
-        router = Router(groqApiKey: env.groqApiKey)
+        router = Router(groqApiKey: env.groqApiKey, modelId: env.llmModelId)
         log("Router initialized", category: .system)
 
         orchestrator = Orchestrator(config: env)

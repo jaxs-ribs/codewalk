@@ -8,7 +8,7 @@ struct EnvConfig {
     var avalonApiKey: String = ""
     var searchResultCount: Int = 8
     var fetchTimeoutMs: Int = 15000
-    var searchModelId: String = "llama-3.1-70b-versatile"  // Using a working Groq model
+    var llmModelId: String = "moonshotai/kimi-k2-instruct-0905"  // Kimi K2 for all LLM tasks
 
     static func load() -> EnvConfig {
         // Try bundled .env first
@@ -26,14 +26,15 @@ struct EnvConfig {
         config.avalonApiKey = env["AVALON_API_KEY"] ?? ""
         config.searchResultCount = Int(env["RESULT_COUNT"] ?? "8") ?? 8
         config.fetchTimeoutMs = Int(env["FETCH_TIMEOUT_MS"] ?? "15000") ?? 15000
-        config.searchModelId = env["MODEL_ID"] ?? "llama-3.1-70b-versatile"
+        config.llmModelId = env["LLM_MODEL_ID"] ?? "moonshotai/kimi-k2-instruct-0905"
 
         log("Loaded config:", category: .system, component: "EnvConfig")
         log("- GROQ_API_KEY: \(config.groqApiKey.prefix(10))...", category: .system, component: "EnvConfig")
         log("- BRAVE_API_KEY: \(config.braveApiKey.prefix(10))...", category: .system, component: "EnvConfig")
         log("- ELEVENLABS_API_KEY: \(config.elevenLabsApiKey.prefix(10))...", category: .system, component: "EnvConfig")
         log("- AVALON_API_KEY: \(config.avalonApiKey.prefix(10))...", category: .system, component: "EnvConfig")
-        log("- Search settings: \(config.searchResultCount) results, \(config.fetchTimeoutMs)ms timeout, model: \(config.searchModelId)", category: .system, component: "EnvConfig")
+        log("- Search settings: \(config.searchResultCount) results, \(config.fetchTimeoutMs)ms timeout", category: .system, component: "EnvConfig")
+        log("- LLM model: \(config.llmModelId)", category: .system, component: "EnvConfig")
 
         return config
     }
@@ -64,8 +65,8 @@ struct EnvConfig {
                 config.searchResultCount = Int(value) ?? 8
             case "FETCH_TIMEOUT_MS":
                 config.fetchTimeoutMs = Int(value) ?? 15000
-            case "MODEL_ID":
-                config.searchModelId = value
+            case "LLM_MODEL_ID":
+                config.llmModelId = value
             default:
                 break
             }

@@ -51,7 +51,7 @@ class Orchestrator: ObservableObject {
         artifactManager = ArtifactManager()
 
         // Initialize assistant client
-        assistantClient = AssistantClient(groqApiKey: config.groqApiKey)
+        assistantClient = AssistantClient(groqApiKey: config.groqApiKey, modelName: config.llmModelId)
 
         // Initialize TTS manager (iOS native)
         ttsManager = TTSManager()
