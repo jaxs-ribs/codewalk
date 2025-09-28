@@ -13,6 +13,8 @@ class AgentViewModel: ObservableObject {
     private var audioTimer: Timer?
     private var recorder: Recorder?
     private var sttUploader: STTUploader?
+    private var avalonSTT: AvalonSTT?
+    private var useAvalon = false
     private var router: Router?
     private(set) var orchestrator: Orchestrator?
     private var recordingStartTime: Date?
@@ -33,8 +35,16 @@ class AgentViewModel: ObservableObject {
         // Load environment config
         let env = EnvConfig.load()
 
-        sttUploader = STTUploader(groqApiKey: env.groqApiKey)
-        log("STTUploader initialized", category: .system)
+        // Check if we should use Avalon STT
+        useAvalon = CommandLine.arguments.contains("--avalon-stt")
+
+        if useAvalon {
+            avalonSTT = AvalonSTT(avalonApiKey: env.avalonApiKey)
+            log("Using Avalon STT for transcription", category: .system)
+        } else {
+            sttUploader = STTUploader(groqApiKey: env.groqApiKey)
+            log("Using Groq STT for transcription", category: .system)
+        }
 
         router = Router(groqApiKey: env.groqApiKey)
         log("Router initialized", category: .system)
@@ -110,7 +120,8 @@ class AgentViewModel: ObservableObject {
     }
 
     private func uploadAudio(url: URL) async {
-        log("Uploading audio to Groq API...", category: .network)
+        let sttProvider = useAvalon ? "Avalon" : "Groq"
+        log("Uploading audio to \(sttProvider) API...", category: .network)
 
         // Check file size
         if let fileSize = try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int {
@@ -118,21 +129,33 @@ class AgentViewModel: ObservableObject {
         }
 
         do {
-            guard let uploader = sttUploader else {
-                logError("STTUploader is nil")
-                await MainActor.run {
-                    self.lastMessage = "Transcription service not configured"
-                    self.currentState = .idle
-                }
-                return
-            }
+            let result: String
 
-            // Upload audio and get transcription
-            let result = try await uploader.transcribe(audioURL: url)
+            if useAvalon {
+                guard let avalon = avalonSTT else {
+                    logError("AvalonSTT is nil")
+                    await MainActor.run {
+                        self.lastMessage = "Avalon transcription service not configured"
+                        self.currentState = .idle
+                    }
+                    return
+                }
+                result = try await avalon.transcribe(audioURL: url)
+            } else {
+                guard let uploader = sttUploader else {
+                    logError("STTUploader is nil")
+                    await MainActor.run {
+                        self.lastMessage = "Groq transcription service not configured"
+                        self.currentState = .idle
+                    }
+                    return
+                }
+                result = try await uploader.transcribe(audioURL: url)
+            }
 
             await MainActor.run {
                 self.transcription = result
-                logSuccess("Transcription successful", component: "STT")
+                logSuccess("Transcription successful", component: sttProvider)
                 // Log full user transcript in beautiful format
                 logUserTranscript(result)
             }

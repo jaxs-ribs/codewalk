@@ -4,6 +4,7 @@ set -euo pipefail
 # Parse command line arguments
 USE_GROQ_TTS=""
 USE_ELEVENLABS=""
+USE_AVALON_STT=""
 for arg in "$@"; do
     case $arg in
         --groq-tts)
@@ -14,11 +15,16 @@ for arg in "$@"; do
             USE_ELEVENLABS="YES"
             echo "[run] ElevenLabs TTS enabled via flag"
             ;;
+        --avalon-stt)
+            USE_AVALON_STT="YES"
+            echo "[run] Avalon STT enabled via flag"
+            ;;
         *)
-            echo "[run] Usage: $0 [--groq-tts | --elevenlabs]"
+            echo "[run] Usage: $0 [--groq-tts | --elevenlabs] [--avalon-stt]"
             echo "  --groq-tts    Use Groq TTS with PlayAI voices"
             echo "  --elevenlabs  Use ElevenLabs TTS (fastest, most natural)"
-            echo "  (default)     Use iOS native TTS"
+            echo "  --avalon-stt  Use Avalon STT for transcription (default: Groq STT)"
+            echo "  (default)     Use iOS native TTS and Groq STT"
             ;;
     esac
 done
@@ -104,16 +110,28 @@ xcrun simctl uninstall "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 xcrun simctl install "$UDID" "$APP_PATH"
 
 echo "[run] Launching app with logging..."
+
+# Build launch arguments
+LAUNCH_ARGS=""
 if [[ -n "$USE_ELEVENLABS" ]]; then
-    echo "[run] Launching with ElevenLabs TTS enabled"
-    xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" --UseElevenLabs 2>&1 | tee "$LOG_FILE" &
+    LAUNCH_ARGS="$LAUNCH_ARGS --UseElevenLabs"
+    echo "[run] Using ElevenLabs TTS"
 elif [[ -n "$USE_GROQ_TTS" ]]; then
-    echo "[run] Launching with Groq TTS enabled"
-    xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" --UseGroqTTS 2>&1 | tee "$LOG_FILE" &
+    LAUNCH_ARGS="$LAUNCH_ARGS --UseGroqTTS"
+    echo "[run] Using Groq TTS"
 else
-    echo "[run] Launching with iOS native TTS"
-    xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" 2>&1 | tee "$LOG_FILE" &
+    echo "[run] Using iOS native TTS"
 fi
+
+if [[ -n "$USE_AVALON_STT" ]]; then
+    LAUNCH_ARGS="$LAUNCH_ARGS --avalon-stt"
+    echo "[run] Using Avalon STT for transcription"
+else
+    echo "[run] Using Groq STT for transcription"
+fi
+
+# Launch with combined arguments
+xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" $LAUNCH_ARGS 2>&1 | tee "$LOG_FILE" &
 LOG_PID=$!
 
 echo ""

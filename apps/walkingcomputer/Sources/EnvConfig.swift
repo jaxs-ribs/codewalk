@@ -5,6 +5,7 @@ struct EnvConfig {
     var groqApiKey: String = ""
     var braveApiKey: String = ""
     var elevenLabsApiKey: String = ""
+    var avalonApiKey: String = ""
     var searchResultCount: Int = 8
     var fetchTimeoutMs: Int = 15000
     var searchModelId: String = "llama-3.1-70b-versatile"  // Using a working Groq model
@@ -22,15 +23,17 @@ struct EnvConfig {
         config.groqApiKey = env["GROQ_API_KEY"] ?? ""
         config.braveApiKey = env["BRAVE_API_KEY"] ?? ""
         config.elevenLabsApiKey = env["ELEVENLABS_API_KEY"] ?? ""
+        config.avalonApiKey = env["AVALON_API_KEY"] ?? ""
         config.searchResultCount = Int(env["RESULT_COUNT"] ?? "8") ?? 8
         config.fetchTimeoutMs = Int(env["FETCH_TIMEOUT_MS"] ?? "15000") ?? 15000
         config.searchModelId = env["MODEL_ID"] ?? "llama-3.1-70b-versatile"
 
-        print("[WalkCoach] Loaded config:")
-        print("[WalkCoach] - GROQ_API_KEY: \(config.groqApiKey.prefix(10))...")
-        print("[WalkCoach] - BRAVE_API_KEY: \(config.braveApiKey.prefix(10))...")
-        print("[WalkCoach] - ELEVENLABS_API_KEY: \(config.elevenLabsApiKey.prefix(10))...")
-        print("[WalkCoach] - Search settings: \(config.searchResultCount) results, \(config.fetchTimeoutMs)ms timeout, model: \(config.searchModelId)")
+        log("Loaded config:", category: .system, component: "EnvConfig")
+        log("- GROQ_API_KEY: \(config.groqApiKey.prefix(10))...", category: .system, component: "EnvConfig")
+        log("- BRAVE_API_KEY: \(config.braveApiKey.prefix(10))...", category: .system, component: "EnvConfig")
+        log("- ELEVENLABS_API_KEY: \(config.elevenLabsApiKey.prefix(10))...", category: .system, component: "EnvConfig")
+        log("- AVALON_API_KEY: \(config.avalonApiKey.prefix(10))...", category: .system, component: "EnvConfig")
+        log("- Search settings: \(config.searchResultCount) results, \(config.fetchTimeoutMs)ms timeout, model: \(config.searchModelId)", category: .system, component: "EnvConfig")
 
         return config
     }
@@ -55,6 +58,8 @@ struct EnvConfig {
                 config.braveApiKey = value
             case "ELEVENLABS_API_KEY":
                 config.elevenLabsApiKey = value
+            case "AVALON_API_KEY":
+                config.avalonApiKey = value
             case "RESULT_COUNT":
                 config.searchResultCount = Int(value) ?? 8
             case "FETCH_TIMEOUT_MS":
@@ -66,7 +71,7 @@ struct EnvConfig {
             }
         }
 
-        print("[WalkCoach] Parsed .env file")
+        log("Parsed .env file", category: .system, component: "EnvConfig")
         return config
     }
 }
