@@ -3,11 +3,22 @@ set -euo pipefail
 
 # Parse command line arguments
 USE_GROQ_TTS=""
+USE_ELEVENLABS=""
 for arg in "$@"; do
     case $arg in
         --groq-tts)
             USE_GROQ_TTS="YES"
             echo "[run] Groq TTS enabled via flag"
+            ;;
+        --elevenlabs)
+            USE_ELEVENLABS="YES"
+            echo "[run] ElevenLabs TTS enabled via flag"
+            ;;
+        *)
+            echo "[run] Usage: $0 [--groq-tts | --elevenlabs]"
+            echo "  --groq-tts    Use Groq TTS with PlayAI voices"
+            echo "  --elevenlabs  Use ElevenLabs TTS (fastest, most natural)"
+            echo "  (default)     Use iOS native TTS"
             ;;
     esac
 done
@@ -93,10 +104,14 @@ xcrun simctl uninstall "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 xcrun simctl install "$UDID" "$APP_PATH"
 
 echo "[run] Launching app with logging..."
-if [[ -n "$USE_GROQ_TTS" ]]; then
+if [[ -n "$USE_ELEVENLABS" ]]; then
+    echo "[run] Launching with ElevenLabs TTS enabled"
+    xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" --UseElevenLabs 2>&1 | tee "$LOG_FILE" &
+elif [[ -n "$USE_GROQ_TTS" ]]; then
     echo "[run] Launching with Groq TTS enabled"
     xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" --UseGroqTTS 2>&1 | tee "$LOG_FILE" &
 else
+    echo "[run] Launching with iOS native TTS"
     xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" 2>&1 | tee "$LOG_FILE" &
 fi
 LOG_PID=$!

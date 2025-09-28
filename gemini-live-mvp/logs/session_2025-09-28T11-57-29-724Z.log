@@ -1,5 +1,0 @@
-{"timestamp":"2025-09-28T11:57:35.429Z","message":"ROUTE_DECISION","data":{"intent":"conversation","input_type":"yes_no_question","reasoning":"The user is asking a yes/no question to confirm audio functionality."}}
-{"timestamp":"2025-09-28T11:57:38.081Z","message":"TURN_COMPLETE","data":{"input":" Hey man, can you hear me?","output":"Yes, I can hear you.","routeInfo":{"intent":"conversation","input_type":"yes_no_question","reasoning":"The user is asking a yes/no question to confirm audio functionality."},"wroteArtifact":false}}
-{"timestamp":"2025-09-28T11:57:48.463Z","message":"ROUTE_DECISION","data":{"intent":"directive","action":"write the description","reasoning":"The user is explicitly instructing to write a description."}}
-{"timestamp":"2025-09-28T11:57:48.979Z","message":"ARTIFACT_WRITTEN","data":{"artifact_type":"description","length":50}}
-{"timestamp":"2025-09-28T11:57:51.036Z","message":"TURN_COMPLETE","data":{"input":" says this is a test description.","output":"Noted","routeInfo":{"reasoning":"The user is explicitly instructing to write a description.","intent":"directive","action":"write the description"},"wroteArtifact":true}}

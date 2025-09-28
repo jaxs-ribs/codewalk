@@ -1,9 +1,0 @@
-# Port to iOS
-
-You have a working Rust voice speccer that runs on your Mac. Now you want it in your pocket as you walk. The iOS app preserves the exact UI and UX of the VoiceAgent template with its beautiful dark glassmorphic design and four-state visual feedback system. The app keeps the sleek interface while replacing the WebSocket relay backend with local artifact generation. The visual states remain: idle (waiting), recording (red pulse), processing (activity spinner), and agent speaking (response displayed). This proven UI pattern stays untouched.
-
-The backend reimplements the Rust orchestrator logic in Swift. Push-to-talk recording sends audio to Groq Whisper for transcription. The transcript goes to the router (Groq Kimi K2) to determine intent. Based on intent, the system either updates conversation memory, generates artifacts, or reads existing content. Two markdown files live in the app's Documents folder: description.md and phasing.md. The assistant responses appear in the same text area where WebSocket messages used to display.
-
-Two new buttons appear below the main interface: "Copy Description" and "Copy Phasing". These buttons only show when the respective artifact exists. Tapping copies the full markdown content to the iOS clipboard for easy sharing via Messages or AirDrop. The buttons use the same glassmorphic style as the existing UI elements. No other visual changes are made to preserve the polished look.
-
-The four-state UI flow works exactly like the original template. Press and hold the big record button to enter recording state with red pulse animation. Release to see the processing spinner while Groq transcribes and routes. Watch the assistant response appear in the text area. Return to idle state ready for the next interaction. The only difference users notice is that responses now modify local artifacts instead of sending WebSocket messages to a server.

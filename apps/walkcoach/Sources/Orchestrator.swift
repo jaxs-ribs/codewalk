@@ -11,6 +11,14 @@ enum OrchestratorState {
     case executing
 }
 
+// MARK: - TTS Provider
+
+enum TTSProvider {
+    case native
+    case groq
+    case elevenLabs
+}
+
 // MARK: - Action Queue Item
 
 struct ActionQueueItem {
@@ -32,7 +40,8 @@ class Orchestrator: ObservableObject {
     private let assistantClient: AssistantClient
     private let ttsManager: TTSManager
     private let groqTTSManager: GroqTTSManager?
-    private let useGroqTTS: Bool
+    private let elevenLabsTTS: ElevenLabsTTS?
+    private let ttsProvider: TTSProvider
     private var searchService: SearchService?  // For Phase 1 testing
     private var searchSoundTimer: Timer?  // Timer for search feedback sounds
 
@@ -46,15 +55,21 @@ class Orchestrator: ObservableObject {
         // Initialize TTS manager (iOS native)
         ttsManager = TTSManager()
 
-        // Check for Groq TTS preference via launch arguments
-        useGroqTTS = CommandLine.arguments.contains("--UseGroqTTS")
-
-        // Initialize Groq TTS if enabled
-        if useGroqTTS {
+        // Determine TTS provider from launch arguments
+        if CommandLine.arguments.contains("--UseElevenLabs") {
+            ttsProvider = .elevenLabs
+            elevenLabsTTS = ElevenLabsTTS(apiKey: config.elevenLabsApiKey)
+            groqTTSManager = nil
+            print("[Orchestrator] Using ElevenLabs TTS")
+        } else if CommandLine.arguments.contains("--UseGroqTTS") {
+            ttsProvider = .groq
             groqTTSManager = GroqTTSManager(groqApiKey: config.groqApiKey)
+            elevenLabsTTS = nil
             print("[Orchestrator] Using Groq TTS with PlayAI voices")
         } else {
+            ttsProvider = .native
             groqTTSManager = nil
+            elevenLabsTTS = nil
             print("[Orchestrator] Using iOS native TTS")
         }
 
@@ -494,17 +509,40 @@ class Orchestrator: ObservableObject {
     // MARK: - TTS Control
 
     private func speak(_ text: String) async {
-        if useGroqTTS, let groqTTS = groqTTSManager {
-            do {
-                try await groqTTS.synthesizeAndPlay(text)
-            } catch {
-                print("[Orchestrator] Groq TTS failed, falling back to iOS: \(error)")
-                // Fallback to iOS TTS
+        switch ttsProvider {
+        case .elevenLabs:
+            if let elevenLabs = elevenLabsTTS {
+                do {
+                    try await elevenLabs.synthesizeAndPlay(text)
+                } catch {
+                    print("[Orchestrator] ElevenLabs TTS failed, falling back to iOS TTS: \(error)")
+                    // Fallback to iOS TTS
+                    await MainActor.run {
+                        self.ttsManager.speak(text)
+                    }
+                }
+            } else {
                 await MainActor.run {
                     self.ttsManager.speak(text)
                 }
             }
-        } else {
+        case .groq:
+            if let groqTTS = groqTTSManager {
+                do {
+                    try await groqTTS.synthesizeAndPlay(text)
+                } catch {
+                    print("[Orchestrator] Groq TTS failed, falling back to iOS TTS: \(error)")
+                    // Fallback to iOS TTS
+                    await MainActor.run {
+                        self.ttsManager.speak(text)
+                    }
+                }
+            } else {
+                await MainActor.run {
+                    self.ttsManager.speak(text)
+                }
+            }
+        case .native:
             await MainActor.run {
                 self.ttsManager.speak(text)
             }
@@ -512,9 +550,12 @@ class Orchestrator: ObservableObject {
     }
 
     func stopSpeaking() {
-        if useGroqTTS {
+        switch ttsProvider {
+        case .elevenLabs:
+            elevenLabsTTS?.stop()
+        case .groq:
             groqTTSManager?.stop()
-        } else {
+        case .native:
             ttsManager.stop()
         }
     }
