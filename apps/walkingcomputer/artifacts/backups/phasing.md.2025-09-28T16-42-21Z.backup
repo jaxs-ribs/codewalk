@@ -1,0 +1,16 @@
+# Project Phasing
+
+## Phase 1: Core VM Skeleton
+So first we'll lay down the absolute minimum VM that can run a tiny RISC-V program. We'll write a simple fetch-decode-execute loop in Rust that keeps the PC, handles a handful of base instructions like ADD, SUB, LW, SW, and stores registers in a plain Vec<u32>. The test harness will load a hex file with maybe ten instructions, single-step through them, and assert the final register state. When this phase is done, you'll be able to run `cargo test` and watch the emulator march through a tiny add-immediate loop and finish with the expected value in x5.
+
+## Phase 2: Constraint Framework
+Then we'll bolt a real constraint system onto that skeleton. We'll pick plonkish because it's friendly to both custom gates and the Rust tooling we want. We'll write a crate that can express each instruction as a set of degree-2 constraints over a Goldilocks field, compile them to a circuit, and prove a single step with a mock prover. Heavy unit tests will check that a malformed trace fails verification and that a correct trace passes. Once complete, you can test by running `cargo test --features=constraints` and see the verifier accept a trace for a legal ADD and reject one where RS1 is out of range.
+
+## Phase 3: Poseidon Memory Merkle
+After that we'll wire up Poseidon-based Merkle trees for the VM memory so each load/store becomes a provable update. We'll map byte addresses to 32-bit words and hash each word with its path using Poseidon-256 in four rounds, keeping the arity small so the constraint count stays under 800 per access. A sparse memory crate will track dirty pages and produce sibling proofs on demand. When this phase is done, you'll be able to run a program that writes to two addresses, read them back, and the prover will verify the final Merkle root is consistent with the trace.
+
+## Phase 4: Recursive Proof Aggregation
+Next we'll add recursion so the VM can prove an entire program, not just one step. We'll implement a recursive verifier circuit that checks two previous proofs and a short VM trace, then produces a new proof. We'll keep the recursion depth shallow at first—only two layers—so we can test the plumbing without melting laptops. We'll checkpoint the recursion state to disk so you can resume long runs. Once complete, you can test by running a script that proves two independent 100-step segments, then merges them into a single 200-step proof that the verifier accepts in under ten seconds on a laptop.
+
+## Phase 5: Public IO & Perf Polish
+Finally we'll open up inputs and outputs so the outside world can feed the VM data and read results. We'll expose a short public tape interface where the prover commits to a Merkle root of inputs before execution and reveals a similar root for outputs. We'll add benchmarks for cycles-per-second and memory-per-proof, then tune Poseidon rounds and field arithmetic until we hit at least 1 kHz proving speed on a single core. When this phase is done, you'll be able to run `cargo bench fib 500` and watch it generate a complete zk proof of a 500-iteration Fibonacci sequence with public input 7 and output 8 in under two seconds.

@@ -1,0 +1,16 @@
+# Project Phasing
+
+## Phase 1: Core RISC VM
+So first we'll build a minimal 32-bit RISC interpreter that can run a tiny test program. We'll keep the ISA dead simple—think 20 opcodes max—so the trace stays short and proofs stay fast. Every instruction gets a Criterion benchmark and a unit test that asserts its cycle count, because we'll need those baselines before we add crypto. When this phase is done, you'll be able to run `cargo test` and watch 100% of the opcode tests pass in under 50 ms each.
+
+## Phase 2: Constraint Framework
+Next we'll wire the VM into a constraint system, starting with halo2's Plonkish API so we can plug in GPU-accelerated field code later. Each opcode gets its own gate, and we'll write prover/verifier round-trip tests that force the same trace to pass on every CI run. We'll bench proof time per opcode and fail the build if any instruction regresses by more than 5%. Once complete, you can test by running a single opcode trace and seeing the proof verify in <200 ms on your laptop.
+
+## Phase 3: Memory & I/O
+Then we'll add contiguous memory, a read-write data section, and a tiny syscall interface so programs can load and store. We'll keep addressing 32-bit and page-aligned so constraints stay skinny, and we'll gate memory ops the same way we gated ALU ops. Every load/store pair gets a test that asserts the Merkle root of memory updates correctly, so we catch state mismatches instantly. When this phase is done, you'll be able to run a Fibonacci program that reads input from memory and writes the result back, all inside a single proof.
+
+## Phase 4: Placeholder
+This is a placeholder and nothing.
+
+## Phase 5: Recursion & Ship
+Finally we'll bolt on recursive verification so the VM can prove it verified another proof, letting us compress long runs into one tiny receipt. We'll swap halo2 for Plonky3 if benchmarks show it's faster, add GPU kernels for the finite-field FFTs, and gate every recursive step the same way we gated opcodes. We'll ship a CLI that takes a Rust ELF, compiles it to our ISA, and spits out a single recursive proof under 200 KB. When this phase is done, you'll be able to run `cargo run --release -- prove examples/fibonacci.elf` and see a verified recursive proof in under 2 seconds on a mid-tier GPU.

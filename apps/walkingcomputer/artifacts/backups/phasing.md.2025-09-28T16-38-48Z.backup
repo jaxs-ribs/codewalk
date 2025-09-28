@@ -1,0 +1,13 @@
+# Project Phasing
+
+## Phase 1: Core Data Pipeline
+So first we'll stand up the backbone: a FastAPI service that pulls the latest tariff rates every night from USITC and Vietnamese customs sites, normalizes them into HS codes, and stores them in PostgreSQL with proper indexes. We'll containerize it with Docker, schedule the scraper via EventBridge, and expose a simple REST endpoint that returns current rates for any HS code. We'll also build a tiny React dashboard that lets you paste an HS code and see the rate history as a line chart. When this phase is done, you'll be able to hit the API with code 6203.42 and get back the 20% US tariff on Vietnamese trousers.
+
+## Phase 2: Live Updates & Alerts
+Next we'll wire WebSockets into the FastAPI backend so the moment a new tariff posts, every connected client gets a JSON push. We'll add a lightweight React-Native mobile shell (Expo) that subscribes to those sockets and fires a local notification if any of your watched HS codes change. Postgres will get a triggers table to log every delta, and we'll ship a small toggle UI where you can star products and set a threshold—say, alert me if the rate jumps above 25%. Once complete, you can test by changing a rate in the admin panel and watching your phone buzz within five seconds.
+
+## Phase 3: Forecasting & Margin Tool
+Then we'll layer on a scikit-learn model that predicts the probability of additional hikes based on past patterns, trade-balances, and policy-news sentiment we scrape from Reuters. The model outputs a seven-day forecast with confidence bands, and we surface it right in the same chart. We'll also add a margin calculator: you type in your landed cost, quantity, and desired margin, and the tool spits out the minimum sell price under the predicted tariff range. When this phase wraps, you'll be able to enter a $10 cost, 1k units, 30% margin and see a suggested US sell price of $15.60 with a 68% confidence band of ±$0.40.
+
+## Phase 4: Multi-Country Expansion
+After that we'll generalize the scraper to pull rates for China, Mexico, and the EU, storing them in separate partitioned tables but serving them through the same WebSocket so the app feels unified. We'll add a country-selector dropdown, currency conversion via open-exchange rates, and let users build blended portfolios—like "all apparel HS codes from VN + CN"—and get one aggregated alert. We'll also ship an Excel plug-in that calls our API so logistics teams can refresh sheets without leaving their forecasts. Once shipped, you'll be able to toggle from Vietnam to China, see denim jeans jump from 20% to 34%, and download the updated landed-cost sheet in one click.
