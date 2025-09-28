@@ -157,12 +157,14 @@ ROUTING RULES:
 - Also classify the input_type for conversation: statement, yes_no_question, technical_question, brainstorming
 
 PHASE 4 - PASSIVE CONVERSATION BEHAVIOR:
-Based on input_type, respond EXACTLY as follows:
-- statement → Respond ONLY "Noted" (nothing more)
+When intent is "conversation", ALWAYS respond based on input_type:
+- statement → Respond EXACTLY "Noted" (nothing more, nothing less)
 - yes_no_question → Start with "Yes" or "No", then add ONE clarifying sentence
 - technical_question → Give a 2-3 sentence technical answer
 - brainstorming → Offer 2-3 concrete suggestions
 - unclear → Default to "Noted"
+
+CRITICAL: Never leave a response empty. Always provide appropriate feedback.
 
 Examples:
 - "The app needs dark mode" → "Noted"
@@ -433,13 +435,26 @@ async function processVoice() {
     console.log('Processing...\n');
     const audioBase64 = audioBuffer.toString('base64');
 
-    await session.sendRealtimeInput({
-      audio: {
-        data: audioBase64,
-        mimeType: 'audio/pcm;rate=16000'
-      }
-    });
-    await session.sendRealtimeInput({ audioStreamEnd: true });
+    // Check session health
+    if (!session) {
+      console.error('❌ Session lost - reconnecting needed');
+      isProcessing = false;
+      return;
+    }
+
+    try {
+      await session.sendRealtimeInput({
+        audio: {
+          data: audioBase64,
+          mimeType: 'audio/pcm;rate=16000'
+        }
+      });
+      await session.sendRealtimeInput({ audioStreamEnd: true });
+    } catch (error) {
+      console.error('❌ Failed to send audio:', error.message);
+      isProcessing = false;
+      return;
+    }
 
     const player = streamAudio();
 
@@ -463,6 +478,11 @@ async function processVoice() {
         if (msg.toolCall) {
           turnState.toolCallCount++;
 
+          // Clear the input transcript line when moving to tool calls
+          if (turnState.inputTranscript) {
+            console.log(''); // New line after input
+          }
+
           // Capture routing info
           const routeCall = msg.toolCall.functionCalls?.find(fc => fc.name === 'route_intent');
           if (routeCall) {
@@ -484,9 +504,26 @@ async function processVoice() {
           continue;
         }
 
-        // Input transcript
+        // Input transcript - accumulate properly
         if (msg.serverContent?.inputTranscription?.text != null) {
-          turnState.inputTranscript = msg.serverContent.inputTranscription.text;
+          const fragment = msg.serverContent.inputTranscription.text;
+
+          // Check if this is a cumulative update or a fragment
+          if (fragment.startsWith(turnState.inputTranscript)) {
+            // This is a cumulative update that includes everything
+            turnState.inputTranscript = fragment;
+          } else if (turnState.inputTranscript.length === 0) {
+            // First fragment
+            turnState.inputTranscript = fragment;
+          } else {
+            // This is a continuation fragment, append it
+            turnState.inputTranscript += fragment;
+          }
+
+          // Show the accumulated transcript
+          process.stdout.clearLine();
+          process.stdout.cursorTo(0);
+          process.stdout.write(`📝 You're saying: "${turnState.inputTranscript}"`);
         }
 
         // Output transcript accumulation
@@ -565,7 +602,17 @@ async function processVoice() {
     // Print summary
     console.log('\n' + '='.repeat(60));
     console.log('TURN COMPLETE:');
-    console.log(`📝 You: "${turnState.inputTranscript}"`);
+
+    // Check for empty transcripts (indicates connection issue)
+    if (!turnState.inputTranscript) {
+      console.log('⚠️  WARNING: No input transcript captured');
+      console.log('   Possible causes:');
+      console.log('   - Audio recording issue');
+      console.log('   - Connection problem');
+      console.log('   - STT failure');
+    } else {
+      console.log(`📝 You: "${turnState.inputTranscript}"`);
+    }
 
     if (turnState.routeInfo) {
       console.log(`📍 Classified as: ${turnState.routeInfo.intent}`);
@@ -574,7 +621,14 @@ async function processVoice() {
       }
     }
 
-    console.log(`🤖 Gemini: "${turnState.outputTranscript}"`);
+    if (!turnState.outputTranscript) {
+      console.log('⚠️  WARNING: No response generated');
+      if (turnState.routeInfo?.input_type === 'statement') {
+        console.log('   Expected: "Noted"');
+      }
+    } else {
+      console.log(`🤖 Gemini: "${turnState.outputTranscript}"`);
+    }
 
     if (turnState.wroteArtifact) {
       console.log(`\n✅ Artifact written to disk!`);

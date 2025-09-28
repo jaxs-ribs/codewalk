@@ -1,5 +1,3 @@
 # Project Description
 
-We're going to create a meditation project together. It'll be a really helpful tool for anyone looking to incorporate mindfulness into their daily routine. You'll find it's designed to guide you through various breathing exercises, which are essential for calming the mind and body. We'll make sure these exercises are easy to follow, whether you're new to meditation or have some experience.
-
-Beyond just the breathing, this project will also include a way to track your progress. It's really important to see how far you've come, so we'll implement a system that lets you monitor your consistency and perhaps even the duration of your meditation sessions. This way, you'll be able to observe your journey and stay motivated as you build a regular practice. It's all about making meditation accessible and effective for you.
+This is a test description.
