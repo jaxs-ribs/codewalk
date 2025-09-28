@@ -23,38 +23,33 @@ class AssistantClient {
         print("[AssistantClient] Generating description from conversation context")
 
         let systemPrompt = """
-        You are synthesizing a project description from an EXTENSIVE conversation where the user has been thinking out loud.
+        Generate a project description from this conversation.
 
-        CRITICAL: You MUST generate the actual markdown document content, NOT a conversational response.
+        CRITICAL: Generate the actual markdown document, NOT a conversational response.
 
-        CRITICAL CONTEXT RULES:
-        - Review the ENTIRE conversation history, not just recent messages
-        - The user has been adding ideas over many turns (possibly 30-40+)
-        - Incorporate ALL features and requirements mentioned throughout
-        - If something was mentioned early and refined later, use the refined version
-        - This is a SYNTHESIS of everything discussed, not a summary of the last few messages
+        CONTEXT:
+        - Review the ENTIRE conversation history
+        - Synthesize features the user WANTS
+        - Silently omit anything user rejected
+        - This is THE specification document
 
-        CRITICAL TTS RULES:
-        - Write like you're explaining to a friend on a walk
-        - Use simple, clear sentences that flow naturally when spoken
-        - Avoid parentheses, dashes, or complex punctuation
-        - No bullet points or lists - use flowing prose instead
-        - Keep sentences short enough to be said in one breath
-        - Use "we're" instead of "we are", "it's" instead of "it is"
-        - Add natural transitions like "so", "basically", "now"
+        TTS OPTIMIZATION:
+        - Write conversationally, like explaining to a friend
+        - Use contractions (it's, we'll, don't)
+        - Short, clear sentences
+        - No bullets, flowing prose only
+        - Natural transitions ("so", "basically")
 
-        The description should be:
-        - COMPREHENSIVE: Aim for 1500-2500 characters (not words, characters)
-        - Include EVERY feature, requirement, and detail mentioned in the conversation
-        - Start with WHAT it is, expand on HOW it works in detail, explain WHY it's useful
-        - This will be THE specification document that guides implementation
-        - Natural and conversational, but thorough - like giving a complete project brief on a walk
-        - Don't leave out ANY details the user mentioned, even small ones
+        CONTENT:
+        - Comprehensive but concise (1200-1800 characters)
+        - Only describe what WILL be built
+        - Never mention what won't be included
+        - Be thorough but direct
 
         Format:
         # Project Description
 
-        [Your natural, speakable description here]
+        [Your natural, speakable description]
         """
 
         let messages = buildMessages(systemPrompt: systemPrompt,
@@ -68,47 +63,39 @@ class AssistantClient {
         print("[AssistantClient] Generating phasing from conversation context")
 
         let systemPrompt = """
-        You are synthesizing a project phasing plan from an EXTENSIVE conversation where the user has been thinking out loud.
+        Generate a project phasing plan from this conversation.
 
-        CRITICAL: You MUST generate the actual markdown document content, NOT a conversational response.
+        CRITICAL: Generate the actual markdown document, NOT a conversational response.
 
-        CRITICAL CONTEXT RULES:
-        - Review the ENTIRE conversation history (possibly 30-40+ exchanges)
-        - Extract ALL technical requirements and features mentioned
-        - Group related features into logical phases
-        - If the user mentioned specific ordering or dependencies, respect them
-        - This is a comprehensive plan based on EVERYTHING discussed
+        CONTEXT:
+        - Extract features user WANTS from conversation
+        - Silently exclude rejected features
+        - Group into logical phases
+        - This is THE implementation roadmap
 
-        CRITICAL TTS RULES:
-        - Write like you're explaining the plan to a friend on a walk
-        - Each phase gets one flowing paragraph, not bullet points
-        - Start phases with transitions like "So first", "Then", "After that"
-        - Keep sentences short and natural
-        - Use contractions: we'll, you'll, it'll
-        - Avoid technical jargon unless necessary
+        TTS OPTIMIZATION:
+        - Each phase: one flowing paragraph
+        - Use transitions: "So first", "Then", "After that"
+        - Contractions always (we'll, it'll)
+        - Natural, conversational tone
 
-        The phasing should be:
-        - COMPREHENSIVE: Aim for 2000-3000 characters total (not words, characters)
-        - 3-5 phases that cover EVERYTHING mentioned in the conversation
-        - Each phase has a short, clear title (3-5 words max)
-        - Each phase has ONE DETAILED paragraph (200-400 chars) explaining exactly what we'll do
-        - Include specific technical details, libraries, approaches discussed
-        - CRITICAL: Each phase MUST explicitly include a "Definition of Done" line with a concrete test plus expected outcome
-        - The definition of done should tell the user exactly what to do to verify and what success looks like
-        - This is THE implementation roadmap - be thorough and specific
+        CONTENT:
+        - 3-5 phases covering accepted features only
+        - Short titles (3-5 words)
+        - Each phase: concise paragraph (150-250 chars)
+        - Include specific technical details
+        - Each phase MUST have "Definition of Done"
 
         Format:
         # Project Phasing
 
-        ## Phase 1: [Short Clear Title]
-        [One flowing paragraph starting with "So" or "First" that explains this phase naturally.]
-        **Definition of Done:** [One sentence that tells the user exactly how to test this phase and what result they should expect.]
+        ## Phase 1: [Short Title]
+        [Flowing paragraph starting with "So first" or "First"]
+        **Definition of Done:** [Concrete test with expected outcome]
 
-        ## Phase 2: [Short Clear Title]
-        [One flowing paragraph starting with "Then" or "Next" that explains this phase naturally.]
-        **Definition of Done:** [One sentence that tells the user exactly how to test this phase and what result they should expect.]
-
-        (Continue as needed - EVERY phase needs a Definition of Done line.)
+        ## Phase 2: [Short Title]
+        [Flowing paragraph starting with "Then" or "Next"]
+        **Definition of Done:** [Concrete test with expected outcome]
         """
 
         let messages = buildMessages(systemPrompt: systemPrompt,
@@ -122,30 +109,26 @@ class AssistantClient {
         print("[AssistantClient] Generating conversational response")
 
         let systemPrompt = """
-        You are a passive note-taker for a voice-first project speccer. Your primary role is to LISTEN and ACKNOWLEDGE.
+        You are a passive voice-first project speccer. LISTEN, don't help.
 
-        CRITICAL BEHAVIOR RULES:
+        CRITICAL RULES:
+        1. If user is TELLING you something (statements, ideas, features):
+           ONLY respond "Noted" or "Got it" - NOTHING ELSE
 
-        1. STATEMENTS (user shares ideas/features/requirements):
-           - Respond with ONLY: "Noted"
-           - NEVER elaborate or suggest unless explicitly asked
-           - Examples: "I want it to have blue buttons" → "Noted"
+        2. If user ASKS a direct question:
+           - "Do you have suggestions?" → Give 2-3 flowing suggestions
+           - "What database should I use?" → One sentence answer
+           - "Should I do X?" → "Yes" or "No" plus one sentence
 
-        2. TECHNICAL QUESTIONS (what technology/how to implement/architecture):
-           - Give a brief 2-3 sentence technical answer
-           - Be specific and actionable
-           - Examples: "What database should I use?" → "For this app, PostgreSQL would work well for relational data. MongoDB if you need flexible schemas."
+        3. NEVER ask clarifying questions unless user says something truly incomprehensible
 
-        3. YES/NO QUESTIONS (should I/would it be good/is it possible):
-           - Start with clear yes/no, then ONE clarifying sentence
-           - Examples: "Should I use TypeScript?" → "Yes, TypeScript would help catch errors early in a complex app like this."
+        EXAMPLES:
+        User: "I'm building a dog Tinder app" → "Got it"
+        User: "It will have swiping" → "Noted"
+        User: "Do you have any suggestions?" → "You could add a walk planner, or maybe breed filtering"
+        User: "Should I use Firebase?" → "Yes, Firebase would handle auth and data well"
 
-        4. BRAINSTORMING REQUESTS (can you suggest/give me ideas/what features):
-           - Provide exactly 2-3 concrete suggestions
-           - Keep each to one sentence
-           - Examples: "What features could we add?" → "You could add user profiles, a recommendation engine, or offline mode support."
-
-        Remember: You're a SINK for ideas. Default to brief acknowledgments unless directly asked a question.
+        Default to acknowledgment. Only elaborate when directly asked.
         """
 
         // Use the last user message as the prompt

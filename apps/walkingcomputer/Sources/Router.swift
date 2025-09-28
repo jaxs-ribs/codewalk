@@ -161,99 +161,39 @@ class Router {
     private let apiURL = "https://api.groq.com/openai/v1/chat/completions"
 
     private let systemPrompt = """
-    You are a router for a voice-first note-taking speccer app. The app is designed for users to think out loud.
+    Voice router for project speccer. DEFAULT to conversation unless EXPLICIT command.
 
-    CRITICAL ROUTING PHILOSOPHY:
-    - DEFAULT to conversation unless there's an EXPLICIT command
-    - Users will mostly be sharing ideas, not giving commands
-    - Be very conservative about interpreting as directives
+    DIRECTIVES only for these commands:
+    - "write the description" → write_description
+    - "write the phasing" → write_phasing
+    - "write both" → write_both
+    - "read the description" → read_description
+    - "read the phasing" → read_phasing
+    - "read phase X" → read_specific_phase with phaseNumber
+    - "edit the description to..." → edit_description
+    - "change phase X to..." → edit_phasing with phaseNumber
+    - "repeat last" → repeat_last
+    - "next/previous phase" → next_phase/previous_phase
+    - "stop" → stop
+    - "copy description/phasing/both" → copy_description/copy_phasing/copy_both
+    - "search for..." → search with query
 
-    ONLY route as directive for these EXPLICIT commands:
-    - "write the description" or "write description" -> write_description
-    - "write me a description" or "can you write a description" -> write_description
-    - "write the phasing" or "write phasing" -> write_phasing
-    - "write the description and phasing" or "write both description and phasing" -> write_both
-    - "read the description" or "read description" -> read_description
-    - "read it" or "can you read it" or "yes read it" (after writing) -> read_description
-    - "read the phasing" or "read phasing" -> read_phasing
-    - "read phase 2" or "read phase two" -> read_specific_phase with phaseNumber
-    - "edit the description to..." or "edit it to..." -> edit_description
-    - "add... to the description" or "can you add... to the description" -> edit_description
-    - "please include... in the description" -> edit_description
-    - "make sure to edit it so..." or "update the description to..." -> edit_description
-    - "regenerate the description" or "rewrite the description" -> write_description
-    - "change phase 2 to..." or "edit phase 2..." -> edit_phasing with phaseNumber
-    - "add... to phase 2" or "include... in the phasing" -> edit_phasing
-    - "regenerate the phasing" or "rewrite the phasing" -> write_phasing
-    - "repeat" or "repeat last" -> repeat_last
-    - "next" or "next phase" -> next_phase
-    - "previous" or "previous phase" -> previous_phase
-    - "stop" -> stop
-    - "copy the description" or "copy description" -> copy_description
-    - "copy the phasing" or "copy phasing" -> copy_phasing
-    - "copy everything" or "copy both" -> copy_both
-    - "search for..." or "look up..." or "find information about..." -> search with query
-    - "what does the internet say about..." -> search with query
-    - "can you search for..." or "please search..." -> search with query
-    - "do a search on..." or "run a search for..." -> search with query
+    EVERYTHING ELSE is conversation (ideas, features, questions, thinking out loud).
 
-    SPECIAL CASE - Contextual search:
-    - "search again" or "do another search" or "fresh search" or "new search" -> conversation
-    - "run a fresh live search" or "do that search now" -> conversation
-    - These require context from previous messages, so route as conversation
-
-    EVERYTHING ELSE is conversation:
-    - Project ideas and features
-    - Requirements and constraints
-    - Questions about the project
-    - Thinking out loud
-    - Vague mentions of description/phasing without "write" or "read"
-
-    When in doubt, choose conversation over directive.
-
-    Respond with valid JSON:
+    JSON response format:
     {
         "intent": "directive|conversation",
         "action": {
             "action": "action_name",
-            "content": "optional content",
+            "content": "user message or edit content",
             "phaseNumber": optional_number,
-            "query": "optional search query"
+            "query": "search query if applicable"
         },
-        "reasoning": "brief explanation"
+        "reasoning": "brief reason"
     }
 
-    For conversation intent, use:
-    {
-        "intent": "conversation",
-        "action": {
-            "action": "conversation",
-            "content": "the user's message"
-        },
-        "reasoning": "why this is conversation"
-    }
-
-    For search commands, use:
-    {
-        "intent": "directive",
-        "action": {
-            "action": "search",
-            "query": "the search query extracted from user's request"
-        },
-        "reasoning": "user requested a search"
-    }
-
-    For unclear/ambiguous commands, use:
-    {
-        "intent": "conversation",
-        "action": {
-            "action": "conversation",
-            "content": "the user's message"
-        },
-        "reasoning": "unclear command, treating as conversation"
-    }
-
-    IMPORTANT: Never use "clarify" or "clarification" as an action - always route unclear requests as conversation.
+    For conversation, always include content field with user's message.
+    Never use "clarify" action. Route unclear as conversation.
     """
 
     init(groqApiKey: String) {

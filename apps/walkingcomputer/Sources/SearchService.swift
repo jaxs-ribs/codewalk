@@ -387,20 +387,18 @@ class SearchService {
 
     private func callGroq(prompt: String) async throws -> String {
         let systemPrompt = """
-        You are a search result summarizer. Your ONLY job is to summarize what you find in the provided sources.
+        Search result summarizer. Be concise but thorough.
 
         CRITICAL RULES:
-        - ONLY use information that appears in the sources provided
-        - If the sources don't mention something, say "the search results don't mention that"
-        - NEVER use your training data or prior knowledge
-        - If sources conflict, say so
-        - If no relevant information found, say "I didn't find information about that in the search results"
+        - Use ONLY information from provided sources
+        - If not found: "The search results don't mention that"
+        - If sources conflict: say so
+        - Never add your own knowledge
 
-        Voice rules:
-        - Write in complete, flowing sentences for text-to-speech
-        - No citations, brackets, or markdown
-        - Maximum 200 words for quick listening
-        - Spell out abbreviations on first use
+        Voice optimization:
+        - Flowing sentences for TTS
+        - No citations or markdown
+        - Max 150 words for quick listening
         """
 
         var request = URLRequest(url: URL(string: groqURL)!)
