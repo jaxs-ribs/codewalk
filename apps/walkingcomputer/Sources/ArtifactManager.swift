@@ -8,10 +8,9 @@ class ArtifactManager {
     private let fileManager = FileManager.default
 
     init() {
-        // Use the project directory for artifacts (accessible from host)
-        // This allows artifacts to be visible in the repo, not hidden in simulator
-        let projectPath = "/Users/fresh/Documents/codewalk/apps/walkingcomputer"
-        artifactsPath = URL(fileURLWithPath: projectPath).appendingPathComponent("artifacts")
+        // Resolve host-accessible project path
+        let projectRoot = ArtifactManager.resolveProjectRoot()
+        artifactsPath = projectRoot.appendingPathComponent("artifacts")
         backupsPath = artifactsPath.appendingPathComponent("backups")
 
         // Create directories
@@ -20,6 +19,56 @@ class ArtifactManager {
         log("Initialized", category: .artifacts, component: "ArtifactManager")
         log("Artifacts: \(artifactsPath.path)", category: .artifacts, component: "ArtifactManager")
         log("Backups: \(backupsPath.path)", category: .artifacts, component: "ArtifactManager")
+    }
+
+    private static func resolveProjectRoot() -> URL {
+        let fileManager = FileManager.default
+        let env = ProcessInfo.processInfo.environment
+
+        // Explicit override via environment variable
+        if let overridePath = env["WALKINGCOMPUTER_ARTIFACTS_PATH"], !overridePath.isEmpty {
+            let url = URL(fileURLWithPath: overridePath, isDirectory: true)
+            log("Using artifacts override path", category: .artifacts, component: "ArtifactManager")
+            return url
+        }
+
+        // Prefer Xcode PROJECT_DIR or SRCROOT when available (e.g., during builds)
+        if let projectDir = env["PROJECT_DIR"], !projectDir.isEmpty {
+            let url = URL(fileURLWithPath: projectDir, isDirectory: true)
+            if fileManager.fileExists(atPath: url.path) {
+                return url
+            }
+        }
+
+        if let srcRoot = env["SRCROOT"], !srcRoot.isEmpty {
+            let url = URL(fileURLWithPath: srcRoot, isDirectory: true)
+            if fileManager.fileExists(atPath: url.path) {
+                return url
+            }
+        }
+
+        // Simulator host home gives us the host user's directory
+        if let hostHome = env["SIMULATOR_HOST_HOME"], !hostHome.isEmpty {
+            let candidate = URL(fileURLWithPath: hostHome, isDirectory: true)
+                .appendingPathComponent("Documents")
+                .appendingPathComponent("codewalk")
+                .appendingPathComponent("apps")
+                .appendingPathComponent("walkingcomputer")
+            if fileManager.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+        }
+
+        // Fallback to previous hardcoded path for backwards compatibility
+        let legacyPath = URL(fileURLWithPath: "/Users/fresh/Documents/codewalk/apps/walkingcomputer", isDirectory: true)
+        if fileManager.fileExists(atPath: legacyPath.path) {
+            return legacyPath
+        }
+
+        // Final fallback to the application's documents directory to avoid failing
+        let documents = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        logError("Falling back to app documents directory for artifacts", component: "ArtifactManager")
+        return documents
     }
 
     private func createDirectories() {

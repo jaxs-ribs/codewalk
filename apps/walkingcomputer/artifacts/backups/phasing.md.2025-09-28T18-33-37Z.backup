@@ -1,0 +1,16 @@
+# Project Phasing
+
+## Phase 1: Core Grid and Snake
+So first we'll create the basic game board with a 20x20 grid using HTML5 Canvas, setting up the coordinate system where each cell is 20 pixels. We'll implement the snake as an array of coordinate objects starting with 3 segments in the center, and get the basic game loop running at 10 frames per second using requestAnimationFrame. The snake will initially just sit there, but we'll have the movement system ready with velocity variables that we can hook up next. When this phase is done, you'll be able to open the page and see a green snake (3 squares) sitting on a black background grid.
+
+## Phase 2: Movement and Controls
+Then we'll wire up the arrow keys to change the snake's direction, making sure it can't immediately reverse into itself. The snake will move continuously in the current direction, wrapping around when it hits the edges of the grid. We'll use a simple setInterval to control the speed, starting at 150ms between moves, and store the direction as dx/dy values. The snake's body will follow the head properly, creating that classic undulating movement. Once complete, you can test by using arrow keys to move the snake around and watch it glide smoothly across the screen.
+
+## Phase 3: Food System and Growth
+Next we'll add red food pellets that appear at random positions, making sure they never spawn on the snake itself. When the snake's head hits food, we'll increase the score by 10 points, grow the snake by adding a segment at the tail, and spawn new food. We'll keep the score display in the corner using a simple DOM element that updates in real-time, and add a slight speed increase every 5 food items to make it progressively challenging. By the end, you'll be able to eat food and watch your snake get longer while the score climbs.
+
+## Phase 4: Game States and Collision
+After that we'll implement proper collision detection - game over when the snake hits itself, and add the ability to pause with the spacebar. We'll create start and game over screens with simple text overlays, track high scores in localStorage so it persists between sessions, and add a restart button that appears when you die. The game will have three states: 'waiting to start', 'playing', and 'game over', with proper transitions between them. When finished, you'll be able to die by hitting yourself, see your high score saved, and restart with a single click.
+
+## Phase 5: Polish and Mobile Support
+Finally we'll add touch controls for mobile - swipe to change direction, make the canvas responsive so it scales properly on phones, and add sound effects using the Web Audio API for eating and game over. We'll throw in some particle effects when food is eaten, add difficulty levels (Easy/Medium/Hard) that adjust speed, and create a simple settings panel to toggle sounds or change speed. The whole thing will be wrapped up as a single HTML file that works offline and feels smooth on any device. When this phase is done, you'll be able to play on your phone with swipe controls and hear satisfying chomps when eating food.

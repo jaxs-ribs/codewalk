@@ -193,9 +193,19 @@ class AgentViewModel: ObservableObject {
     private func routeTranscript(_ transcript: String) async {
         log("Routing user intent...", category: .router)
 
-        // ALWAYS add to conversation history first
+        var routerContext = RouterContext.empty
+
+        // Capture recent context, then record the new transcript
         await MainActor.run {
-            self.orchestrator?.addUserTranscript(transcript)
+            if let orchestrator = self.orchestrator {
+                let recentMessages = orchestrator.recentConversationContext(limit: 6)
+                let lastSearchQuery = orchestrator.currentSearchQuery()
+                orchestrator.addUserTranscript(transcript)
+                routerContext = RouterContext(
+                    recentMessages: recentMessages,
+                    lastSearchQuery: lastSearchQuery
+                )
+            }
         }
 
         do {
@@ -208,7 +218,8 @@ class AgentViewModel: ObservableObject {
                 return
             }
 
-            let response = try await router.route(transcript: transcript)
+            let normalizedTranscript = normalizeTranscriptForRouting(transcript)
+            let response = try await router.route(transcript: normalizedTranscript, context: routerContext)
 
             await MainActor.run {
                 // Handle the routed action through orchestrator
@@ -247,5 +258,19 @@ class AgentViewModel: ObservableObject {
 
         // Return to idle state (orchestrator updates will come via subscription)
         currentState = .idle
+    }
+}
+
+extension AgentViewModel {
+    private func normalizeTranscriptForRouting(_ transcript: String) -> String {
+        var output = transcript
+
+        output = output.replacingOccurrences(
+            of: "(?i)readme\\s+(phase\\b)",
+            with: "read me $1",
+            options: .regularExpression
+        )
+
+        return output
     }
 }

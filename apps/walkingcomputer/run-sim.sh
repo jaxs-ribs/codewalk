@@ -131,7 +131,8 @@ else
 fi
 
 # Launch with combined arguments
-xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" $LAUNCH_ARGS 2>&1 | tee "$LOG_FILE" &
+xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" $LAUNCH_ARGS 2>&1 | \
+tee >(perl -pe 's/\e\[[0-9;]*[A-Za-z]//g' > "$LOG_FILE") &
 LOG_PID=$!
 
 echo ""

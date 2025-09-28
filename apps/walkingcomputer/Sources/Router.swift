@@ -12,6 +12,7 @@ enum Intent: String, Codable {
 enum ProposedAction: Codable {
     case writeDescription
     case writePhasing
+    case writeBoth
     case readDescription
     case readPhasing
     case readSpecificPhase(Int)
@@ -44,6 +45,8 @@ enum ProposedAction: Codable {
             self = .writeDescription
         case "write_phasing":
             self = .writePhasing
+        case "write_both":
+            self = .writeBoth
         case "read_description":
             self = .readDescription
         case "read_phasing":
@@ -96,6 +99,8 @@ enum ProposedAction: Codable {
             try container.encode("write_description", forKey: .action)
         case .writePhasing:
             try container.encode("write_phasing", forKey: .action)
+        case .writeBoth:
+            try container.encode("write_both", forKey: .action)
         case .readDescription:
             try container.encode("read_description", forKey: .action)
         case .readPhasing:
@@ -142,6 +147,13 @@ struct RouterResponse: Codable {
     let reasoning: String?
 }
 
+struct RouterContext {
+    let recentMessages: [String]
+    let lastSearchQuery: String?
+
+    static let empty = RouterContext(recentMessages: [], lastSearchQuery: nil)
+}
+
 // MARK: - Router
 
 class Router {
@@ -160,6 +172,7 @@ class Router {
     - "write the description" or "write description" -> write_description
     - "write me a description" or "can you write a description" -> write_description
     - "write the phasing" or "write phasing" -> write_phasing
+    - "write the description and phasing" or "write both description and phasing" -> write_both
     - "read the description" or "read description" -> read_description
     - "read it" or "can you read it" or "yes read it" (after writing) -> read_description
     - "read the phasing" or "read phasing" -> read_phasing
@@ -247,13 +260,15 @@ class Router {
         self.groqApiKey = groqApiKey
     }
 
-    func route(transcript: String) async throws -> RouterResponse {
+    func route(transcript: String, context: RouterContext) async throws -> RouterResponse {
         log("Analyzing user intent...", category: .router)
 
         // Truncate very long transcripts to prevent token limit errors
         let truncatedTranscript = transcript.count > 1500
             ? String(transcript.prefix(1500)) + "..."
             : transcript
+
+        let userContent = buildContextPrompt(transcript: truncatedTranscript, context: context)
 
         // Create request
         var request = URLRequest(url: URL(string: apiURL)!)
@@ -266,7 +281,7 @@ class Router {
             "model": "moonshotai/kimi-k2-instruct-0905",  // Using Kimi K2
             "messages": [
                 ["role": "system", "content": systemPrompt],
-                ["role": "user", "content": truncatedTranscript]
+                ["role": "user", "content": userContent]
             ],
             "temperature": 0.1,
             "max_tokens": 400,  // Increased from 200 to handle longer responses
@@ -305,5 +320,22 @@ class Router {
         log("Intent: \(routerResponse.intent), Action: \(routerResponse.action)", category: .router)
 
         return routerResponse
+    }
+
+    private func buildContextPrompt(transcript: String, context: RouterContext) -> String {
+        var sections: [String] = []
+
+        if !context.recentMessages.isEmpty {
+            let history = context.recentMessages.joined(separator: "\n")
+            sections.append("Recent conversation (newest last):\n\(history)")
+        }
+
+        if let query = context.lastSearchQuery, !query.isEmpty {
+            sections.append("Last search query: \(query)")
+        }
+
+        sections.append("Current user input: \(transcript)")
+
+        return sections.joined(separator: "\n\n")
     }
 }

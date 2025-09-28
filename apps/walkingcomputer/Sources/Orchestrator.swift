@@ -44,6 +44,7 @@ class Orchestrator: ObservableObject {
     private let ttsProvider: TTSProvider
     private var searchService: SearchService?  // For Phase 1 testing
     private var searchSoundTimer: Timer?  // Timer for search feedback sounds
+    private var lastSearchQuery: String?
 
     init(config: EnvConfig) {
         // Initialize artifact manager
@@ -153,6 +154,8 @@ class Orchestrator: ObservableObject {
             await writeDescription()
         case .writePhasing:
             await writePhasing()
+        case .writeBoth:
+            await writeDescriptionAndPhasing()
         case .readDescription:
             await readDescription()
         case .readPhasing:
@@ -195,6 +198,7 @@ class Orchestrator: ObservableObject {
         }
 
         log("Executing search for: '\(query)'", category: .search, component: "Orchestrator")
+        lastSearchQuery = query
         lastResponse = "Searching for \(query)..."
 
         // Start search with tick sounds
@@ -310,6 +314,12 @@ class Orchestrator: ObservableObject {
         }
     }
 
+    private func writeDescriptionAndPhasing() async {
+        await writeDescription()
+        await writePhasing()
+        lastResponse = "Description and phasing written."
+    }
+
     private func readDescription() async {
         if let content = artifactManager.safeRead(filename: "description.md") {
             // Log first 100 chars for display
@@ -354,7 +364,7 @@ class Orchestrator: ObservableObject {
 
     private func readSpecificPhase(_ phaseNumber: Int) async {
         if let phaseContent = artifactManager.readPhase(from: "phasing.md", phaseNumber: phaseNumber) {
-            lastResponse = "Reading phase \(phaseNumber)..."
+            lastResponse = phaseContent
             print("[Orchestrator] Read phase \(phaseNumber) (\(phaseContent.count) chars)")
 
             // Speak the phase content using TTS
@@ -432,26 +442,21 @@ class Orchestrator: ObservableObject {
 
     private func handleConversation(_ content: String) async {
         state = .conversing
+        defer { state = .idle }
 
-        // Check if user wants to re-run a previous search
-        let lowerContent = content.lowercased()
-        if (lowerContent.contains("search") || lowerContent.contains("look") || lowerContent.contains("find")) &&
-           (lowerContent.contains("again") || lowerContent.contains("fresh") || lowerContent.contains("new") || lowerContent.contains("live")) {
+        let trimmedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowerContent = trimmedContent.lowercased()
 
-            // Find the last search query from conversation history
-            var lastSearchQuery: String? = nil
-            for (role, message) in conversationHistory.reversed() {
-                if role == "user" && message.hasPrefix("Search for:") {
-                    lastSearchQuery = String(message.dropFirst("Search for:".count)).trimmingCharacters(in: .whitespaces)
-                    break
-                }
-            }
+        if let explicitQuery = extractSearchQuery(from: trimmedContent) {
+            print("[Orchestrator] Detected inline search request: '\(explicitQuery)'")
+            await executeSearch(query: explicitQuery)
+            return
+        }
 
-            if let query = lastSearchQuery {
-                print("[Orchestrator] Detected request to re-search: '\(query)'")
-                await executeSearch(query: query)
-                return
-            }
+        if shouldReuseLastSearch(for: lowerContent), let query = lastSearchQuery?.trimmingCharacters(in: .whitespacesAndNewlines), !query.isEmpty {
+            print("[Orchestrator] Re-running last search for conversation follow-up: '\(query)'")
+            await executeSearch(query: query)
+            return
         }
 
         do {
@@ -474,8 +479,58 @@ class Orchestrator: ObservableObject {
             // Speak the error
             await speak(self.lastResponse)
         }
+    }
 
-        state = .idle
+    private func extractSearchQuery(from content: String) -> String? {
+        let patterns = [
+            "search for",
+            "look up",
+            "find information about",
+            "find info about",
+            "find details about",
+            "search the web for",
+            "search the internet for",
+            "can you search for",
+            "please search for",
+            "do a search for",
+            "run a search for",
+            "find out about"
+        ]
+
+        for pattern in patterns {
+            if let range = content.range(of: pattern, options: [.caseInsensitive, .diacriticInsensitive]) {
+                let queryStart = range.upperBound
+                let rawQuery = content[queryStart...]
+                let trimmedQuery = rawQuery
+                    .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "\"'.,:;-"))
+
+                if !trimmedQuery.isEmpty {
+                    let lowerQuery = trimmedQuery.lowercased()
+                    if !lowerQuery.hasPrefix("that") &&
+                        !lowerQuery.hasPrefix("it") &&
+                        !lowerQuery.hasPrefix("them") &&
+                        !lowerQuery.hasPrefix("this") {
+                        return trimmedQuery
+                    }
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func shouldReuseLastSearch(for lowerContent: String) -> Bool {
+        guard lastSearchQuery != nil else { return false }
+
+        let searchVerbs = ["search", "look", "find"]
+        let pronouns = ["that", "it", "them", "this", "previous", "same"]
+
+        let containsVerb = searchVerbs.contains { lowerContent.contains($0) }
+        let containsPronoun = pronouns.contains { lowerContent.contains($0) }
+        let containsRetry = lowerContent.contains("again") || lowerContent.contains("another") || lowerContent.contains("fresh") || lowerContent.contains("new") || lowerContent.contains("live")
+
+        return containsVerb && (containsPronoun || containsRetry)
     }
 
     // MARK: - Error Handling
@@ -577,6 +632,17 @@ class Orchestrator: ObservableObject {
 
     func addAssistantResponse(_ response: String) {
         conversationHistory.append((role: "assistant", content: response))
+    }
+
+    func recentConversationContext(limit: Int = 6) -> [String] {
+        let slice = conversationHistory.suffix(limit)
+        return slice.map { entry in
+            "\(entry.role.capitalized): \(entry.content)"
+        }
+    }
+
+    func currentSearchQuery() -> String? {
+        lastSearchQuery
     }
 
     // MARK: - Clipboard Operations

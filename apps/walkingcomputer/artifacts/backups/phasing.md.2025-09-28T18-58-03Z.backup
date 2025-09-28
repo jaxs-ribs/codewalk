@@ -1,0 +1,13 @@
+# Project Phasing
+
+## Phase 1: Core UI Foundation
+So first we'll get the basic swipe interface working with a clean card-based design. We'll build the main view controller with a stack of dog profile cards that users can swipe left or right on, using UIPanGestureRecognizer for smooth dragging animations. Each card will show a dog photo that fills the card, the dog's name and age at the bottom, plus a short bio that appears on tap. We'll implement the spring animations when cards get swiped away, making them rotate slightly based on swipe direction. When this phase is done, you'll be able to swipe through three test dog cards and see them fly off screen with realistic physics.
+
+## Phase 2: Match Logic & Profiles
+Then we'll wire up the matching system where swiping right creates a match when the other user also swipes right. We'll build a simple data model with Dog structs containing name, age, photos array, bio, and owner info. The app will store likes in UserDefaults for now, and we'll create a matches view controller that shows a grid of successful matches. We'll add a detail view that opens when you tap a match, showing the dog's full profile with multiple photos in a scroll view plus the owner's contact info. Once complete, you can test by swiping right on a dog, then checking the matches tab to see if it appears there.
+
+## Phase 3: Photo Management
+After that we'll make the photo system more robust by letting users add multiple photos when creating dog profiles. We'll integrate UIImagePickerController so users can select photos from their library, add a simple photo cropper to make them fit the cards properly, and implement local storage using FileManager to save the images. We'll create an edit profile screen where owners can reorder photos by dragging them around, set a primary photo that shows first on the card, and delete photos they don't want anymore. When this phase is done, you'll be able to create a new dog profile with five photos and see them display properly in both card and detail views.
+
+## Phase 4: Messaging Between Owners
+Finally we'll add the messaging feature so matched owners can chat about playdates. We'll build a conversation list that shows all active matches with recent messages, create a chat interface similar to iMessage with speech bubbles, and implement real-time updates using CloudKit so messages sync across devices. We'll add photo sharing in chats so owners can send pictures of their dogs, include typing indicators and message timestamps, plus a simple way to block or report inappropriate users. When this phase wraps up, you'll be able to open a match, send a text message, receive a reply, and see both messages in the conversation thread.

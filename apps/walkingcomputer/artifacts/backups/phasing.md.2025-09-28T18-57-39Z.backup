@@ -1,0 +1,13 @@
+# Project Phasing
+
+## Phase 1: Basic UI Setup
+So first we'll get the basic iOS app running with a simple swipe interface. We'll use SwiftUI to create a card-based view where dog profiles appear one at a time, and you can swipe left to pass or right to like. We'll start with hardcoded dog data - maybe 5-10 dogs with names, photos, and basic info like breed and age. The cards will animate as you swipe, and we'll need a basic navigation bar at the top. When this phase is done, you'll be able to open the app and swipe through dog cards with smooth animations.
+
+## Phase 2: Match Logic
+Then we'll add the matching system where two dogs both need to like each other to create a match. We'll store the swipe decisions locally and when there's a mutual like, we'll show a simple "It's a match!" popup. The matches will be saved in UserDefaults for now, and we'll create a basic matches list view where you can see all your dog's matches. When this phase is done, you'll be able to like a dog and immediately see if they liked you back, plus view all your matches in a list.
+
+## Phase 3: Dog Profiles
+Next we'll make the dog profiles more detailed with multiple photos, a bio section, and owner contact info. Each dog will have up to 3 photos you can swipe through, plus fields for personality traits and what kind of play they're looking for. We'll also add a basic dog creation screen where you can add your own dog to the app. When this phase is done, you'll be able to tap on any dog card to see their full profile with multiple photos, and add your own dog with photos and description.
+
+## Phase 4: Basic Messaging
+After that we'll add a simple messaging feature so matched dogs' owners can chat. We'll create a basic chat interface with text messages only - no photos or fancy features yet. The messages will be stored locally, so both people need the app open to see new messages. We'll also add push notifications when you get a new match or message. When this phase is done, you'll be able to open a chat with any of your matches and send text messages back and forth.

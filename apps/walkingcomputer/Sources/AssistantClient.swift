@@ -93,21 +93,22 @@ class AssistantClient {
         - Each phase has a short, clear title (3-5 words max)
         - Each phase has ONE DETAILED paragraph (200-400 chars) explaining exactly what we'll do
         - Include specific technical details, libraries, approaches discussed
-        - CRITICAL: Each phase MUST end with a clear, testable deliverable
-        - Example: "When this phase is done, you'll be able to tap record and see the waveform animate"
-        - The deliverable should be something the user can actually verify works
+        - CRITICAL: Each phase MUST explicitly include a "Definition of Done" line with a concrete test plus expected outcome
+        - The definition of done should tell the user exactly what to do to verify and what success looks like
         - This is THE implementation roadmap - be thorough and specific
 
         Format:
         # Project Phasing
 
         ## Phase 1: [Short Clear Title]
-        [One flowing paragraph starting with "So" or "First" that explains this phase naturally. MUST end with: "When this phase is done, you'll be able to [specific testable action]"]
+        [One flowing paragraph starting with "So" or "First" that explains this phase naturally.]
+        **Definition of Done:** [One sentence that tells the user exactly how to test this phase and what result they should expect.]
 
         ## Phase 2: [Short Clear Title]
-        [One flowing paragraph starting with "Then" or "Next" that explains this phase naturally. MUST end with: "Once complete, you can test by [specific verification step]"]
+        [One flowing paragraph starting with "Then" or "Next" that explains this phase naturally.]
+        **Definition of Done:** [One sentence that tells the user exactly how to test this phase and what result they should expect.]
 
-        (Continue as needed - EVERY phase needs a testable deliverable)
+        (Continue as needed - EVERY phase needs a Definition of Done line.)
         """
 
         let messages = buildMessages(systemPrompt: systemPrompt,
