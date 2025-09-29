@@ -11,6 +11,19 @@ enum OrchestratorState {
     case executing
 }
 
+// MARK: - Deep Search State
+
+struct DeepSearchState {
+    var allQueries: Set<String> = []  // All queries tried (for dedup)
+    var failedQueries: Set<String> = []  // Queries that failed (don't retry)
+    var successfulQueries: Set<String> = []  // Queries that returned results
+    var evidenceBySubquestion: [String: [Any]] = [:]  // Evidence per subq (using Any to avoid cross-module dependency)
+    var confidence: Double = 0.0  // Overall confidence
+    var iterations: Int = 0
+    let maxIterations: Int = 5  // More realistic than 2
+    var lastConfidenceGain: Double = 0.0  // Track improvement
+}
+
 // MARK: - TTS Provider
 
 enum TTSProvider {
@@ -45,6 +58,9 @@ class Orchestrator: ObservableObject {
     private var searchService: SearchService?  // For Phase 1 testing
     private var searchSoundTimer: Timer?  // Timer for search feedback sounds
     private var lastSearchQuery: String?
+    private var deepSearchPlanner: DeepSearchPlanner?  // For deep search
+    private var deepSearchExecutor: DeepSearchExecutor?  // For deep search execution
+    private var deepSearchEvaluator: DeepSearchEvaluator?  // For deep search evaluation
 
     init(config: EnvConfig) {
         // Initialize artifact manager
@@ -81,6 +97,22 @@ class Orchestrator: ObservableObject {
             searchService = SearchService(config: config)
             log("SearchService initialized", category: .system, component: "Orchestrator")
         }
+
+        // Initialize DeepSearchPlanner for deep search (thinking model)
+        let plannerModel = ProcessInfo.processInfo.environment["DEEP_SEARCH_PLANNER_MODEL"] ?? "openai/gpt-oss-120b"
+        deepSearchPlanner = DeepSearchPlanner(groqApiKey: config.groqApiKey, modelId: plannerModel)
+        log("DeepSearchPlanner initialized with model: \(plannerModel)", category: .system, component: "Orchestrator")
+
+        // Initialize DeepSearchExecutor if Brave API key is available
+        if !config.braveApiKey.isEmpty {
+            deepSearchExecutor = DeepSearchExecutor(braveApiKey: config.braveApiKey)
+            log("DeepSearchExecutor initialized", category: .system, component: "Orchestrator")
+        }
+
+        // Initialize DeepSearchEvaluator for deep search (instruction-following model)
+        let evaluatorModel = ProcessInfo.processInfo.environment["DEEP_SEARCH_EVALUATOR_MODEL"] ?? "moonshotai/kimi-k2-instruct-0905"
+        deepSearchEvaluator = DeepSearchEvaluator(groqApiKey: config.groqApiKey, modelId: evaluatorModel)
+        log("DeepSearchEvaluator initialized with model: \(evaluatorModel)", category: .system, component: "Orchestrator")
     }
 
     // MARK: - Phase 1 Test Method
@@ -185,6 +217,8 @@ class Orchestrator: ObservableObject {
             await copyBothAction()
         case .search(let query):
             await executeSearch(query: query)
+        case .deepSearch(let query):
+            await executeDeepSearch(query: query)
         }
     }
 
@@ -251,6 +285,217 @@ class Orchestrator: ObservableObject {
         if copyBothToClipboard() {
             await speak(lastResponse)
         } else {
+            await speak(lastResponse)
+        }
+    }
+
+    // MARK: - Deep Search Execution
+
+    private func executeDeepSearch(query: String) async {
+        log("[DEEP_SEARCH] Deep search requested for: '\(query)'", category: .search, component: "Orchestrator")
+
+        guard let planner = deepSearchPlanner,
+              let executor = deepSearchExecutor,
+              let evaluator = deepSearchEvaluator else {
+            lastResponse = "Deep search components not available"
+            log("[DEEP_SEARCH] Missing components", category: .search, component: "Orchestrator")
+            await speak(lastResponse)
+            return
+        }
+
+        lastSearchQuery = query
+
+        // Initialize search state
+        var searchState = DeepSearchState()
+        var allEvidence: [SearchEvidence] = []
+
+        do {
+            // Build conversation context (last few messages)
+            let context = conversationHistory.suffix(5).map { "\($0.role): \($0.content)" }
+
+            log("[DEEP_SEARCH] Generating initial search plan...", category: .search, component: "Orchestrator")
+            await speak("Planning deep search...")
+
+            var plan = try await planner.generatePlan(goal: query, context: context)
+
+            // Log the plan details
+            let totalQueries = plan.subqs.flatMap { $0.queries }.count
+            log("[DEEP_SEARCH] Plan generated: \(plan.subqs.count) subquestions, \(totalQueries) total queries", category: .search, component: "Orchestrator")
+
+            // MAIN LOOP - Execute search iterations
+            while searchState.iterations < searchState.maxIterations {
+                searchState.iterations += 1
+                log("[DEEP_SEARCH] Starting iteration \(searchState.iterations)/\(searchState.maxIterations)", category: .search, component: "Orchestrator")
+
+                // Deduplicate queries before executing
+                let allPlanQueries = plan.subqs.flatMap { $0.queries }
+                let newQueries = allPlanQueries.filter { !searchState.allQueries.contains($0) }
+
+                if newQueries.isEmpty {
+                    log("[DEEP_SEARCH] No new queries to execute, all have been tried", category: .search, component: "Orchestrator")
+                    break
+                }
+
+                log("[DEEP_SEARCH] Executing \(newQueries.count) new queries (skipping \(allPlanQueries.count - newQueries.count) duplicates)", category: .search, component: "Orchestrator")
+
+                // Add new queries to tracking
+                searchState.allQueries.formUnion(newQueries)
+
+                await speak("Searching across \(newQueries.count) queries...")
+
+                let evidence = try await executor.executeSearchPlan(plan)
+
+                // Merge evidence (for iterations > 1, this adds to existing evidence)
+                if searchState.iterations == 1 {
+                    allEvidence = evidence
+                } else {
+                    // Merge new evidence with existing
+                    for (index, item) in evidence.enumerated() {
+                        if index < allEvidence.count {
+                            // Append new snippets to existing subquestion
+                            let merged = SearchEvidence(
+                                subquestion: allEvidence[index].subquestion,
+                                snippets: allEvidence[index].snippets + item.snippets
+                            )
+                            allEvidence[index] = merged
+                        } else {
+                            // New subquestion
+                            allEvidence.append(item)
+                        }
+                    }
+                }
+
+                // Log execution results
+                let totalSnippets = allEvidence.reduce(0) { $0 + $1.snippets.count }
+                log("[DEEP_SEARCH] Total evidence after iteration \(searchState.iterations): \(totalSnippets) snippets", category: .search, component: "Orchestrator")
+
+                // Evaluate evidence
+                await speak("Evaluating evidence...")
+                let evaluation = try await evaluator.evaluateEvidence(plan: plan, evidence: allEvidence)
+
+                // Track confidence improvement
+                let previousConfidence = searchState.confidence
+                searchState.confidence = evaluation.confidence
+                searchState.lastConfidenceGain = searchState.confidence - previousConfidence
+
+                log("[DEEP_SEARCH] Confidence: \(String(format: "%.2f", searchState.confidence)) (gained: \(String(format: "%.2f", searchState.lastConfidenceGain)))", category: .search, component: "Orchestrator")
+
+                if evaluation.verdict == "answer" || evaluation.verdict == "stop" {
+                    // We have enough evidence, provide the answer
+                    if let answer = evaluation.answer {
+                        lastResponse = answer
+                        log("[DEEP_SEARCH] Final answer provided: \(answer.count) chars", category: .search, component: "Orchestrator")
+                        log("[DEEP_SEARCH] Complete in \(searchState.iterations) iteration(s)", category: .search, component: "Orchestrator")
+                    } else {
+                        lastResponse = "I gathered evidence but couldn't formulate a clear answer. Please try rephrasing your question."
+                        log("[DEEP_SEARCH] Stop verdict but no answer provided", category: .search, component: "Orchestrator")
+                    }
+                    await speak(lastResponse)
+                    return  // Exit loop
+                } else if evaluation.verdict == "explore" || evaluation.verdict == "deepen" {
+                    // Need more information
+                    log("[DEEP_SEARCH] Explore verdict - need \(evaluation.next_queries?.count ?? 0) refinements", category: .search, component: "Orchestrator")
+
+                    // Check if we should stop based on diminishing returns
+                    if searchState.iterations > 2 && searchState.lastConfidenceGain < 0.05 {
+                        log("[DEEP_SEARCH] Diminishing returns detected, stopping", category: .search, component: "Orchestrator")
+                        lastResponse = evaluation.answer ?? "I've gathered what I can. The information is limited but here's what I found."
+                        await speak(lastResponse)
+                        return
+                    }
+
+                    if searchState.iterations >= searchState.maxIterations {
+                        // Hit max iterations - provide best answer we can
+                        lastResponse = "After searching extensively, here's what I found: "
+                        if let answer = evaluation.answer, !answer.isEmpty {
+                            lastResponse = answer
+                        } else {
+                            lastResponse += "The evidence is incomplete. "
+                            if let nextQueries = evaluation.next_queries, !nextQueries.isEmpty {
+                                lastResponse += "More specific searches would be needed for: "
+                                lastResponse += nextQueries.map { $0.subq_id }.joined(separator: ", ")
+                            }
+                        }
+                        log("[DEEP_SEARCH] Max iterations reached", category: .search, component: "Orchestrator")
+                        await speak(lastResponse)
+                        return
+                    }
+
+                    // Prepare for next iteration - update plan with next_queries
+                    if let nextQueries = evaluation.next_queries, !nextQueries.isEmpty {
+                        await speak("Refining search...")
+
+                        // Group queries by subquestion
+                        var queriesBySubq: [String: [String]] = [:]
+                        for query in nextQueries {
+                            queriesBySubq[query.subq_id, default: []].append(query.query)
+                        }
+
+                        // Convert to new subquestions
+                        let newSubqs = queriesBySubq.map { (subqId, queries) in
+                            SearchSubQuestion(
+                                q: subqId,
+                                why: "Targeted refinement",
+                                queries: queries,
+                                domains: nil,
+                                freshness_days: nil
+                            )
+                        }
+
+                        // Update plan with refinements only (incremental search)
+                        plan = SearchPlan(goal: plan.goal, subqs: newSubqs)
+                        log("[DEEP_SEARCH] Updated plan with \(nextQueries.count) new queries across \(newSubqs.count) areas", category: .search, component: "Orchestrator")
+                    } else {
+                        // No refinements but verdict was deepen - shouldn't happen but handle gracefully
+                        lastResponse = "I need more information but couldn't determine what to search for next."
+                        log("[DEEP_SEARCH] Deepen verdict with no refinements", category: .search, component: "Orchestrator")
+                        await speak(lastResponse)
+                        return
+                    }
+                } else if evaluation.verdict == "insufficient" {
+                    // Evidence is limited but provide best answer we can
+                    log("[DEEP_SEARCH] Evidence insufficient but providing best available answer", category: .search, component: "Orchestrator")
+
+                    // Always provide the best answer we can, even with limited evidence
+                    if let answer = evaluation.answer, !answer.isEmpty {
+                        lastResponse = answer
+                    } else {
+                        // Construct an answer from whatever evidence we have
+                        lastResponse = "Based on the limited information found: "
+                        var hasAnyInfo = false
+                        for subEvidence in evidence {
+                            if !subEvidence.snippets.isEmpty {
+                                hasAnyInfo = true
+                                let topSnippet = subEvidence.snippets.first?.text ?? ""
+                                if !topSnippet.isEmpty {
+                                    lastResponse += String(topSnippet.prefix(200)) + "... "
+                                    break
+                                }
+                            }
+                        }
+                        if !hasAnyInfo {
+                            lastResponse = "The search found very limited results. Based on what was available, the topic appears to be related to your query but specific details weren't found in the sources checked."
+                        }
+                    }
+
+                    await speak(lastResponse)
+                    return
+                } else {
+                    // Unknown verdict
+                    log("[DEEP_SEARCH] Unknown verdict: \(evaluation.verdict)", category: .search, component: "Orchestrator")
+                    lastResponse = evaluation.answer ?? "I encountered an issue processing the search results."
+                    await speak(lastResponse)
+                    return
+                }
+            }
+
+            // Should not reach here, but handle gracefully
+            lastResponse = "Search completed but unable to provide a definitive answer."
+            await speak(lastResponse)
+
+        } catch {
+            lastResponse = "Failed to generate search plan: \(error.localizedDescription)"
+            logError("[DEEP_SEARCH] Plan generation failed: \(error)", component: "Orchestrator")
             await speak(lastResponse)
         }
     }
