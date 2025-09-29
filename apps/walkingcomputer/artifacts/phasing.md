@@ -1,13 +1,21 @@
 # Project Phasing
 
-## Phase 1: Core Tensor Ops
-So first we'll build a pure-Python tensor class that wraps a simple NumPy array and tracks shape/dtype. Then we'll add basic element-wise ops (add, mul, relu) and their backward stubs so autograd has hooks to grab later. We'll keep every op CPU-only for now so we can test the whole forward-backward cycle without WebGPU complexity. **Definition of Done:** pytest shows `Tensor([[1,2],[3,4]]) + Tensor.ones(2,2)` equals `[[2,3],[4,5]]` and `.backward()` populates `.grad` on leaf tensors.
+## Phase 1: Scalar Autograd Core
+So first we'll build a single Scalar type that holds f32 value, gradient, and a compute graph node. Then we'll wire in backward passes for add, mul, and pow so gradients flow automatically. After that we'll add shape-aware broadcasting so mismatched dimensions still align during ops.
 
-## Phase 2: WebGPU Kernels
-Next we'll write minimal WGSL shaders for the same element-wise ops (add, mul, relu) plus a naïve row-major matmul. We'll create a tiny WebGPU harness in Python that queues these shaders, copies buffers, and returns results as new Tensors, but we'll still fall back to NumPy if WebGPU is unavailable so CI keeps running. **Definition of Done:** `tensor.wgpu_add(other)` produces the same numeric result as the CPU version while `wgpu_matmul(A,B)` passes a 64×64 golden-test within 1e-3 tolerance.
+**Definition of Done:** Two 3×1 and 1×4 tensors multiply to produce 3×4 result with correct gradients on every scalar.
 
-## Phase 3: Autograd Engine
-After that we'll wire up a tape-based autograd that records every op (CPU or WebGPU) and automatically chains gradients through arbitrary graphs. We'll register backward kernels for each WGSL shader so GPU tensors propagate grads without ever leaving the GPU, then expose a single `.backward()` call that walks the graph and accumulates grads in-place. **Definition of Done:** a three-layer MLP defined with our ops can converge on a tiny XOR dataset, achieving <0.05 loss after 1k steps using SGD.
+## Phase 2: Tensor & Buffer Ops
+Next we'll wrap scalars into contiguous 1-D buffers and add a Tensor struct that owns shape, stride, offset, and the buffer. Then we'll port all scalar ops to work on whole buffers with the same interface, so swapping in WGSL later is painless.
 
-## Phase 4: RL Skeleton & CartPole
-Then we'll add a slim RL module with policy-gradient loss and a replay buffer, plus our own CartPole env that returns float32 observations and rewards. We'll stitch everything together so the agent samples actions, collects returns, and calls `.backward()` through the GPU path, all without external RL libraries. **Definition of Done:** the agent trains for 500 episodes and keeps the pole upright for 195+ steps on 10 consecutive runs, verified by a seed-controlled eval script.
+**Definition of Done:** Element-wise add of two 1M-item tensors completes in under 50ms on CPU and produces bitwise-identical gradients to scalar loop.
+
+## Phase 3: Layers & Optimizer
+Then we'll stack tensors into MLP layers with ReLU and a tiny SGD optimizer that updates parameters in place. We'll keep layer API minimal: forward(&self, x: &Tensor) -> Tensor and parameters() -> Vec<&mut Tensor>.
+
+**Definition of Done:** A 2-layer net trains on 1k random 10-D points for 10 epochs, loss drops below 0.01, and no parameters become NaN.
+
+## Phase 4: RL & Card Gym
+After that we'll clone a minimal 52-card Gym env and implement REINFORCE with baseline. Our agent will be just a small MLP that outputs action logits, and we'll run 10k episodes until it wins >45% of simplified poker hands.
+
+**Definition of Done:** Training script prints "win_rate: 0.46" and completes in <5min on laptop CPU.
