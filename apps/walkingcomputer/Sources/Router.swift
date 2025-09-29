@@ -20,8 +20,6 @@ enum ProposedAction: Codable {
     case editPhasing(phaseNumber: Int?, content: String)
     case conversation(String)
     case repeatLast
-    case nextPhase
-    case previousPhase
     case stop
     case copyDescription
     case copyPhasing
@@ -67,10 +65,6 @@ enum ProposedAction: Codable {
             self = .conversation(content)
         case "repeat_last":
             self = .repeatLast
-        case "next_phase":
-            self = .nextPhase
-        case "previous_phase":
-            self = .previousPhase
         case "stop":
             self = .stop
         case "copy_description":
@@ -126,10 +120,6 @@ enum ProposedAction: Codable {
             try container.encode(content, forKey: .content)
         case .repeatLast:
             try container.encode("repeat_last", forKey: .action)
-        case .nextPhase:
-            try container.encode("next_phase", forKey: .action)
-        case .previousPhase:
-            try container.encode("previous_phase", forKey: .action)
         case .stop:
             try container.encode("stop", forKey: .action)
         case .copyDescription:

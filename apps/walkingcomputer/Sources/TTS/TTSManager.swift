@@ -87,12 +87,6 @@ class TTSManager: NSObject, ObservableObject {
         }
     }
 
-    func speakChunked(_ text: String, chunks: [String]) async {
-        // For chunked reading (used in Phase 7 phasing)
-        // This will be expanded later for phase-by-phase reading
-        await speak(chunks.first ?? text)
-    }
-
     func stop() {
         if synthesizer.isSpeaking {
             synthesizer.stopSpeaking(at: .immediate)
@@ -105,20 +99,6 @@ class TTSManager: NSObject, ObservableObject {
             }
 
             log("Speech stopped", category: .tts, component: "TTSManager")
-        }
-    }
-
-    func pause() {
-        if synthesizer.isSpeaking && !synthesizer.isPaused {
-            synthesizer.pauseSpeaking(at: .word)
-            log("Speech paused", category: .tts, component: "TTSManager")
-        }
-    }
-
-    func resume() {
-        if synthesizer.isPaused {
-            synthesizer.continueSpeaking()
-            log("Speech resumed", category: .tts, component: "TTSManager")
         }
     }
 

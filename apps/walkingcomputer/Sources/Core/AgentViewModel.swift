@@ -13,8 +13,6 @@ class AgentViewModel: ObservableObject {
     private var audioTimer: Timer?
     private var recorder: Recorder?
     private var sttUploader: STTUploader?
-    private var avalonSTT: AvalonSTT?
-    private var useAvalon = false
     private var router: Router?
     private(set) var orchestrator: Orchestrator?
     private var recordingStartTime: Date?
@@ -35,16 +33,9 @@ class AgentViewModel: ObservableObject {
         // Load environment config
         let env = EnvConfig.load()
 
-        // Check if we should use Avalon STT
-        useAvalon = CommandLine.arguments.contains("--avalon-stt")
-
-        if useAvalon {
-            avalonSTT = AvalonSTT(avalonApiKey: env.avalonApiKey)
-            log("Using Avalon STT for transcription", category: .system)
-        } else {
-            sttUploader = STTUploader(groqApiKey: env.groqApiKey)
-            log("Using Groq STT for transcription", category: .system)
-        }
+        // Initialize STT
+        sttUploader = STTUploader(groqApiKey: env.groqApiKey)
+        log("Using Groq STT for transcription", category: .system)
 
         router = Router(groqApiKey: env.groqApiKey, modelId: env.llmModelId)
         log("Router initialized", category: .system)
@@ -120,8 +111,7 @@ class AgentViewModel: ObservableObject {
     }
 
     private func uploadAudio(url: URL) async {
-        let sttProvider = useAvalon ? "Avalon" : "Groq"
-        log("Uploading audio to \(sttProvider) API...", category: .network)
+        log("Uploading audio to Groq API...", category: .network)
 
         // Check file size
         if let fileSize = try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int {
@@ -129,33 +119,20 @@ class AgentViewModel: ObservableObject {
         }
 
         do {
-            let result: String
-
-            if useAvalon {
-                guard let avalon = avalonSTT else {
-                    logError("AvalonSTT is nil")
-                    await MainActor.run {
-                        self.lastMessage = "Avalon transcription service not configured"
-                        self.currentState = .idle
-                    }
-                    return
+            guard let uploader = sttUploader else {
+                logError("STTUploader is nil")
+                await MainActor.run {
+                    self.lastMessage = "Groq transcription service not configured"
+                    self.currentState = .idle
                 }
-                result = try await avalon.transcribe(audioURL: url)
-            } else {
-                guard let uploader = sttUploader else {
-                    logError("STTUploader is nil")
-                    await MainActor.run {
-                        self.lastMessage = "Groq transcription service not configured"
-                        self.currentState = .idle
-                    }
-                    return
-                }
-                result = try await uploader.transcribe(audioURL: url)
+                return
             }
+
+            let result = try await uploader.transcribe(audioURL: url)
 
             await MainActor.run {
                 self.transcription = result
-                logSuccess("Transcription successful", component: sttProvider)
+                logSuccess("Transcription successful", component: "Groq")
                 // Log full user transcript in beautiful format
                 logUserTranscript(result)
             }
@@ -218,8 +195,7 @@ class AgentViewModel: ObservableObject {
                 return
             }
 
-            let normalizedTranscript = normalizeTranscriptForRouting(transcript)
-            let response = try await router.route(transcript: normalizedTranscript, context: routerContext)
+            let response = try await router.route(transcript: transcript, context: routerContext)
 
             await MainActor.run {
                 // Handle the routed action through orchestrator
@@ -258,31 +234,5 @@ class AgentViewModel: ObservableObject {
 
         // Return to idle state (orchestrator updates will come via subscription)
         currentState = .idle
-    }
-}
-
-extension AgentViewModel {
-    private func normalizeTranscriptForRouting(_ transcript: String) -> String {
-        var output = transcript
-
-        let replacements: [(pattern: String, template: String)] = [
-            ("(?i)readme\\s+(phase\\b)", "read me $1"),
-            ("(?i)rate\\s+me\\s+(the\\s+)?(phase\\b)", "read me $1$2"),
-            ("(?i)rate\\s+me\\s+(the\\s+)?(phasing\\b)", "read me $1$2"),
-            ("(?i)phasing\\s*(?:\\.|dot)\\s*m\\b", "phasing"),
-            ("(?i)description\\s*(?:\\.|dot)\\s*m\\b", "description"),
-            ("(?i)phasing\\s+plan\\b", "phasing"),
-            ("(?i)phase\\s+plan\\b", "phase")
-        ]
-
-        for replacement in replacements {
-            output = output.replacingOccurrences(
-                of: replacement.pattern,
-                with: replacement.template,
-                options: .regularExpression
-            )
-        }
-
-        return output
     }
 }

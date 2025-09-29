@@ -87,32 +87,6 @@ class Orchestrator: ObservableObject {
         }
     }
 
-    // MARK: - Phase 1 Test Method
-
-    func testSearch(query: String) async {
-        guard let searchService = searchService else {
-            logError("SearchService not initialized. Check BRAVE_API_KEY in .env", component: "Orchestrator")
-            lastResponse = "Search service not available"
-            return
-        }
-
-        log("TEST: Starting search for '\(query)'", category: .search, component: "Orchestrator")
-        lastResponse = "Searching for \(query)..."
-
-        do {
-            let summary = try await searchService.search(query: query)
-            log("TEST: Search successful!", category: .search, component: "Orchestrator")
-            log("TEST: Summary (\(summary.count) chars): \(summary.prefix(200))...", category: .search, component: "Orchestrator")
-            lastResponse = summary
-
-            // Test TTS with the summary
-            await speak(summary)
-        } catch {
-            logError("TEST: Search failed - \(error)", component: "Orchestrator")
-            lastResponse = "Search failed: \(error.localizedDescription)"
-        }
-    }
-
     // MARK: - Queue Management
 
     func enqueueAction(_ action: ProposedAction) {
@@ -175,10 +149,6 @@ class Orchestrator: ObservableObject {
         case .repeatLast:
             // Already displayed in lastResponse
             break
-        case .nextPhase:
-            lastResponse = "Next phase"
-        case .previousPhase:
-            lastResponse = "Previous phase"
         case .stop:
             lastResponse = "Stopped"
         case .copyDescription:
@@ -388,8 +358,6 @@ class Orchestrator: ObservableObject {
 
     private func readDescription() async {
         if let content = artifactManager.safeRead(filename: "description.md") {
-            // Log first 100 chars for display
-            let preview = String(content.prefix(100))
             lastResponse = "Reading description..."
             log("Read description (\(content.count) chars)", category: .artifacts, component: "Orchestrator")
 
@@ -409,8 +377,6 @@ class Orchestrator: ObservableObject {
 
     private func readPhasing() async {
         if let content = artifactManager.safeRead(filename: "phasing.md") {
-            // Log first 100 chars for display
-            let preview = String(content.prefix(100))
             lastResponse = "Reading phasing..."
             log("Read phasing (\(content.count) chars)", category: .artifacts, component: "Orchestrator")
 
@@ -582,19 +548,6 @@ class Orchestrator: ObservableObject {
         }
 
         return nil
-    }
-
-    private func shouldReuseLastSearch(for lowerContent: String) -> Bool {
-        guard lastSearchQuery != nil else { return false }
-
-        let searchVerbs = ["search", "look", "find"]
-        let pronouns = ["that", "it", "them", "this", "previous", "same"]
-
-        let containsVerb = searchVerbs.contains { lowerContent.contains($0) }
-        let containsPronoun = pronouns.contains { lowerContent.contains($0) }
-        let containsRetry = lowerContent.contains("again") || lowerContent.contains("another") || lowerContent.contains("fresh") || lowerContent.contains("new") || lowerContent.contains("live")
-
-        return containsVerb && (containsPronoun || containsRetry)
     }
 
     // MARK: - Error Handling
