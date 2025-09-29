@@ -1,7 +1,9 @@
 # Project Description
 
-We're building a simple mobile app that lets dog walkers coordinate walks with each other. The core idea is you open the app, see who's nearby and available, then arrange to walk your dogs together. We'll start with the essentials: user profiles for both dogs and walkers, real-time location sharing so folks can find each other, and a basic scheduling system to plan walks. 
+We're building a simple chat app that lets people talk to each other in real time. It's basically a clean, no-fuss messaging platform where you can jump right into conversations without getting bogged down by complicated features.
 
-The app will show a map view of active walkers in your area with their dogs' info, so you can quickly spot compatible matches. You'll be able to create walk events, invite others, and get notifications when someone wants to join. We'll include a simple rating system after walks to build trust in the community. 
+The app starts with a quick sign-up process so everyone has their own identity. Once you're in, you'll see who's online and can start chatting immediately. Messages appear instantly, so it feels like you're having a natural conversation. You can chat one-on-one with friends or jump into group discussions.
 
-For the first version, we're focusing on making it super easy to find walking buddies in your neighborhood. No complex features - just sign up, add your dog's details, and start connecting with other local dog owners who want company on their walks.
+We've kept the interface super minimal - just your contacts list and the chat window. No confusing menus or overwhelming options. It's designed for people who want to connect without dealing with unnecessary bells and whistles. The focus is purely on smooth, reliable messaging that works every time you open the app.
+
+Perfect for anyone who wants straightforward communication without the clutter of social media features or complex settings.

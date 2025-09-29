@@ -26,24 +26,34 @@ func runTests() async {
     // Run the specified test
     switch testName {
     case "basic":
-        let (name, prompts) = TestScripts.basicConversation()
+        let (name, prompts) = TestScripts.basicPhasing()
         await runner.runTest(name: name, prompts: prompts)
 
-    case "dog_tinder":
-        let (name, prompts) = TestScripts.dogTinderPhasing()
+    case "write_read":
+        let (name, prompts) = TestScripts.writeAndRead()
         await runner.runTest(name: name, prompts: prompts)
 
-    case "snake":
-        let (name, prompts) = TestScripts.snakeGame()
+    case "edit":
+        let (name, prompts) = TestScripts.editPhasing()
+        await runner.runTest(name: name, prompts: prompts)
+
+    case "empty":
+        let (name, prompts) = TestScripts.emptyConversation()
+        await runner.runTest(name: name, prompts: prompts)
+
+    case "router":
+        let (name, prompts) = TestScripts.routerCommands()
         await runner.runTest(name: name, prompts: prompts)
 
     case "all":
         print("Running all tests...\n")
 
         let tests = [
-            TestScripts.basicConversation(),
-            TestScripts.dogTinderPhasing(),
-            TestScripts.snakeGame()
+            TestScripts.basicPhasing(),
+            TestScripts.writeAndRead(),
+            TestScripts.editPhasing(),
+            TestScripts.routerCommands()
+            // Skip empty - it's expected to fail/produce minimal output
         ]
 
         for (name, prompts) in tests {
@@ -54,10 +64,12 @@ func runTests() async {
     default:
         print("❌ Unknown test: \(testName)")
         print("\nAvailable tests:")
-        print("  - basic")
-        print("  - dog_tinder")
-        print("  - snake")
-        print("  - all")
+        print("  - basic       : Basic phasing generation")
+        print("  - write_read  : Write then read phasing")
+        print("  - edit        : Edit existing phasing")
+        print("  - empty       : Empty conversation edge case")
+        print("  - router      : Router command recognition")
+        print("  - all         : Run all tests (except empty)")
         exit(1)
     }
 

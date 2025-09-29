@@ -67,37 +67,60 @@ class TestRunner {
 // MARK: - Test Scripts
 
 struct TestScripts {
-    static func basicConversation() -> (String, [String]) {
+    // Test: Basic phasing generation
+    static func basicPhasing() -> (String, [String]) {
         return (
-            "Basic Conversation",
+            "Basic Phasing Generation",
             [
-                "I want to build a simple calculator app",
-                "It should support basic operations like add, subtract, multiply, divide",
+                "I want to build a todo list app",
                 "write the phasing"
             ]
         )
     }
 
-    static func dogTinderPhasing() -> (String, [String]) {
+    // Test: Router correctly identifies write vs read
+    static func writeAndRead() -> (String, [String]) {
         return (
-            "Dog Tinder Phasing",
+            "Write Then Read Phasing",
             [
-                "I want to build Tinder but for dogs",
-                "Dogs swipe by licking the screen",
-                "When they bark it's a super like",
+                "I want to build a weather app",
+                "write the phasing",
+                "read the phasing"
+            ]
+        )
+    }
+
+    // Test: Edit functionality
+    static func editPhasing() -> (String, [String]) {
+        return (
+            "Edit Phasing",
+            [
+                "I want to build a chat app",
+                "write the phasing",
+                "edit the phasing to add authentication"
+            ]
+        )
+    }
+
+    // Test: Empty conversation handling
+    static func emptyConversation() -> (String, [String]) {
+        return (
+            "Empty Conversation Phasing",
+            [
                 "write the phasing"
             ]
         )
     }
 
-    static func snakeGame() -> (String, [String]) {
+    // Test: Router commands (no API cost)
+    static func routerCommands() -> (String, [String]) {
         return (
-            "Snake Game Phasing",
+            "Router Command Recognition",
             [
-                "I want to build a snake game in JavaScript",
-                "Classic snake with food pellets",
-                "Game over when you hit the wall or yourself",
-                "write the phasing"
+                "I want to build a simple app",
+                "write the description",
+                "read the description",
+                "copy description"
             ]
         )
     }

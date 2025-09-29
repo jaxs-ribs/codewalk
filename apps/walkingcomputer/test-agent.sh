@@ -44,7 +44,7 @@ SOURCES=(
     "Sources/Search/PerplexitySearchService.swift"
 
     # Test infrastructure
-    "Sources/TestRunner.swift"
+    "Tests/TestRunner.swift"
     "Tests/main.swift"
 )
 
