@@ -1,7 +1,13 @@
 import Foundation
 import Combine
+
+#if canImport(UIKit)
 import UIKit
+#endif
+
+#if canImport(AudioToolbox)
 import AudioToolbox
+#endif
 
 // MARK: - Orchestrator State
 
@@ -38,25 +44,42 @@ class Orchestrator: ObservableObject {
     private var actionQueue: [ActionQueueItem] = []
     private let artifactManager: ArtifactManager
     private let assistantClient: AssistantClient
-    private let ttsManager: TTSManager
+    private let ttsManager: any TTSProtocol
+    private let router: Router
+
+    #if canImport(UIKit)
     private let groqTTSManager: GroqTTSManager?
     private let elevenLabsTTS: ElevenLabsTTS?
+    #endif
+
     private let ttsProvider: TTSProvider
     private var searchService: SearchService?  // Legacy Brave search
     private var perplexityService: PerplexitySearchService?  // New Perplexity search
     private var lastSearchQuery: String?
 
-    init(config: EnvConfig) {
+    init(config: EnvConfig, ttsManager: (any TTSProtocol)? = nil) {
         // Initialize artifact manager
         artifactManager = ArtifactManager()
 
         // Initialize assistant client
         assistantClient = AssistantClient(groqApiKey: config.groqApiKey, modelName: config.llmModelId)
 
-        // Initialize TTS manager (iOS native)
-        ttsManager = TTSManager()
+        // Initialize router
+        router = Router(groqApiKey: config.groqApiKey, modelId: config.llmModelId)
+
+        // Initialize TTS manager (iOS native or injected for testing)
+        #if canImport(UIKit)
+        self.ttsManager = ttsManager ?? TTSManager()
+        #else
+        if let provided = ttsManager {
+            self.ttsManager = provided
+        } else {
+            fatalError("TTS manager must be provided when not running on iOS")
+        }
+        #endif
 
         // Determine TTS provider from launch arguments
+        #if canImport(UIKit)
         if CommandLine.arguments.contains("--UseElevenLabs") {
             ttsProvider = .elevenLabs
             elevenLabsTTS = ElevenLabsTTS(apiKey: config.elevenLabsApiKey)
@@ -73,6 +96,11 @@ class Orchestrator: ObservableObject {
             elevenLabsTTS = nil
             log("Using iOS native TTS", category: .tts, component: "Orchestrator")
         }
+        #else
+        // On macOS (tests), always use native (which is mocked)
+        ttsProvider = .native
+        log("Using mocked TTS for testing", category: .tts, component: "Orchestrator")
+        #endif
 
         log("Initialized with ArtifactManager, AssistantClient, and TTS", category: .system, component: "Orchestrator")
 
@@ -100,6 +128,39 @@ class Orchestrator: ObservableObject {
             Task {
                 await processQueue()
             }
+        }
+    }
+
+    // MARK: - Test Mode Support
+
+    /// Inject a text prompt directly, bypassing STT. For testing only.
+    func injectPrompt(_ text: String) async {
+        log("Test mode: injecting prompt: \(text)", category: .orchestrator)
+
+        // Add to conversation history as user input
+        addUserTranscript(text)
+
+        // Route the prompt through the router (like production)
+        do {
+            let recentMessages = conversationHistory.suffix(10).map { "\($0.role): \($0.content)" }
+            let context = RouterContext(recentMessages: Array(recentMessages), lastSearchQuery: lastSearchQuery)
+            let response = try await router.route(transcript: text, context: context)
+
+            // Enqueue the routed action
+            enqueueAction(response.action)
+
+            // Wait for completion
+            await waitForCompletion()
+        } catch {
+            logError("Test mode: Router failed: \(error)", component: "Orchestrator")
+            lastResponse = "Routing failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Wait for orchestrator to finish all queued actions
+    func waitForCompletion() async {
+        while isExecuting || !actionQueue.isEmpty {
+            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1s
         }
     }
 
@@ -607,6 +668,7 @@ class Orchestrator: ObservableObject {
         // Log the AI response
         logAIResponse(text)
 
+        #if canImport(UIKit)
         switch ttsProvider {
         case .elevenLabs:
             if let elevenLabs = elevenLabsTTS {
@@ -615,10 +677,10 @@ class Orchestrator: ObservableObject {
                 } catch {
                     logError("ElevenLabs TTS failed, falling back to iOS TTS: \(error)", component: "TTS")
                     // Fallback to iOS TTS
-                    await ttsManager.speak(text)
+                    await ttsManager.speak(text, interruptible: true)
                 }
             } else {
-                await ttsManager.speak(text)
+                await ttsManager.speak(text, interruptible: true)
             }
         case .groq:
             if let groqTTS = groqTTSManager {
@@ -627,17 +689,22 @@ class Orchestrator: ObservableObject {
                 } catch {
                     logError("Groq TTS failed, falling back to iOS TTS: \(error)", component: "TTS")
                     // Fallback to iOS TTS
-                    await ttsManager.speak(text)
+                    await ttsManager.speak(text, interruptible: true)
                 }
             } else {
-                await ttsManager.speak(text)
+                await ttsManager.speak(text, interruptible: true)
             }
         case .native:
-            await ttsManager.speak(text)
+            await ttsManager.speak(text, interruptible: true)
         }
+        #else
+        // macOS/testing: always use provided TTS manager
+        await ttsManager.speak(text, interruptible: true)
+        #endif
     }
 
     func stopSpeaking() {
+        #if canImport(UIKit)
         switch ttsProvider {
         case .elevenLabs:
             elevenLabsTTS?.stop()
@@ -646,6 +713,9 @@ class Orchestrator: ObservableObject {
         case .native:
             ttsManager.stop()
         }
+        #else
+        ttsManager.stop()
+        #endif
     }
 
     // MARK: - Context Management
@@ -699,7 +769,9 @@ class Orchestrator: ObservableObject {
             return false
         }
 
+        #if canImport(UIKit)
         UIPasteboard.general.string = content
+        #endif
         lastResponse = "Description copied to clipboard!"
         return true
     }
@@ -710,7 +782,9 @@ class Orchestrator: ObservableObject {
             return false
         }
 
+        #if canImport(UIKit)
         UIPasteboard.general.string = content
+        #endif
         lastResponse = "Phasing copied to clipboard!"
         return true
     }
@@ -732,7 +806,9 @@ class Orchestrator: ObservableObject {
             combined += "---\n\n" + phasing
         }
 
+        #if canImport(UIKit)
         UIPasteboard.general.string = combined
+        #endif
         lastResponse = "Both artifacts copied to clipboard!"
         return true
     }
@@ -740,8 +816,10 @@ class Orchestrator: ObservableObject {
     // MARK: - Search Sound Feedback
 
     private func playSearchStartSound() {
+        #if canImport(AudioToolbox)
         // Tink sound - gentle start
         AudioServicesPlaySystemSound(1057)
+        #endif
     }
 
 }

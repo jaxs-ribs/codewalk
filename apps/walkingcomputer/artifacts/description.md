@@ -1,3 +1,7 @@
 # Project Description
 
-We're building a playful iOS dating-style app that lets users swipe through different "God" profiles to discover and engage with various divine figures from world religions. The app presents deity cards with basic info like name, origin, and a brief description, and users swipe right to "match" or left to pass. When there's a match, users get a fun fact about that deity and can save it to their collection. We'll keep the interface clean and simple, focusing on smooth swipe gestures and minimal text. The app will be built in SwiftUI for iOS, using local data so it works offline, and we'll include a diverse range of deities to keep things interesting without being too serious. It's basically Tinder for gods, but lighthearted and educational rather than religious.
+We're building a simple mobile app that lets dog walkers coordinate walks with each other. The core idea is you open the app, see who's nearby and available, then arrange to walk your dogs together. We'll start with the essentials: user profiles for both dogs and walkers, real-time location sharing so folks can find each other, and a basic scheduling system to plan walks. 
+
+The app will show a map view of active walkers in your area with their dogs' info, so you can quickly spot compatible matches. You'll be able to create walk events, invite others, and get notifications when someone wants to join. We'll include a simple rating system after walks to build trust in the community. 
+
+For the first version, we're focusing on making it super easy to find walking buddies in your neighborhood. No complex features - just sign up, add your dog's details, and start connecting with other local dog owners who want company on their walks.

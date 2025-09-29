@@ -2,7 +2,7 @@ import AVFoundation
 
 // MARK: - TTS Manager
 
-class TTSManager: NSObject, ObservableObject {
+class TTSManager: NSObject, ObservableObject, TTSProtocol {
     private let synthesizer = AVSpeechSynthesizer()
     @Published var isSpeaking: Bool = false
     private var speechContinuation: CheckedContinuation<Void, Never>?

@@ -1,36 +1,29 @@
 # Project Phasing
 
-## Phase 1: Create Game Canvas
-Set up the basic HTML structure with a canvas element.
+## Phase 1: Initialize React App
+Initialize a new React TypeScript project and verify it runs.
+**Definition of Done:** Run `npx create-react-app dog-walker-app --template typescript`, then `npm start`, see React logo spinning at localhost:3000
 
-**Definition of Done:** Open index.html in browser and see a 400×400 pixel bordered canvas centered on the page.
+## Phase 2: Clean Project Structure
+Remove default boilerplate and create folder structure.
+**Definition of Done:** Delete App.test.tsx, logo.svg, and App.css, create folders: components/, services/, types/, run `npm start`, see blank page with no errors
 
-## Phase 2: Draw the Snake
-Create the snake as an array of coordinates and render it on the canvas.
+## Phase 3: Install Dependencies
+Add React Router and other essential packages.
+**Definition of Done:** Run `npm install react-router-dom @types/react-router-dom`, verify package.json shows these dependencies
 
-**Definition of Done:** Refresh the page and see a 3-segment snake (drawn as squares) in the center of the canvas.
+## Phase 4: Create Walk Form Component
+Build a form component with walker name, date, time, and dogs fields.
+**Definition of Done:** Open browser, see form with 4 labeled input fields and a submit button
 
-## Phase 3: Add Movement Controls
-Implement continuous snake movement and arrow-key direction changes.
+## Phase 5: Add Form State Management
+Implement React hooks to capture form data.
+**Definition of Done:** Type 'Sarah' in name field, see console log output: `{walkerName: 'Sarah', date: '', time: '', dogs: ''}` when typing
 
-**Definition of Done:** Press an arrow key and watch the snake move one square per frame in that direction; pressing a different arrow key changes direction.
+## Phase 6: Build Walk List Component
+Create a component to display scheduled walks in a table.
+**Definition of Done:** Pass hardcoded array `[{walkerName: 'Mike', date: '2024-01-15', time: '09:00', dogs: 2}]`, see table with one row showing the data
 
-## Phase 4: Generate Food
-Add a single food pellet at a random free position on the canvas.
-
-**Definition of Done:** Refresh the page and see one colored square (food) that does not overlap the snake.
-
-## Phase 5: Implement Eating and Growth
-Detect head-to-food collision, increase snake length by one segment, and respawn food.
-
-**Definition of Done:** Move the snake’s head onto the food; the snake grows by one segment and the food immediately reappears at a new empty position.
-
-## Phase 6: Add Wall Collision
-End the game when the snake’s head hits any canvas edge.
-
-**Definition of Done:** Drive the snake into a wall; the snake stops moving and “Game Over” is drawn on the canvas.
-
-## Phase 7: Add Self Collision
-End the game when the snake’s head collides with its own body.
-
-**Definition of Done:** Make the snake head overlap any body segment; movement stops and “Game Over” is drawn on the canvas.
+## Phase 7: Connect Form to Display
+Link form submission to add walks to the list.
+**Definition of Done:** Fill form with 'Lisa, 2024-01-16, 10:00, 1', click submit, see new row appear in table below existing data
