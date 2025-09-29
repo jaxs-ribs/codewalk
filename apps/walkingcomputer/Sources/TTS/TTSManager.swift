@@ -64,7 +64,7 @@ class TTSManager: NSObject, ObservableObject {
         let utterance = AVSpeechUtterance(string: cleanedText)
 
         // Configure for walking pace (150-180 words per minute)
-        utterance.rate = 0.52  // Slightly faster than default (0.5)
+        utterance.rate = 0.52  // Faster pace for better flow
         utterance.pitchMultiplier = 1.0
         utterance.volume = 0.9
 

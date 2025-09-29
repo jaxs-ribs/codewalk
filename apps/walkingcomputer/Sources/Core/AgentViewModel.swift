@@ -175,7 +175,7 @@ class AgentViewModel: ObservableObject {
         // Capture recent context, then record the new transcript
         await MainActor.run {
             if let orchestrator = self.orchestrator {
-                let recentMessages = orchestrator.recentConversationContext(limit: 6)
+                let recentMessages = orchestrator.recentConversationContext(limit: 100)
                 let lastSearchQuery = orchestrator.currentSearchQuery()
                 orchestrator.addUserTranscript(transcript)
                 routerContext = RouterContext(
