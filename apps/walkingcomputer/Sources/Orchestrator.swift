@@ -308,7 +308,7 @@ class Orchestrator: ObservableObject {
         }
 
         do {
-            let content = try await generateContent(for: type)
+            let content = try await generateContent(for: type, shouldSpeak: shouldSpeak)
 
             if artifactManager.safeWrite(filename: type.filename, content: content) {
                 lastResponse = "\(type.displayName.capitalized) written."
@@ -334,15 +334,29 @@ class Orchestrator: ObservableObject {
         }
     }
 
-    private func generateContent(for type: ArtifactType) async throws -> String {
+    private func generateContent(for type: ArtifactType, shouldSpeak: Bool) async throws -> String {
         switch type {
         case .description:
             return try await assistantClient.generateDescription(
                 conversationHistory: conversationHistory
             )
         case .phasing:
+            // For phasing, use multi-pass generation with status updates
+            var statusCallbackToUse: ((String) -> Void)? = nil
+            if shouldSpeak {
+                statusCallbackToUse = { [weak self] status in
+                    guard let self = self else { return }
+                    Task { @MainActor [weak self] in
+                        guard let self = self else { return }
+                        self.lastResponse = status
+                        await self.speak(status)
+                    }
+                }
+            }
+
             return try await assistantClient.generatePhasing(
-                conversationHistory: conversationHistory
+                conversationHistory: conversationHistory,
+                statusCallback: statusCallbackToUse
             )
         }
     }
@@ -453,7 +467,16 @@ class Orchestrator: ObservableObject {
             case .description:
                 updatedContent = try await assistantClient.generateDescription(conversationHistory: conversationHistory)
             case .phasing:
-                updatedContent = try await assistantClient.generatePhasing(conversationHistory: conversationHistory)
+                // For phasing edits, use multi-pass with status updates
+                let statusCallback: ((String) -> Void)? = { [weak self] status in
+                    guard let self = self else { return }
+                    Task { @MainActor [weak self] in
+                        guard let self = self else { return }
+                        self.lastResponse = status
+                        await self.speak(status)
+                    }
+                }
+                updatedContent = try await assistantClient.generatePhasing(conversationHistory: conversationHistory, statusCallback: statusCallback)
             }
 
             // Save the regenerated artifact

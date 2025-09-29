@@ -1,21 +1,36 @@
 # Project Phasing
 
-## Phase 1: Scalar Autograd Core
-So first we'll build a single Scalar type that holds f32 value, gradient, and a compute graph node. Then we'll wire in backward passes for add, mul, and pow so gradients flow automatically. After that we'll add shape-aware broadcasting so mismatched dimensions still align during ops.
+## Phase 1: Create Game Canvas
+Set up the basic HTML structure with a canvas element.
 
-**Definition of Done:** Two 3×1 and 1×4 tensors multiply to produce 3×4 result with correct gradients on every scalar.
+**Definition of Done:** Open index.html in browser and see a 400×400 pixel bordered canvas centered on the page.
 
-## Phase 2: Tensor & Buffer Ops
-Next we'll wrap scalars into contiguous 1-D buffers and add a Tensor struct that owns shape, stride, offset, and the buffer. Then we'll port all scalar ops to work on whole buffers with the same interface, so swapping in WGSL later is painless.
+## Phase 2: Draw the Snake
+Create the snake as an array of coordinates and render it on the canvas.
 
-**Definition of Done:** Element-wise add of two 1M-item tensors completes in under 50ms on CPU and produces bitwise-identical gradients to scalar loop.
+**Definition of Done:** Refresh the page and see a 3-segment snake (drawn as squares) in the center of the canvas.
 
-## Phase 3: Layers & Optimizer
-Then we'll stack tensors into MLP layers with ReLU and a tiny SGD optimizer that updates parameters in place. We'll keep layer API minimal: forward(&self, x: &Tensor) -> Tensor and parameters() -> Vec<&mut Tensor>.
+## Phase 3: Add Movement Controls
+Implement continuous snake movement and arrow-key direction changes.
 
-**Definition of Done:** A 2-layer net trains on 1k random 10-D points for 10 epochs, loss drops below 0.01, and no parameters become NaN.
+**Definition of Done:** Press an arrow key and watch the snake move one square per frame in that direction; pressing a different arrow key changes direction.
 
-## Phase 4: RL & Card Gym
-After that we'll clone a minimal 52-card Gym env and implement REINFORCE with baseline. Our agent will be just a small MLP that outputs action logits, and we'll run 10k episodes until it wins >45% of simplified poker hands.
+## Phase 4: Generate Food
+Add a single food pellet at a random free position on the canvas.
 
-**Definition of Done:** Training script prints "win_rate: 0.46" and completes in <5min on laptop CPU.
+**Definition of Done:** Refresh the page and see one colored square (food) that does not overlap the snake.
+
+## Phase 5: Implement Eating and Growth
+Detect head-to-food collision, increase snake length by one segment, and respawn food.
+
+**Definition of Done:** Move the snake’s head onto the food; the snake grows by one segment and the food immediately reappears at a new empty position.
+
+## Phase 6: Add Wall Collision
+End the game when the snake’s head hits any canvas edge.
+
+**Definition of Done:** Drive the snake into a wall; the snake stops moving and “Game Over” is drawn on the canvas.
+
+## Phase 7: Add Self Collision
+End the game when the snake’s head collides with its own body.
+
+**Definition of Done:** Make the snake head overlap any body segment; movement stops and “Game Over” is drawn on the canvas.
