@@ -1,10 +1,17 @@
 # Project Phasing
 
 ## Phase 1: Core Matching
-So first we'll build the swipe-based matching engine with dog profiles, owner authentication, and basic geolocation to find nearby pups. We'll store photos, breed, age, and temperament data in Firebase, then implement the familiar swipe gestures and mutual-match logic. **Definition of Done:** Two test users can swipe right on each other's dogs and see an instant match notification.
+So first we’ll build the Tinder-for-dogs swipe flow: upload a pup pic, set age/breed/vax status, then swipe through local dogs. We’ll harden the glass with an oleophobic coat so eager snouts don’t scratch.
+**Definition of Done:** Five rescue dogs appear, user swipes right on one, match screen pops, and screen stays smudge-free after 20 nose taps.
 
-## Phase 2: Chat & Safety
-Then we'll add secure in-app messaging so owners can coordinate without sharing personal contact info, plus report/block buttons and basic photo verification to keep pups safe. We'll integrate Sendbird for real-time chat and implement content moderation filters. **Definition of Done:** Matched owners can exchange 10+ messages with no personal data leakage.
+## Phase 2: Swipe-to-Lick
+Next we’ll flip the gesture: dog swipes nose across screen → treat pops, reinforcing “swipe to lick.” We’ll log each swipe as a wellness interaction and store duration/pressure for later health metrics.
+**Definition of Done:** Dog swipes nose, treat sound plays within 200 ms, pressure data saved, and no false triggers from drool.
 
-## Phase 3: Quick Sniff Walk
-After that we'll launch the sniff-walk planner: pick a neutral park, suggest 30-minute windows based on both calendars, and send push reminders 15 minutes before. We'll map dog-friendly routes and integrate weather APIs to suggest indoor alternatives. **Definition of Done:** Two matched users can schedule, complete, and rate a shared walk within 24 hours.
+## Phase 3: Wellness Dashboard
+After that we’ll pivot to wellness: aggregate swipe stats into daily energy scores, integrate HealthKit via iPhone mic to hear panting rates, and ping owners when patterns drift.
+**Definition of Done:** Owner opens dashboard, sees “Energy: 87% normal,” receives push if 20% drop over 3 days.
+
+## Phase 4: Vet Partnership
+Finally we’ll monetize wellness: sell vet-verified chew-proof screen protectors, let clinics push vaccination reminders through the app, and reward matches with partner shelters for free check-ups.
+**Definition of Done:** User buys protector in-app, receives barcode for free vet visit, and booking API confirms appointment within 24 hours.

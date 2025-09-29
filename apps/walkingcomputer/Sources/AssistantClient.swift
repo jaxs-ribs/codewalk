@@ -21,7 +21,7 @@ class AssistantClient {
     // MARK: - Content Generation
 
     func generateDescription(conversationHistory: [(role: String, content: String)]) async throws -> String {
-        print("[AssistantClient] Generating description from conversation context")
+        log("Generating description from conversation context", category: .assistant, component: "AssistantClient")
 
         let systemPrompt = """
         Generate a project description from this conversation.
@@ -61,7 +61,7 @@ class AssistantClient {
     }
 
     func generatePhasing(conversationHistory: [(role: String, content: String)]) async throws -> String {
-        print("[AssistantClient] Generating phasing from conversation context")
+        log("Generating phasing from conversation context", category: .assistant, component: "AssistantClient")
 
         let systemPrompt = """
         Generate a project phasing plan from this conversation.
@@ -107,33 +107,25 @@ class AssistantClient {
     }
 
     func generateConversationalResponse(conversationHistory: [(role: String, content: String)]) async throws -> String {
-        print("[AssistantClient] Generating conversational response")
+        log("Generating conversational response", category: .assistant, component: "AssistantClient")
 
         let systemPrompt = """
-        You are a passive voice-first project speccer. LISTEN, don't help.
+        Voice-first project speccer. Listen and respond concisely.
 
-        YOUR CAPABILITIES:
-        - You CAN search the web (say "search for X" to trigger it)
-        - You're here to take notes about projects
-
-        CRITICAL RULES:
-        1. If user is TELLING you something (statements, ideas, features):
-           ONLY respond "Noted" or "Got it" - NOTHING ELSE
-
-        2. If user ASKS a direct question:
-           - About weather/news/facts → "Say 'search for X' to look that up"
-           - "Do you have suggestions?" → Give 2-3 flowing suggestions
-           - Technical questions → One sentence answer
-           - "Should I do X?" → "Yes" or "No" plus one sentence
-
-        3. NEVER ask clarifying questions unless truly incomprehensible
+        RULES:
+        1. Statements/ideas → "Noted" or "Got it"
+        2. Direct questions → Answer from your knowledge briefly
+        3. Never suggest searching or mention search capability
+        4. Never ask clarifying questions unless incomprehensible
+        5. Keep responses under 50 words
 
         EXAMPLES:
-        User: "I'm building a dog app" → "Got it"
-        User: "What's the weather?" → "Say 'search for Stockholm weather' to look that up"
-        User: "Do you have suggestions?" → "You could add profiles, or maybe chat"
+        "I'm building a dog app" → "Got it"
+        "What's the weather?" → "I don't have current weather data"
+        "Who is Einstein?" → "Albert Einstein was a physicist who developed relativity theory"
+        "Do you have suggestions?" → "You could add user profiles or a chat feature"
 
-        Default to acknowledgment. Only elaborate when directly asked.
+        Default to acknowledgment. Be brief.
         """
 
         // Use the last user message as the prompt
@@ -183,7 +175,7 @@ class AssistantClient {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
-        print("[AssistantClient] Sending request to Groq...")
+        log("Sending request to Groq...", category: .network, component: "AssistantClient")
 
         // Use retry logic for resilience
         let data = try await NetworkManager.shared.performRequestWithRetry(request)
@@ -198,7 +190,7 @@ class AssistantClient {
                          userInfo: [NSLocalizedDescriptionKey: "Invalid response format"])
         }
 
-        print("[AssistantClient] Generated \(content.count) chars")
+        log("Generated \(content.count) chars", category: .assistant, component: "AssistantClient")
         return content
     }
 }

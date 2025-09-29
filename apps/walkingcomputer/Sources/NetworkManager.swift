@@ -7,11 +7,9 @@ class NetworkManager {
 
     private let maxRetries = 3
     private let baseDelay: TimeInterval = 1.0  // Start with 1 second
-    private var lastSuccessfulResponse: String?
-    private var isOffline = false
 
     private init() {
-        print("[NetworkManager] Initialized with retry logic")
+        log("Initialized with retry logic", category: .network, component: "NetworkManager")
     }
 
     // MARK: - Retry Logic
@@ -31,7 +29,6 @@ class NetworkManager {
 
                 if httpResponse.statusCode == 200 {
                     // Success - decode and return
-                    isOffline = false
                     return try JSONDecoder().decode(T.self, from: data)
                 } else if httpResponse.statusCode >= 500 {
                     // Server error - retry
@@ -43,7 +40,7 @@ class NetworkManager {
 
             } catch {
                 lastError = error
-                print("[NetworkManager] Attempt \(attempt + 1) failed: \(error)")
+                log("Attempt \(attempt + 1) failed: \(error)", category: .network, component: "NetworkManager")
 
                 // Check if we should retry
                 if !shouldRetry(for: error) || attempt == maxRetries - 1 {
@@ -52,7 +49,7 @@ class NetworkManager {
 
                 // Calculate delay with exponential backoff
                 let delay = baseDelay * pow(2.0, Double(attempt))
-                print("[NetworkManager] Retrying in \(delay) seconds...")
+                log("Retrying in \(delay) seconds...", category: .network, component: "NetworkManager")
 
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             }
@@ -75,7 +72,6 @@ class NetworkManager {
 
                 if httpResponse.statusCode == 200 {
                     // Success
-                    isOffline = false
                     return data
                 } else if httpResponse.statusCode >= 500 {
                     // Server error - retry
@@ -88,12 +84,7 @@ class NetworkManager {
 
             } catch {
                 lastError = error
-                print("[NetworkManager] Attempt \(attempt + 1) failed: \(error)")
-
-                // Check if it's a network error
-                if (error as NSError).domain == NSURLErrorDomain {
-                    isOffline = true
-                }
+                log("Attempt \(attempt + 1) failed: \(error)", category: .network, component: "NetworkManager")
 
                 // Check if we should retry
                 if !shouldRetry(for: error) || attempt == maxRetries - 1 {
@@ -102,7 +93,7 @@ class NetworkManager {
 
                 // Calculate delay with exponential backoff
                 let delay = baseDelay * pow(2.0, Double(attempt))
-                print("[NetworkManager] Retrying in \(delay) seconds...")
+                log("Retrying in \(delay) seconds...", category: .network, component: "NetworkManager")
 
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             }
@@ -135,34 +126,6 @@ class NetworkManager {
         }
 
         return true  // Default to retry
-    }
-
-    // MARK: - Offline Support
-
-    func cacheResponse(_ response: String, for key: String) {
-        UserDefaults.standard.set(response, forKey: "cached_\(key)")
-        lastSuccessfulResponse = response
-    }
-
-    func getCachedResponse(for key: String) -> String? {
-        return UserDefaults.standard.string(forKey: "cached_\(key)") ?? lastSuccessfulResponse
-    }
-
-    func getOfflineFallback(for action: String) -> String {
-        switch action {
-        case "conversation":
-            return "I understand what you're saying. Let me think about that."
-        case "write_description":
-            return "I'll write the description, but I'm having network issues. Try again in a moment."
-        case "write_phasing":
-            return "I'll create the phasing, but the network is spotty. Give me a second."
-        default:
-            return "I understand. The network is a bit slow right now."
-        }
-    }
-
-    var networkStatus: String {
-        return isOffline ? "Offline" : "Online"
     }
 }
 

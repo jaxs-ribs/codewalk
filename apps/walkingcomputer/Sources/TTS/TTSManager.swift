@@ -5,12 +5,13 @@ import AVFoundation
 class TTSManager: NSObject, ObservableObject {
     private let synthesizer = AVSpeechSynthesizer()
     @Published var isSpeaking: Bool = false
+    private var speechContinuation: CheckedContinuation<Void, Never>?
 
     override init() {
         super.init()
         synthesizer.delegate = self
         configureAudioSession()
-        print("[TTSManager] Initialized")
+        log("Initialized", category: .tts, component: "TTSManager")
     }
 
     private func configureAudioSession() {
@@ -22,22 +23,42 @@ class TTSManager: NSObject, ObservableObject {
                                    options: [.defaultToSpeaker,
                                            .allowBluetooth,
                                            .duckOthers])
-            print("[TTSManager] Audio session configured for TTS")
+            log("Audio session configured for TTS", category: .tts, component: "TTSManager")
         } catch {
-            print("[TTSManager] Failed to configure audio session: \(error)")
+            logError("Failed to configure audio session: \(error)", component: "TTSManager")
         }
     }
 
     // MARK: - Speech Methods
 
-    func speak(_ text: String, interruptible: Bool = true) {
+    func speak(_ text: String, interruptible: Bool = true) async {
         // Stop current speech if interruptible
         if interruptible && synthesizer.isSpeaking {
             stop()
+            // Give synthesizer a moment to fully stop
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
         }
 
         // Clean the text for better TTS
         let cleanedText = cleanTextForTTS(text)
+
+        // Debug: Log the full cleaned text length
+        log("Full text length: \(cleanedText.count) chars", category: .tts, component: "TTSManager")
+        log("First 200 chars: \(cleanedText.prefix(200))", category: .tts, component: "TTSManager")
+
+        // Reconfigure and activate audio session every time
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playAndRecord,
+                                   mode: .voicePrompt,
+                                   options: [.defaultToSpeaker,
+                                           .allowBluetooth,
+                                           .duckOthers])
+            try session.setActive(true, options: [])
+            log("Audio session reconfigured and activated", category: .tts, component: "TTSManager")
+        } catch {
+            logError("Failed to configure/activate audio session: \(error)", component: "TTSManager")
+        }
 
         // Create utterance
         let utterance = AVSpeechUtterance(string: cleanedText)
@@ -56,38 +77,48 @@ class TTSManager: NSObject, ObservableObject {
         utterance.preUtteranceDelay = 0.1
         utterance.postUtteranceDelay = 0.2
 
-        // Start speaking
-        synthesizer.speak(utterance)
-        isSpeaking = true
+        log("Speaking: \(cleanedText.prefix(50))...", category: .tts, component: "TTSManager")
 
-        print("[TTSManager] Speaking: \(cleanedText.prefix(50))...")
+        // Wait for speech to complete
+        await withCheckedContinuation { continuation in
+            speechContinuation = continuation
+            synthesizer.speak(utterance)
+            isSpeaking = true
+        }
     }
 
-    func speakChunked(_ text: String, chunks: [String]) {
+    func speakChunked(_ text: String, chunks: [String]) async {
         // For chunked reading (used in Phase 7 phasing)
         // This will be expanded later for phase-by-phase reading
-        speak(chunks.first ?? text)
+        await speak(chunks.first ?? text)
     }
 
     func stop() {
         if synthesizer.isSpeaking {
             synthesizer.stopSpeaking(at: .immediate)
             isSpeaking = false
-            print("[TTSManager] Speech stopped")
+
+            // Resume continuation if speech was interrupted
+            if let continuation = speechContinuation {
+                speechContinuation = nil
+                continuation.resume()
+            }
+
+            log("Speech stopped", category: .tts, component: "TTSManager")
         }
     }
 
     func pause() {
         if synthesizer.isSpeaking && !synthesizer.isPaused {
             synthesizer.pauseSpeaking(at: .word)
-            print("[TTSManager] Speech paused")
+            log("Speech paused", category: .tts, component: "TTSManager")
         }
     }
 
     func resume() {
         if synthesizer.isPaused {
             synthesizer.continueSpeaking()
-            print("[TTSManager] Speech resumed")
+            log("Speech resumed", category: .tts, component: "TTSManager")
         }
     }
 
@@ -104,13 +135,13 @@ class TTSManager: NSObject, ObservableObject {
             $0.language == language &&
             $0.quality == .enhanced
         }) {
-            print("[TTSManager] Using enhanced voice: \(enhancedVoice.name)")
+            log("Using enhanced voice: \(enhancedVoice.name)", category: .tts, component: "TTSManager")
             return enhancedVoice
         }
 
         // Fall back to default
         if let defaultVoice = AVSpeechSynthesisVoice(language: language) {
-            print("[TTSManager] Using default voice")
+            log("Using default voice", category: .tts, component: "TTSManager")
             return defaultVoice
         }
 
@@ -149,25 +180,37 @@ class TTSManager: NSObject, ObservableObject {
 
 extension TTSManager: AVSpeechSynthesizerDelegate {
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
-        print("[TTSManager] Started speaking")
+        log("Started speaking", category: .tts, component: "TTSManager")
         isSpeaking = true
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        print("[TTSManager] Finished speaking")
+        log("Finished speaking", category: .tts, component: "TTSManager")
         isSpeaking = false
+
+        // Resume continuation when speech finishes
+        if let continuation = speechContinuation {
+            speechContinuation = nil
+            continuation.resume()
+        }
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didPause utterance: AVSpeechUtterance) {
-        print("[TTSManager] Paused at: \(utterance.speechString.prefix(20))...")
+        log("Paused at: \(utterance.speechString.prefix(20))...", category: .tts, component: "TTSManager")
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didContinue utterance: AVSpeechUtterance) {
-        print("[TTSManager] Continued from pause")
+        log("Continued from pause", category: .tts, component: "TTSManager")
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        print("[TTSManager] Cancelled")
+        log("Cancelled", category: .tts, component: "TTSManager")
         isSpeaking = false
+
+        // Resume continuation when speech is cancelled
+        if let continuation = speechContinuation {
+            speechContinuation = nil
+            continuation.resume()
+        }
     }
 }

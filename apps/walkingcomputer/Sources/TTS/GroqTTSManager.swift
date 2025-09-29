@@ -16,11 +16,11 @@ class GroqTTSManager: NSObject {
         self.groqApiKey = groqApiKey
         self.voice = voice
         super.init()
-        print("[GroqTTSManager] Initialized with voice: \(voice)")
+        log("Initialized with voice: \(voice)", category: .tts, component: "GroqTTSManager")
     }
 
     func synthesizeAndPlay(_ text: String) async throws {
-        print("[GroqTTSManager] Synthesizing: \(text.prefix(50))...")
+        log("Synthesizing: \(text.prefix(50))...", category: .tts, component: "GroqTTSManager")
 
         // Clean markdown from text
         let cleanedText = cleanMarkdown(text)
@@ -41,12 +41,12 @@ class GroqTTSManager: NSObject {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
-        print("[GroqTTSManager] Sending request to Groq TTS...")
+        log("Sending request to Groq TTS...", category: .network, component: "GroqTTSManager")
 
         // Perform request with retry logic
         let data = try await NetworkManager.shared.performRequestWithRetry(request)
 
-        print("[GroqTTSManager] Received \(data.count) bytes of audio")
+        log("Received \(data.count) bytes of audio", category: .tts, component: "GroqTTSManager")
 
         // Play the audio
         try await playAudio(data)
@@ -75,7 +75,7 @@ class GroqTTSManager: NSObject {
                     return
                 }
 
-                print("[GroqTTSManager] Started audio playback")
+                log("Started audio playback", category: .tts, component: "GroqTTSManager")
             } catch {
                 playbackContinuation = nil
                 continuation.resume(throwing: error)
@@ -99,10 +99,10 @@ class GroqTTSManager: NSObject {
             let audioSession = AVAudioSession.sharedInstance()
             try audioSession.setActive(false, options: .notifyOthersOnDeactivation)
         } catch {
-            print("[GroqTTSManager] Failed to release audio session: \(error)")
+            logError("Failed to release audio session: \(error)", component: "GroqTTSManager")
         }
 
-        print("[GroqTTSManager] Stopped playback")
+        log("Stopped playback", category: .tts, component: "GroqTTSManager")
     }
 
     var isSpeaking: Bool {
@@ -150,9 +150,9 @@ extension GroqTTSManager: AVAudioPlayerDelegate {
             do {
                 let audioSession = AVAudioSession.sharedInstance()
                 try audioSession.setActive(false, options: .notifyOthersOnDeactivation)
-                print("[GroqTTSManager] Playback finished, released audio session")
+                log("Playback finished, released audio session", category: .tts, component: "GroqTTSManager")
             } catch {
-                print("[GroqTTSManager] Failed to release audio session: \(error)")
+                logError("Failed to release audio session: \(error)", component: "GroqTTSManager")
             }
 
             // Resume continuation
@@ -172,7 +172,7 @@ extension GroqTTSManager: AVAudioPlayerDelegate {
 
     nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
         Task { @MainActor in
-            print("[GroqTTSManager] Decode error: \(error?.localizedDescription ?? "unknown")")
+            logError("Decode error: \(error?.localizedDescription ?? "unknown")", component: "GroqTTSManager")
 
             if let continuation = playbackContinuation {
                 playbackContinuation = nil

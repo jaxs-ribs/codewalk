@@ -26,7 +26,8 @@ enum ProposedAction: Codable {
     case copyDescription
     case copyPhasing
     case copyBoth
-    case search(String)  // New action for search
+    case search(String)  // Shallow search (small depth)
+    case deepSearch(String)  // Deep research (medium depth)
 
     // Custom coding for enum with associated values
     enum CodingKeys: String, CodingKey {
@@ -57,7 +58,7 @@ enum ProposedAction: Codable {
         case "edit_description":
             let content = try container.decode(String.self, forKey: .content)
             self = .editDescription(content)
-        case "edit_phasing":
+        case "edit_phasing", "edit_phase":  // Handle common variation
             let content = try container.decode(String.self, forKey: .content)
             let phaseNumber = try container.decodeIfPresent(Int.self, forKey: .phaseNumber)
             self = .editPhasing(phaseNumber: phaseNumber, content: content)
@@ -81,7 +82,12 @@ enum ProposedAction: Codable {
         case "search":
             let query = try container.decode(String.self, forKey: .query)
             self = .search(query)
+        case "deep_search":
+            let query = try container.decode(String.self, forKey: .query)
+            self = .deepSearch(query)
         default:
+            // Log the unknown action for debugging
+            log("Warning: Unknown action '\(action)' - falling back to error", category: .router, component: "Router")
             throw DecodingError.dataCorrupted(
                 DecodingError.Context(
                     codingPath: [],
@@ -135,6 +141,9 @@ enum ProposedAction: Codable {
         case .search(let query):
             try container.encode("search", forKey: .action)
             try container.encode(query, forKey: .query)
+        case .deepSearch(let query):
+            try container.encode("deep_search", forKey: .action)
+            try container.encode(query, forKey: .query)
         }
     }
 }
@@ -162,32 +171,52 @@ class Router {
     private let apiURL = "https://api.groq.com/openai/v1/chat/completions"
 
     private let systemPrompt = """
-    Voice router. Default to conversation unless clear command intent.
+    Route user input to appropriate action. Return EXACT JSON format shown in examples.
 
-    COMMAND PATTERNS:
-    - Contains "write" + "description/phasing" → write_*
-    - Contains "read" + "description/phasing/phase X" → read_*
-    - Contains "edit/change/update" + target → edit_*
-    - Contains "search" + anything → search (extract query after "search")
-    - Contains "copy" + target → copy_*
-    - Exact: "repeat/stop/next/previous" → respective action
+    ACTIONS AND EXACT JSON FORMATS:
 
-    CONVERSATION:
-    - Project ideas, features, requirements
-    - Questions without command verbs
-    - Statements and acknowledgments
+    SEARCH:
+    "search for X" → {"intent": "directive", "action": {"action": "search", "query": "X"}}
+    "look up X" → {"intent": "directive", "action": {"action": "search", "query": "X"}}
 
-    JSON format:
-    {
-        "intent": "directive|conversation",
-        "action": {
-            "action": "name",
-            "content": "message/edit content",
-            "phaseNumber": if_applicable,
-            "query": "if_search"
-        },
-        "reasoning": "brief"
-    }
+    DEEP SEARCH:
+    "deep research X" → {"intent": "directive", "action": {"action": "deep_search", "query": "X"}}
+    "research X thoroughly" → {"intent": "directive", "action": {"action": "deep_search", "query": "X"}}
+
+    WRITE:
+    "write the description" → {"intent": "directive", "action": {"action": "write_description"}}
+    "write the phasing" → {"intent": "directive", "action": {"action": "write_phasing"}}
+    "write both/write both artifacts" → {"intent": "directive", "action": {"action": "write_both"}}
+    "write description and phasing" → {"intent": "directive", "action": {"action": "write_both"}}
+
+    READ:
+    "read the description" → {"intent": "directive", "action": {"action": "read_description"}}
+    "read the phasing" → {"intent": "directive", "action": {"action": "read_phasing"}}
+    "read phase 1" → {"intent": "directive", "action": {"action": "read_specific_phase", "phaseNumber": 1}}
+    "read me phase two" → {"intent": "directive", "action": {"action": "read_specific_phase", "phaseNumber": 2}}
+
+    EDIT:
+    "edit the description to say X" → {"intent": "directive", "action": {"action": "edit_description", "content": "X"}}
+    "edit the phasing" → {"intent": "directive", "action": {"action": "edit_phasing", "content": "..."}}
+    "edit phase 2 to include X" → {"intent": "directive", "action": {"action": "edit_phasing", "phaseNumber": 2, "content": "include X"}}
+    "change phase 1 to Y" → {"intent": "directive", "action": {"action": "edit_phasing", "phaseNumber": 1, "content": "Y"}}
+
+    COPY:
+    "copy description" → {"intent": "directive", "action": {"action": "copy_description"}}
+    "copy phasing" → {"intent": "directive", "action": {"action": "copy_phasing"}}
+    "copy both" → {"intent": "directive", "action": {"action": "copy_both"}}
+
+    NAVIGATION:
+    "repeat" → {"intent": "directive", "action": {"action": "repeat_last"}}
+    "stop" → {"intent": "directive", "action": {"action": "stop"}}
+    "next phase" → {"intent": "directive", "action": {"action": "next_phase"}}
+    "previous phase" → {"intent": "directive", "action": {"action": "previous_phase"}}
+
+    CONVERSATION (default for questions/discussion):
+    "how does X work?" → {"intent": "conversation", "action": {"action": "conversation", "content": "how does X work?"}}
+    "I want to build X" → {"intent": "conversation", "action": {"action": "conversation", "content": "I want to build X"}}
+
+    CRITICAL: Use EXACT action names shown above (e.g., "edit_phasing" not "edit_phase")
     """
 
     init(groqApiKey: String, modelId: String) {

@@ -42,13 +42,13 @@ class SearchService {
         self.resultCount = config.searchResultCount
         self.fetchTimeoutSeconds = TimeInterval(config.fetchTimeoutMs) / 1000.0
         self.modelId = config.llmModelId
-        print("[SearchService] Initialized with model: \(modelId), \(resultCount) results, \(fetchTimeoutSeconds)s timeout")
+        log("Initialized with model: \(modelId), \(resultCount) results, \(fetchTimeoutSeconds)s timeout", category: .search, component: "SearchService")
     }
 
     // MARK: - Public Interface
 
     func search(query: String) async throws -> String {
-        print("[SearchService] Starting search for: \(query)")
+        log("Starting search for: \(query)", category: .search, component: "SearchService")
         let startTime = Date()
 
         // Step 1: Search Brave
@@ -58,14 +58,14 @@ class SearchService {
             return "No search results found. Try different keywords."
         }
 
-        print("[SearchService] Found \(searchResults.count) search results")
+        log("Found \(searchResults.count) search results", category: .search, component: "SearchService")
 
         // Step 2: Fetch pages concurrently
         let urls = searchResults.map { $0.url }
         let fetchedPages = await fetchPagesConcurrently(urls: urls)
 
         let successfulFetches = fetchedPages.filter { $0.content != nil }.count
-        print("[SearchService] Fetched \(successfulFetches)/\(fetchedPages.count) pages successfully")
+        log("Fetched \(successfulFetches)/\(fetchedPages.count) pages successfully", category: .search, component: "SearchService")
 
         // Step 3: Build prompt
         let prompt = buildPrompt(query: query, results: searchResults, pages: fetchedPages)
@@ -146,7 +146,7 @@ class SearchService {
     }
 
     private func fetchPage(url: String) async -> FetchedPage {
-        print("[SearchService] Fetching: \(url)")
+        log("Fetching: \(url)", category: .search, component: "SearchService")
 
         guard let pageURL = URL(string: url) else {
             return FetchedPage(url: url, content: nil)
@@ -170,12 +170,12 @@ class SearchService {
             // Convert HTML to text
             let text = await extractTextFromHTML(html)
 
-            print("[SearchService] Fetched \(text.count) chars from \(url)")
+            log("Fetched \(text.count) chars from \(url)", category: .search, component: "SearchService")
 
             return FetchedPage(url: url, content: text)
 
         } catch {
-            print("[SearchService] Failed to fetch \(url): \(error.localizedDescription)")
+            logError("Failed to fetch \(url): \(error.localizedDescription)", component: "SearchService")
             return FetchedPage(url: url, content: nil)
         }
     }
@@ -375,9 +375,9 @@ class SearchService {
         }
 
         // Log the prompt for debugging
-        print("[SearchService] Built prompt with \(results.count) results, total length: \(prompt.count) chars")
+        log("Built prompt with \(results.count) results, total length: \(prompt.count) chars", category: .search, component: "SearchService")
         if prompt.count > 0 {
-            print("[SearchService] First 500 chars of prompt: \(String(prompt.prefix(500)))")
+            log("First 500 chars of prompt: \(String(prompt.prefix(500)))", category: .search, component: "SearchService")
         }
 
         return prompt
@@ -431,7 +431,7 @@ class SearchService {
             throw SearchError.invalidResponse
         }
 
-        print("[SearchService] LLM Response (\(content.count) chars): \(content)")
+        log("LLM Response (\(content.count) chars): \(content)", category: .search, component: "SearchService")
 
         return content
     }

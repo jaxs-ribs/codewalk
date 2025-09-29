@@ -100,7 +100,7 @@ class ArtifactManager {
 
             return content
         } catch {
-            print("[ArtifactManager] Failed to read \(filename): \(error)")
+            logError("Failed to read \(filename): \(error)", component: "ArtifactManager")
             return nil
         }
     }
@@ -127,15 +127,15 @@ class ArtifactManager {
                 try fileManager.moveItem(at: tempURL, to: url)
             }
 
-            print("[ArtifactManager] Successfully wrote \(filename) (\(content.count) chars)")
+            log("Successfully wrote \(filename) (\(content.count) chars)", category: .artifacts, component: "ArtifactManager")
 
             // Log preview of what was written
             let preview = content.prefix(200).replacingOccurrences(of: "\n", with: " ")
-            print("[ArtifactManager] Wrote content: \(preview)...")
+            log("Wrote content: \(preview)...", category: .artifacts, component: "ArtifactManager")
 
             return true
         } catch {
-            print("[ArtifactManager] Failed to write \(filename): \(error)")
+            logError("Failed to write \(filename): \(error)", component: "ArtifactManager")
 
             // Cleanup temp file if it exists
             try? fileManager.removeItem(at: tempURL)
@@ -160,12 +160,12 @@ class ArtifactManager {
 
         do {
             try fileManager.copyItem(at: sourceURL, to: backupURL)
-            print("[ArtifactManager] Created backup: \(backupFilename)")
+            log("Created backup: \(backupFilename)", category: .artifacts, component: "ArtifactManager")
 
             // Keep only last 10 backups per file
             cleanupOldBackups(for: filename)
         } catch {
-            print("[ArtifactManager] Failed to create backup: \(error)")
+            logError("Failed to create backup: \(error)", component: "ArtifactManager")
         }
     }
 
@@ -184,11 +184,11 @@ class ArtifactManager {
             if backups.count > 10 {
                 for backup in backups.dropFirst(10) {
                     try fileManager.removeItem(at: backup)
-                    print("[ArtifactManager] Deleted old backup: \(backup.lastPathComponent)")
+                    log("Deleted old backup: \(backup.lastPathComponent)", category: .artifacts, component: "ArtifactManager")
                 }
             }
         } catch {
-            print("[ArtifactManager] Failed to cleanup backups: \(error)")
+            logError("Failed to cleanup backups: \(error)", component: "ArtifactManager")
         }
     }
 
@@ -197,7 +197,7 @@ class ArtifactManager {
 
     func readPhase(from filename: String, phaseNumber: Int) -> String? {
         guard let content = safeRead(filename: filename) else {
-            print("[ArtifactManager] Cannot read phase from non-existent file: \(filename)")
+            logError("Cannot read phase from non-existent file: \(filename)", component: "ArtifactManager")
             return nil
         }
 
@@ -227,12 +227,12 @@ class ArtifactManager {
         }
 
         if phaseContent.isEmpty {
-            print("[ArtifactManager] Phase \(phaseNumber) not found")
+            logError("Phase \(phaseNumber) not found", component: "ArtifactManager")
             return nil
         }
 
         let result = phaseContent.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        print("[ArtifactManager] Read phase \(phaseNumber) (\(result.count) chars)")
+        log("Read phase \(phaseNumber) (\(result.count) chars)", category: .artifacts, component: "ArtifactManager")
         return result
     }
 
@@ -245,7 +245,7 @@ class ArtifactManager {
                 .filter { $0.hasSuffix(".md") }
                 .sorted()
         } catch {
-            print("[ArtifactManager] Failed to list artifacts: \(error)")
+            logError("Failed to list artifacts: \(error)", component: "ArtifactManager")
             return []
         }
     }

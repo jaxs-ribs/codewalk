@@ -42,8 +42,8 @@ class Orchestrator: ObservableObject {
     private let groqTTSManager: GroqTTSManager?
     private let elevenLabsTTS: ElevenLabsTTS?
     private let ttsProvider: TTSProvider
-    private var searchService: SearchService?  // For Phase 1 testing
-    private var searchSoundTimer: Timer?  // Timer for search feedback sounds
+    private var searchService: SearchService?  // Legacy Brave search
+    private var perplexityService: PerplexitySearchService?  // New Perplexity search
     private var lastSearchQuery: String?
 
     init(config: EnvConfig) {
@@ -76,10 +76,14 @@ class Orchestrator: ObservableObject {
 
         log("Initialized with ArtifactManager, AssistantClient, and TTS", category: .system, component: "Orchestrator")
 
-        // Initialize SearchService if Brave API key is available (Phase 1 testing)
-        if !config.braveApiKey.isEmpty {
+        // Initialize PerplexitySearchService if API key is available
+        if !config.perplexityApiKey.isEmpty {
+            perplexityService = PerplexitySearchService(apiKey: config.perplexityApiKey)
+            log("PerplexitySearchService initialized", category: .system, component: "Orchestrator")
+        } else if !config.braveApiKey.isEmpty {
+            // Fallback to Brave search if no Perplexity key
             searchService = SearchService(config: config)
-            log("SearchService initialized", category: .system, component: "Orchestrator")
+            log("SearchService (Brave) initialized as fallback", category: .system, component: "Orchestrator")
         }
     }
 
@@ -92,19 +96,19 @@ class Orchestrator: ObservableObject {
             return
         }
 
-        print("[Orchestrator] TEST: Starting search for '\(query)'")
+        log("TEST: Starting search for '\(query)'", category: .search, component: "Orchestrator")
         lastResponse = "Searching for \(query)..."
 
         do {
             let summary = try await searchService.search(query: query)
-            print("[Orchestrator] TEST: Search successful!")
-            print("[Orchestrator] TEST: Summary (\(summary.count) chars): \(summary.prefix(200))...")
+            log("TEST: Search successful!", category: .search, component: "Orchestrator")
+            log("TEST: Summary (\(summary.count) chars): \(summary.prefix(200))...", category: .search, component: "Orchestrator")
             lastResponse = summary
 
             // Test TTS with the summary
             await speak(summary)
         } catch {
-            print("[Orchestrator] TEST: Search failed - \(error)")
+            logError("TEST: Search failed - \(error)", component: "Orchestrator")
             lastResponse = "Search failed: \(error.localizedDescription)"
         }
     }
@@ -184,35 +188,74 @@ class Orchestrator: ObservableObject {
         case .copyBoth:
             await copyBothAction()
         case .search(let query):
-            await executeSearch(query: query)
+            await executeSearch(query: query, depth: .small)
+        case .deepSearch(let query):
+            await executeSearch(query: query, depth: .medium)
         }
     }
 
     // MARK: - Search Execution
 
-    private func executeSearch(query: String) async {
-        guard let searchService = searchService else {
-            lastResponse = "Search service not available. Check BRAVE_API_KEY in .env"
+    private func executeSearch(query: String, depth: SearchDepth) async {
+        // Prefer Perplexity if available
+        if let perplexityService = perplexityService {
+            await executePerplexitySearch(query: query, depth: depth)
+        } else if let searchService = searchService {
+            // Fallback to Brave search (always shallow)
+            await executeBraveSearch(query: query)
+        } else {
+            lastResponse = "Search service not available. Check PERPLEXITY_API_KEY or BRAVE_API_KEY in .env"
             await speak(lastResponse)
-            return
         }
+    }
 
-        log("Executing search for: '\(query)'", category: .search, component: "Orchestrator")
+    private func executePerplexitySearch(query: String, depth: SearchDepth) async {
+        guard let perplexityService = perplexityService else { return }
+
+        let depthDescription = depth == .medium ? "deep research" : "search"
+        log("Executing Perplexity \(depthDescription) for: '\(query)'", category: .search, component: "Orchestrator")
+        lastSearchQuery = query
+
+        let searchingMessage = depth == .medium
+            ? "Doing deep research on \(query)..."
+            : "Searching for \(query)..."
+        lastResponse = searchingMessage
+        await speak(searchingMessage)
+
+        do {
+            let summary = try await perplexityService.search(query: query, depth: depth)
+            logSuccess("Perplexity \(depthDescription) successful, summary: \(summary.count) chars", component: "Orchestrator")
+
+            // Strip think blocks before using for TTS
+            let cleanedSummary = stripThinkBlocks(summary)
+            lastResponse = cleanedSummary
+
+            // Add search result to conversation history (keep full response for context)
+            let historyPrefix = depth == .medium ? "Deep research on: " : "Search for: "
+            addUserTranscript(historyPrefix + query)
+            addAssistantResponse(summary)  // Keep full response in history
+
+            // Speak the cleaned search results
+            await speak(cleanedSummary)
+        } catch {
+            logError("Perplexity \(depthDescription) failed: \(error)", component: "Orchestrator")
+            lastResponse = "Sorry, the \(depthDescription) failed. Please try again."
+            await speak(lastResponse)
+        }
+    }
+
+    private func executeBraveSearch(query: String) async {
+        guard let searchService = searchService else { return }
+
+        log("Executing Brave search for: '\(query)'", category: .search, component: "Orchestrator")
         lastSearchQuery = query
         lastResponse = "Searching for \(query)..."
         await speak("Searching for \(query)...")
 
-        // Start search with tick sounds
-        playSearchTickSound()  // Initial tick
-        startSearchSoundTimer()
-
         do {
             let summary = try await searchService.search(query: query)
-            logSuccess("Search successful, summary: \(summary.count) chars", component: "Orchestrator")
+            logSuccess("Brave search successful, summary: \(summary.count) chars", component: "Orchestrator")
             lastResponse = summary
-
-            // Stop search sounds (no completion chime)
-            stopSearchSoundTimer()
 
             // Add search result to conversation history
             addUserTranscript("Search for: \(query)")
@@ -221,11 +264,8 @@ class Orchestrator: ObservableObject {
             // Speak the search results
             await speak(summary)
         } catch {
-            logError("Search failed: \(error)", component: "Orchestrator")
+            logError("Brave search failed: \(error)", component: "Orchestrator")
             lastResponse = "Search failed: \(error.localizedDescription)"
-
-            // Stop search sounds (no error sound)
-            stopSearchSoundTimer()
 
             await speak("The search didn't work. \(error.localizedDescription)")
         }
@@ -351,7 +391,7 @@ class Orchestrator: ObservableObject {
             // Log first 100 chars for display
             let preview = String(content.prefix(100))
             lastResponse = "Reading description..."
-            print("[Orchestrator] Read description (\(content.count) chars)")
+            log("Read description (\(content.count) chars)", category: .artifacts, component: "Orchestrator")
 
             // Speak the content using TTS
             await speak(content)
@@ -363,7 +403,7 @@ class Orchestrator: ObservableObject {
 
             // List what files exist
             let files = artifactManager.listArtifacts()
-            print("[Orchestrator] Current artifacts: \(files.joined(separator: ", "))")
+            log("Current artifacts: \(files.joined(separator: ", "))", category: .artifacts, component: "Orchestrator")
         }
     }
 
@@ -372,7 +412,7 @@ class Orchestrator: ObservableObject {
             // Log first 100 chars for display
             let preview = String(content.prefix(100))
             lastResponse = "Reading phasing..."
-            print("[Orchestrator] Read phasing (\(content.count) chars)")
+            log("Read phasing (\(content.count) chars)", category: .artifacts, component: "Orchestrator")
 
             // Speak the content using TTS
             await speak(content)
@@ -384,14 +424,14 @@ class Orchestrator: ObservableObject {
 
             // List what files exist
             let files = artifactManager.listArtifacts()
-            print("[Orchestrator] Current artifacts: \(files.joined(separator: ", "))")
+            log("Current artifacts: \(files.joined(separator: ", "))", category: .artifacts, component: "Orchestrator")
         }
     }
 
     private func readSpecificPhase(_ phaseNumber: Int) async {
         if let phaseContent = artifactManager.readPhase(from: "phasing.md", phaseNumber: phaseNumber) {
             lastResponse = phaseContent
-            print("[Orchestrator] Read phase \(phaseNumber) (\(phaseContent.count) chars)")
+            log("Read phase \(phaseNumber) (\(phaseContent.count) chars)", category: .artifacts, component: "Orchestrator")
 
             // Speak the phase content using TTS
             await speak(phaseContent)
@@ -460,7 +500,7 @@ class Orchestrator: ObservableObject {
                 await speak(self.lastResponse)
             }
         } catch {
-            print("[Orchestrator] Failed to regenerate \(type.displayName): \(error)")
+            logError("Failed to regenerate \(type.displayName): \(error)", component: "Orchestrator")
             lastResponse = "Failed to regenerate \(type.displayName)"
             await speak(self.lastResponse)
         }
@@ -474,16 +514,14 @@ class Orchestrator: ObservableObject {
         let lowerContent = trimmedContent.lowercased()
 
         if let explicitQuery = extractSearchQuery(from: trimmedContent) {
-            print("[Orchestrator] Detected inline search request: '\(explicitQuery)'")
-            await executeSearch(query: explicitQuery)
+            log("Detected inline search request: '\(explicitQuery)'", category: .search, component: "Orchestrator")
+            // Determine depth based on content
+            let depth: SearchDepth = lowerContent.contains("deep") || lowerContent.contains("research") ? .medium : .small
+            await executeSearch(query: explicitQuery, depth: depth)
             return
         }
 
-        if shouldReuseLastSearch(for: lowerContent), let query = lastSearchQuery?.trimmingCharacters(in: .whitespacesAndNewlines), !query.isEmpty {
-            print("[Orchestrator] Re-running last search for conversation follow-up: '\(query)'")
-            await executeSearch(query: query)
-            return
-        }
+        // Removed auto-rerun search logic - was causing false positives
 
         do {
             // Generate conversational response
@@ -499,7 +537,7 @@ class Orchestrator: ObservableObject {
             // Add assistant response to history
             addAssistantResponse(response)
         } catch {
-            print("[Orchestrator] Failed to generate response: \(error)")
+            logError("Failed to generate response: \(error)", component: "Orchestrator")
             lastResponse = "I couldn't process that. Try again?"
 
             // Speak the error
@@ -562,7 +600,7 @@ class Orchestrator: ObservableObject {
     // MARK: - Error Handling
 
     private func handleGenerationError(_ error: Error, for artifact: String) -> String {
-        print("[Orchestrator] Failed to generate \(artifact): \(error)")
+        logError("Failed to generate \(artifact): \(error)", component: "Orchestrator")
 
         let nsError = error as NSError
 
@@ -601,14 +639,10 @@ class Orchestrator: ObservableObject {
                 } catch {
                     logError("ElevenLabs TTS failed, falling back to iOS TTS: \(error)", component: "TTS")
                     // Fallback to iOS TTS
-                    await MainActor.run {
-                        self.ttsManager.speak(text)
-                    }
+                    await ttsManager.speak(text)
                 }
             } else {
-                await MainActor.run {
-                    self.ttsManager.speak(text)
-                }
+                await ttsManager.speak(text)
             }
         case .groq:
             if let groqTTS = groqTTSManager {
@@ -617,19 +651,13 @@ class Orchestrator: ObservableObject {
                 } catch {
                     logError("Groq TTS failed, falling back to iOS TTS: \(error)", component: "TTS")
                     // Fallback to iOS TTS
-                    await MainActor.run {
-                        self.ttsManager.speak(text)
-                    }
+                    await ttsManager.speak(text)
                 }
             } else {
-                await MainActor.run {
-                    self.ttsManager.speak(text)
-                }
+                await ttsManager.speak(text)
             }
         case .native:
-            await MainActor.run {
-                self.ttsManager.speak(text)
-            }
+            await ttsManager.speak(text)
         }
     }
 
@@ -669,6 +697,22 @@ class Orchestrator: ObservableObject {
 
     func currentSearchQuery() -> String? {
         lastSearchQuery
+    }
+
+    // MARK: - Content Processing
+
+    private func stripThinkBlocks(_ content: String) -> String {
+        // Remove <think>...</think> blocks from content
+        let pattern = "<think>.*?</think>"
+        let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators])
+        let range = NSRange(location: 0, length: content.utf16.count)
+
+        if let regex = regex {
+            let cleaned = regex.stringByReplacingMatches(in: content, options: [], range: range, withTemplate: "")
+            return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return content
     }
 
     // MARK: - Clipboard Operations
@@ -724,33 +768,4 @@ class Orchestrator: ObservableObject {
         AudioServicesPlaySystemSound(1057)
     }
 
-    private func playSearchTickSound() {
-        // Keyboard tap sound - much more pleasant than 1103
-        AudioServicesPlaySystemSound(1057)
-    }
-
-    private func playSearchCompleteSound() {
-        // Success chime
-        AudioServicesPlaySystemSound(1025)
-    }
-
-    private func playSearchErrorSound() {
-        // Error/failure sound
-        AudioServicesPlaySystemSound(1053)
-    }
-
-    private func startSearchSoundTimer() {
-        // Stop any existing timer
-        stopSearchSoundTimer()
-
-        // Play tick sound every 1.5 seconds
-        searchSoundTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-            self?.playSearchTickSound()
-        }
-    }
-
-    private func stopSearchSoundTimer() {
-        searchSoundTimer?.invalidate()
-        searchSoundTimer = nil
-    }
 }
