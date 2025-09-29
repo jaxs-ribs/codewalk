@@ -1,5 +1,0 @@
-# Snake Game for Modern Browsers
-
-This is a classic snake game that runs in any web browser. You steer a growing line of blocks around the screen, eating food and avoiding walls. The twist is in the visuals. Instead of flat pixels, the snake shimmers with a living gradient that flows as you move. Each food item pulses like a tiny star, and when you eat it, the whole snake flashes with color. The background is a soft, dark canvas that lets the colors sing.
-
-Why build this? Because everyone knows snake, so the learning curve is zero. Yet few people have seen it look this alive. It proves that even the oldest ideas can feel fresh with smart styling. You will open the file, press arrow keys, and play for five seconds before the beauty hooks you. The motion is silky, the colors shift like oil on water, and every successful bite gives a tiny burst of joy. It feels like the game is breathing with you, calm but alert, simple but never dull.
