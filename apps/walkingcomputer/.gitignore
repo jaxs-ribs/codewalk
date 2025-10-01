@@ -44,3 +44,6 @@ logs/
 # Temporary files
 *.tmp
 *.temp
+
+artifacts/*
+artifacts/

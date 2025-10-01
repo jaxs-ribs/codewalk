@@ -1,5 +1,0 @@
-# Project Description
-
-Meet the world’s first smart, pressure-valve plug that keeps you clean, comfortable, and in control. It slips in like an ordinary plug, but hidden inside are tiny sensors and a silent micro-valve. When gas builds up, the valve opens just enough to release it without breaking the seal, so you stay confident in any room. A soft, medical-grade silicone body anchors the device, while a flexible tail houses the battery and Bluetooth radio. Pair it with our app once and forget it; the plug auto-calibrates to your rhythm and logs every event so you can spot food triggers, stress patterns, or medication side-effects.
-
-The subscription covers the hardware, unlimited app use, and free replacements whenever the battery fades. At $150 a month it undercuts the typical $200 people spend on diapers, so members keep money in their pocket and dignity intact. No more frantic wardrobe checks, no more bulky disposals, just quiet protection that pays for itself.
