@@ -8,5 +8,6 @@ target
 /recordings/*
 
 # Walking Computer artifacts
+/apps/walkingcomputer/artifacts/*
 /apps/walkingcomputer/artifacts/
 /apps/walkingcomputer/logs/
