@@ -57,9 +57,9 @@ class GroqTTSManager: NSObject {
             playbackContinuation = continuation
 
             do {
-                // Configure audio session
+                // Configure audio session for playback
                 let audioSession = AVAudioSession.sharedInstance()
-                try audioSession.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
+                try audioSession.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetooth])
                 try audioSession.setActive(true)
 
                 // Create audio player
@@ -94,12 +94,14 @@ class GroqTTSManager: NSObject {
 
         audioPlayer = nil
 
-        // Release audio session
+        // Restore audio session for recording
         do {
             let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+            try audioSession.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker, .allowBluetooth])
+            try audioSession.setPreferredIOBufferDuration(0.005)
+            try audioSession.setActive(true, options: [])
         } catch {
-            logError("Failed to release audio session: \(error)", component: "GroqTTSManager")
+            logError("Failed to restore recording audio session: \(error)", component: "GroqTTSManager")
         }
 
         log("Stopped playback", category: .tts, component: "GroqTTSManager")
@@ -146,13 +148,15 @@ class GroqTTSManager: NSObject {
 extension GroqTTSManager: AVAudioPlayerDelegate {
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor in
-            // Release audio session
+            // Restore audio session for recording
             do {
                 let audioSession = AVAudioSession.sharedInstance()
-                try audioSession.setActive(false, options: .notifyOthersOnDeactivation)
-                log("Playback finished, released audio session", category: .tts, component: "GroqTTSManager")
+                try audioSession.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker, .allowBluetooth])
+                try audioSession.setPreferredIOBufferDuration(0.005)
+                try audioSession.setActive(true, options: [])
+                log("Playback finished, restored recording audio session", category: .tts, component: "GroqTTSManager")
             } catch {
-                logError("Failed to release audio session: \(error)", component: "GroqTTSManager")
+                logError("Failed to restore recording audio session: \(error)", component: "GroqTTSManager")
             }
 
             // Resume continuation
