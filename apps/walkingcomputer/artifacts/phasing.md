@@ -1,45 +1,29 @@
 # Project Phasing
 
-## Phase 1: Project Setup
-Create the basic project structure with HTML, CSS, and JavaScript files, and set up a simple Express server.
-**Definition of Done:** Run `npm start`, open localhost:3000, see blank page with no errors.
+## Phase 1: Create database schema
+**Description:** Create SQLite database with episodes table
+**Definition of Done:** Run `sqlite3 toilet_tracker.db ".schema episodes"` and see table with columns: id, timestamp, urgency, notes
 
-## Phase 2: Database Schema
-Set up SQLite database and create tables for users and messages.
-**Definition of Done:** Run `sqlite3 chat.db ".schema users"`, see columns: id, username, password_hash, created_at.
+## Phase 2: Build basic logging form
+**Description:** Create HTML form with urgency buttons (1-5) and notes field
+**Definition of Done:** Open index.html, see 5 urgency buttons and notes text input field
 
-## Phase 3: Registration API
-Build the registration endpoint that hashes passwords and stores users in the database.
-**Definition of Done:** Run `curl -X POST /api/register -d '{"username":"test","password":"pass123"}'`, receive 201 response with user ID.
+## Phase 3: Implement database save functionality
+**Description:** Connect form to database to save episode data
+**Definition of Done:** Click urgency level 3, type "test" in notes, submit form, run `sqlite3 toilet_tracker.db "SELECT * FROM episodes"` and see saved row with urgency=3, notes="test"
 
-## Phase 4: Login API
-Create the login endpoint that validates credentials and returns JWT tokens.
-**Definition of Done:** Run `curl -X POST /api/login -d '{"username":"test","password":"pass123"}'`, receive 200 response with JWT token.
+## Phase 4: Add timestamp override feature
+**Description:** Add ability to modify timestamp when logging past episodes
+**Definition of Done:** Click "Change time", select timestamp 2 hours ago, save episode, run `sqlite3 toilet_tracker.db "SELECT timestamp FROM episodes WHERE id=1"` and see timestamp 2 hours before current time
 
-## Phase 5: Socket.IO Connection
-Integrate Socket.IO and establish real-time connection handling.
-**Definition of Done:** Open browser console, see "Socket connected" message when page loads.
+## Phase 5: Build daily summary view
+**Description:** Create page displaying today's logged episodes with urgency colors
+**Definition of Done:** Open summary.html, see section showing today's date with list of all episodes logged today
 
-## Phase 6: Message Sending
-Implement real-time message broadcasting through Socket.IO.
-**Definition of Done:** Open two browser tabs, send message through console: `socket.emit('message', 'hello')`, see message appear in second tab's console.
+## Phase 6: Add episode counter and average urgency
+**Description:** Display total episodes and average urgency for today
+**Definition of Done:** Add 3 episodes with urgency levels 2, 4, and 3, open summary.html, see "Total episodes: 3" and "Average urgency: 3.0"
 
-## Phase 7: Message Storage
-Add database persistence for messages with proper timestamps.
-**Definition of Done:** Send message through Socket.IO, run `sqlite3 chat.db "SELECT * FROM messages LIMIT 1"`, see message row with content and timestamp.
-
-## Phase 8: Message History
-Create API endpoint to retrieve stored messages.
-**Definition of Done:** Run `curl /api/messages`, receive JSON array with message objects containing content and timestamp.
-
-## Phase 9: Basic UI
-Build simple HTML interface with message display and input field.
-**Definition of Done:** Open localhost:3000, see message list area and text input with send button, type and send message, see it appear in list.
-
-## Phase 10: Authentication UI
-Add registration and login forms to the interface.
-**Definition of Done:** Open localhost:3000, see "Register" and "Login" forms, submit registration form, receive success message.
-
-## Phase 11: Protected Chat
-Connect authentication to Socket.IO, requiring valid JWT for sending messages.
-**Definition of Done:** Login through UI, send message through form, see message appear with username attached.
+## Phase 7: Implement CSV export
+**Description:** Add button to download all data as CSV file
+**Definition of Done:** Click "Export Data", open downloaded toilet_tracker.csv, see header row "timestamp,urgency,notes" followed by all logged episodes
