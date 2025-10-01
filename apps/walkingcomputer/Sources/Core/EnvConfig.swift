@@ -5,6 +5,7 @@ struct EnvConfig {
     var groqApiKey: String = ""
     var braveApiKey: String = ""
     var elevenLabsApiKey: String = ""
+    var deepInfraApiKey: String = ""
     var avalonApiKey: String = ""
     var perplexityApiKey: String = ""
     var searchResultCount: Int = 8
@@ -24,6 +25,7 @@ struct EnvConfig {
         config.groqApiKey = env["GROQ_API_KEY"] ?? ""
         config.braveApiKey = env["BRAVE_API_KEY"] ?? ""
         config.elevenLabsApiKey = env["ELEVENLABS_API_KEY"] ?? ""
+        config.deepInfraApiKey = env["DEEPINFRA_API_KEY"] ?? ""
         config.avalonApiKey = env["AVALON_API_KEY"] ?? ""
         config.perplexityApiKey = env["PERPLEXITY_API_KEY"] ?? ""
         config.searchResultCount = Int(env["RESULT_COUNT"] ?? "8") ?? 8
@@ -34,6 +36,7 @@ struct EnvConfig {
         log("- GROQ_API_KEY: \(config.groqApiKey.prefix(10))...", category: .system, component: "EnvConfig")
         log("- BRAVE_API_KEY: \(config.braveApiKey.prefix(10))...", category: .system, component: "EnvConfig")
         log("- ELEVENLABS_API_KEY: \(config.elevenLabsApiKey.prefix(10))...", category: .system, component: "EnvConfig")
+        log("- DEEPINFRA_API_KEY: \(config.deepInfraApiKey.prefix(10))...", category: .system, component: "EnvConfig")
         log("- AVALON_API_KEY: \(config.avalonApiKey.prefix(10))...", category: .system, component: "EnvConfig")
         log("- PERPLEXITY_API_KEY: \(config.perplexityApiKey.prefix(10))...", category: .system, component: "EnvConfig")
         log("- Search settings: \(config.searchResultCount) results, \(config.fetchTimeoutMs)ms timeout", category: .system, component: "EnvConfig")
@@ -62,6 +65,8 @@ struct EnvConfig {
                 config.braveApiKey = value
             case "ELEVENLABS_API_KEY":
                 config.elevenLabsApiKey = value
+            case "DEEPINFRA_API_KEY":
+                config.deepInfraApiKey = value
             case "AVALON_API_KEY":
                 config.avalonApiKey = value
             case "PERPLEXITY_API_KEY":

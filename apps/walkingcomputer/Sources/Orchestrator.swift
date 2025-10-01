@@ -23,6 +23,8 @@ enum TTSProvider {
     case native
     case groq
     case elevenLabs
+    case deepInfra
+    case lowLatency  // Streaming + pipeline fallback
 }
 
 // MARK: - Action Queue Item
@@ -50,6 +52,8 @@ class Orchestrator: ObservableObject {
     #if canImport(UIKit)
     private let groqTTSManager: GroqTTSManager?
     private let elevenLabsTTS: ElevenLabsTTS?
+    private let deepInfraTTS: DeepInfraTTS?
+    private let lowLatencyTTS: LowLatencyTTS?
     #endif
 
     private let ttsProvider: TTSProvider
@@ -84,17 +88,39 @@ class Orchestrator: ObservableObject {
             ttsProvider = .elevenLabs
             elevenLabsTTS = ElevenLabsTTS(apiKey: config.elevenLabsApiKey)
             groqTTSManager = nil
+            deepInfraTTS = nil
+            lowLatencyTTS = nil
             log("Using ElevenLabs TTS", category: .tts, component: "Orchestrator")
         } else if CommandLine.arguments.contains("--UseGroqTTS") {
             ttsProvider = .groq
             groqTTSManager = GroqTTSManager(groqApiKey: config.groqApiKey)
             elevenLabsTTS = nil
+            deepInfraTTS = nil
+            lowLatencyTTS = nil
             log("Using Groq TTS with PlayAI voices", category: .tts, component: "Orchestrator")
-        } else {
+        } else if CommandLine.arguments.contains("--UseNativeTTS") {
             ttsProvider = .native
             groqTTSManager = nil
             elevenLabsTTS = nil
+            deepInfraTTS = nil
+            lowLatencyTTS = nil
             log("Using iOS native TTS", category: .tts, component: "Orchestrator")
+        } else if CommandLine.arguments.contains("--UseDeepInfraREST") {
+            // Old DeepInfra REST-only (for comparison)
+            ttsProvider = .deepInfra
+            deepInfraTTS = DeepInfraTTS(apiKey: config.deepInfraApiKey)
+            groqTTSManager = nil
+            elevenLabsTTS = nil
+            lowLatencyTTS = nil
+            log("Using DeepInfra Kokoro TTS (REST only)", category: .tts, component: "Orchestrator")
+        } else {
+            // Default: Low-latency streaming + pipeline fallback
+            ttsProvider = .lowLatency
+            lowLatencyTTS = LowLatencyTTS(apiKey: config.deepInfraApiKey)
+            groqTTSManager = nil
+            elevenLabsTTS = nil
+            deepInfraTTS = nil
+            log("Using Low-Latency Kokoro TTS (streaming + fallback, default)", category: .tts, component: "Orchestrator")
         }
         #else
         // On macOS (tests), always use native (which is mocked)
@@ -694,6 +720,25 @@ class Orchestrator: ObservableObject {
             } else {
                 await ttsManager.speak(text, interruptible: true)
             }
+        case .deepInfra:
+            if let deepInfra = deepInfraTTS {
+                do {
+                    try await deepInfra.synthesizeAndPlay(text)
+                } catch {
+                    logError("DeepInfra TTS failed, falling back to iOS TTS: \(error)", component: "TTS")
+                    // Fallback to iOS TTS
+                    await ttsManager.speak(text, interruptible: true)
+                }
+            } else {
+                await ttsManager.speak(text, interruptible: true)
+            }
+        case .lowLatency:
+            if let lowLatency = lowLatencyTTS {
+                await lowLatency.speak(text)
+            } else {
+                // Fallback to native
+                await ttsManager.speak(text, interruptible: true)
+            }
         case .native:
             await ttsManager.speak(text, interruptible: true)
         }
@@ -710,6 +755,10 @@ class Orchestrator: ObservableObject {
             elevenLabsTTS?.stop()
         case .groq:
             groqTTSManager?.stop()
+        case .deepInfra:
+            deepInfraTTS?.stop()
+        case .lowLatency:
+            lowLatencyTTS?.stop()
         case .native:
             ttsManager.stop()
         }

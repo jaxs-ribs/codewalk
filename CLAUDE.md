@@ -35,3 +35,25 @@ You're walking. You need predictability. A single event loop means no surprise e
 - Clean logs
 
 Research mode and long "thinking mode" can be added later without changing the loop.
+
+## Running the App
+The app is launched via `./run-sim.sh` in the `apps/walkingcomputer` directory. This script handles building and running the iOS simulator. Always test changes by running through this script, not directly through Xcode.
+
+## TTS Configuration
+The app uses **low-latency streaming Kokoro TTS** by default for the best balance of quality and speed:
+
+- **Low-Latency Kokoro (default)**: ~200-500ms TTFA via HTTP streaming + PCM, with automatic fallback to REST pipeline. High voice quality.
+- **iOS Native**: Instant playback, but robotic voice quality
+
+You can switch TTS providers via launch arguments in `run-sim.sh`:
+- No flag: Low-latency Kokoro with streaming + pipeline (default)
+- `--UseNativeTTS`: iOS native speech (instant, robotic)
+- `--UseDeepInfraREST`: Kokoro REST only (1.5-5s latency, for comparison)
+- `--UseElevenLabs`: ElevenLabs API
+- `--UseGroqTTS`: Groq TTS with PlayAI voices
+
+### Low-Latency Architecture
+The default TTS uses a hybrid approach:
+1. **Primary**: Streams PCM audio chunks over HTTP (ElevenLabs-compatible endpoint) with `optimize_streaming_latency=3`
+2. **Fallback**: Sentence-pipelined REST API if streaming unavailable
+3. **Target TTFA**: < 300ms median, < 500ms p95
