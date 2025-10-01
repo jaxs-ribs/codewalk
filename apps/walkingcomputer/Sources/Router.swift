@@ -18,6 +18,8 @@ enum ProposedAction: Codable {
     case readSpecificPhase(Int)
     case editDescription(String)
     case editPhasing(phaseNumber: Int?, content: String)
+    case splitPhase(phaseNumber: Int, instructions: String)
+    case mergePhases(startPhase: Int, endPhase: Int, instructions: String?)
     case conversation(String)
     case repeatLast
     case stop
@@ -33,6 +35,9 @@ enum ProposedAction: Codable {
         case content
         case phaseNumber
         case query  // For search
+        case instructions  // For split/merge
+        case startPhase  // For merge
+        case endPhase  // For merge
     }
 
     init(from decoder: Decoder) throws {
@@ -60,6 +65,15 @@ enum ProposedAction: Codable {
             let content = try container.decode(String.self, forKey: .content)
             let phaseNumber = try container.decodeIfPresent(Int.self, forKey: .phaseNumber)
             self = .editPhasing(phaseNumber: phaseNumber, content: content)
+        case "split_phase":
+            let phaseNumber = try container.decode(Int.self, forKey: .phaseNumber)
+            let instructions = try container.decode(String.self, forKey: .instructions)
+            self = .splitPhase(phaseNumber: phaseNumber, instructions: instructions)
+        case "merge_phases":
+            let startPhase = try container.decode(Int.self, forKey: .startPhase)
+            let endPhase = try container.decode(Int.self, forKey: .endPhase)
+            let instructions = try container.decodeIfPresent(String.self, forKey: .instructions)
+            self = .mergePhases(startPhase: startPhase, endPhase: endPhase, instructions: instructions)
         case "conversation":
             let content = try container.decode(String.self, forKey: .content)
             self = .conversation(content)
@@ -115,6 +129,15 @@ enum ProposedAction: Codable {
             try container.encode("edit_phasing", forKey: .action)
             try container.encode(content, forKey: .content)
             try container.encodeIfPresent(phaseNumber, forKey: .phaseNumber)
+        case .splitPhase(let phaseNumber, let instructions):
+            try container.encode("split_phase", forKey: .action)
+            try container.encode(phaseNumber, forKey: .phaseNumber)
+            try container.encode(instructions, forKey: .instructions)
+        case .mergePhases(let startPhase, let endPhase, let instructions):
+            try container.encode("merge_phases", forKey: .action)
+            try container.encode(startPhase, forKey: .startPhase)
+            try container.encode(endPhase, forKey: .endPhase)
+            try container.encodeIfPresent(instructions, forKey: .instructions)
         case .conversation(let content):
             try container.encode("conversation", forKey: .action)
             try container.encode(content, forKey: .content)
@@ -190,6 +213,13 @@ class Router {
     "edit the phasing" → {"intent": "directive", "action": {"action": "edit_phasing", "content": "..."}}
     "edit phase 2 to include X" → {"intent": "directive", "action": {"action": "edit_phasing", "phaseNumber": 2, "content": "include X"}}
     "change phase 1 to Y" → {"intent": "directive", "action": {"action": "edit_phasing", "phaseNumber": 1, "content": "Y"}}
+
+    SPLIT/MERGE PHASES:
+    "split phase 2 into frontend and backend work" → {"intent": "directive", "action": {"action": "split_phase", "phaseNumber": 2, "instructions": "frontend and backend work"}}
+    "break phase 3 into smaller tasks" → {"intent": "directive", "action": {"action": "split_phase", "phaseNumber": 3, "instructions": "smaller tasks"}}
+    "merge phases 5 and 6" → {"intent": "directive", "action": {"action": "merge_phases", "startPhase": 5, "endPhase": 6}}
+    "combine phases 2 and 3 into one" → {"intent": "directive", "action": {"action": "merge_phases", "startPhase": 2, "endPhase": 3}}
+    "merge phases 1 through 3" → {"intent": "directive", "action": {"action": "merge_phases", "startPhase": 1, "endPhase": 3}}
 
     COPY:
     "copy description" → {"intent": "directive", "action": {"action": "copy_description"}}

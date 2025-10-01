@@ -7,9 +7,16 @@ class NetworkManager {
 
     private let maxRetries = 3
     private let baseDelay: TimeInterval = 1.0  // Start with 1 second
+    private let session: URLSession
 
     private init() {
-        log("Initialized with retry logic", category: .network, component: "NetworkManager")
+        // Configure session with reasonable timeouts
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 30.0  // 30 second timeout for each request
+        configuration.timeoutIntervalForResource = 60.0  // 60 second total timeout
+        self.session = URLSession(configuration: configuration)
+
+        log("Initialized with retry logic and 30s timeout", category: .network, component: "NetworkManager")
     }
 
     // MARK: - Retry Logic
@@ -21,7 +28,7 @@ class NetworkManager {
         for attempt in 0..<maxRetries {
             do {
                 // Try the request
-                let (data, response) = try await URLSession.shared.data(for: request)
+                let (data, response) = try await session.data(for: request)
 
                 guard let httpResponse = response as? HTTPURLResponse else {
                     throw NetworkError.invalidResponse
@@ -64,7 +71,7 @@ class NetworkManager {
         for attempt in 0..<maxRetries {
             do {
                 // Try the request
-                let (data, response) = try await URLSession.shared.data(for: request)
+                let (data, response) = try await session.data(for: request)
 
                 guard let httpResponse = response as? HTTPURLResponse else {
                     throw NetworkError.invalidResponse
@@ -126,6 +133,36 @@ class NetworkManager {
         }
 
         return true  // Default to retry
+    }
+
+    // MARK: - HTTP Methods
+
+    /// Perform a POST request with JSON body and return dictionary response
+    func post(url: String, body: [String: Any], headers: [String: String]) async throws -> [String: Any] {
+        guard let url = URL(string: url) else {
+            throw NetworkError.invalidResponse
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+
+        // Set headers
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+
+        // Serialize body to JSON
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        // Perform request with retry
+        let data = try await performRequestWithRetry(request)
+
+        // Parse JSON response
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NetworkError.invalidResponse
+        }
+
+        return json
     }
 }
 

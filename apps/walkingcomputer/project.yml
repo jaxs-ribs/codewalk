@@ -24,7 +24,7 @@ targets:
         UIStatusBarHidden: true
         UIRequiresFullScreen: true
         UIViewControllerBasedStatusBarAppearance: false
-        UISupportedInterfaceOrientations: 
+        UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UILaunchScreen: {}
         NSMicrophoneUsageDescription: Walking Computer needs microphone access for voice recording
@@ -36,3 +36,15 @@ targets:
         script: |
           cp -f "${PROJECT_DIR}/.env" "${TARGET_BUILD_DIR}/${PRODUCT_NAME}.app/.env" 2>/dev/null || true
         basedOnDependencyAnalysis: false
+
+  WalkingComputerTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: WalkingComputer
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.walkingcomputer.tests
+        GENERATE_INFOPLIST_FILE: YES

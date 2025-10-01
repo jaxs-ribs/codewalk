@@ -205,6 +205,10 @@ class Orchestrator: ObservableObject {
             await editDescription(content: content)
         case .editPhasing(let phaseNumber, let content):
             await editPhasing(phaseNumber: phaseNumber, content: content)
+        case .splitPhase(let phaseNumber, let instructions):
+            await splitPhase(phaseNumber, instructions: instructions)
+        case .mergePhases(let startPhase, let endPhase, let instructions):
+            await mergePhases(startPhase, endPhase: endPhase, instructions: instructions)
         case .conversation(let content):
             await handleConversation(content)
         case .repeatLast:
@@ -492,6 +496,57 @@ class Orchestrator: ObservableObject {
         await editArtifact(type: .phasing, content: content, phaseNumber: phaseNumber)
     }
 
+    private func splitPhase(_ phaseNumber: Int, instructions: String) async {
+        lastResponse = "Splitting phase \(phaseNumber)..."
+        await speak(lastResponse)
+
+        // Get config for groq API key
+        guard let config = try? EnvConfig.load() else {
+            lastResponse = "Failed to load configuration for phase splitting"
+            await speak(lastResponse)
+            return
+        }
+
+        let success = await artifactManager.splitPhase(phaseNumber, instructions: instructions, groqApiKey: config.groqApiKey)
+
+        if success {
+            lastResponse = "Phase \(phaseNumber) split successfully."
+            await speak(lastResponse)
+            addAssistantResponse("I've split phase \(phaseNumber) based on your instructions: \(instructions)")
+        } else {
+            lastResponse = "Failed to split phase \(phaseNumber)"
+            await speak(lastResponse)
+        }
+    }
+
+    private func mergePhases(_ startPhase: Int, endPhase: Int, instructions: String?) async {
+        lastResponse = "Merging phases \(startPhase) through \(endPhase)..."
+        await speak(lastResponse)
+
+        // Get config for groq API key
+        guard let config = try? EnvConfig.load() else {
+            lastResponse = "Failed to load configuration for phase merging"
+            await speak(lastResponse)
+            return
+        }
+
+        let success = await artifactManager.mergePhases(startPhase, endPhase, instructions: instructions, groqApiKey: config.groqApiKey)
+
+        if success {
+            lastResponse = "Phases merged successfully."
+            await speak(lastResponse)
+            addAssistantResponse("I've merged phases \(startPhase) through \(endPhase)")
+        } else {
+            let phaseCount = endPhase - startPhase + 1
+            if phaseCount > 5 {
+                lastResponse = "Cannot merge \(phaseCount) phases at once. Try merging up to 5 phases instead."
+            } else {
+                lastResponse = "Failed to merge phases. Check that phases \(startPhase) through \(endPhase) exist."
+            }
+            await speak(lastResponse)
+        }
+    }
+
     private enum ArtifactType {
         case description
         case phasing
@@ -514,10 +569,35 @@ class Orchestrator: ObservableObject {
     private func editArtifact(type: ArtifactType, content: String, phaseNumber: Int?) async {
         lastResponse = "Updating \(type.displayName)..."
 
+        // If editing a specific phase number, use the diff-based approach
+        if type == .phasing, let phase = phaseNumber {
+            // Get config for groq API key
+            guard let config = try? EnvConfig.load() else {
+                lastResponse = "Failed to load configuration for phase editing"
+                await speak(lastResponse)
+                return
+            }
+
+            await speak("Editing phase \(phase)...")
+
+            let success = await artifactManager.editSpecificPhase(phase, instructions: content, groqApiKey: config.groqApiKey)
+
+            if success {
+                lastResponse = "Phase \(phase) updated."
+                await speak(lastResponse)
+                addAssistantResponse("I've updated phase \(phase) based on your instructions: \(content)")
+            } else {
+                lastResponse = "Failed to update phase \(phase)"
+                await speak(lastResponse)
+            }
+            return
+        }
+
+        // For full artifact edits, use the existing regeneration approach
         do {
             // Add the edit request to conversation history as a requirement
-            if type == .phasing, let phase = phaseNumber {
-                addUserTranscript("Additional requirement for phase \(phase): \(content)")
+            if type == .phasing {
+                addUserTranscript("Additional requirement for the phasing: \(content)")
             } else {
                 addUserTranscript("Additional requirement for the \(type.displayName): \(content)")
             }

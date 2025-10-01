@@ -35,3 +35,30 @@ You're walking. You need predictability. A single event loop means no surprise e
 - Clean logs
 
 Research mode and long "thinking mode" can be added later without changing the loop.
+
+## Build Instructions
+To build and run the Walking Computer Speccer:
+
+```bash
+# Navigate to the project directory
+cd /Users/fresh/Documents/codewalk/apps/walkingcomputer
+
+# Generate the Xcode project
+xcodegen generate
+
+# Build for iOS Simulator
+xcodebuild -project WalkingComputer.xcodeproj -scheme WalkingComputer -destination "platform=iOS Simulator,name=iPhone 16,OS=latest" build
+
+# Run tests
+xcodebuild test -project WalkingComputer.xcodeproj -scheme WalkingComputer -destination "platform=iOS Simulator,name=iPhone 16,OS=latest"
+
+# Deploy to phone (requires device to be connected)
+./deploy-phone.sh
+```
+
+## Important Instruction Reminders
+- Do what has been asked; nothing more, nothing less
+- NEVER create files unless they're absolutely necessary for achieving your goal
+- ALWAYS prefer editing an existing file to creating a new one
+- NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User
+- NEVER write anything with git commands unless explicitly asked by the user. No git add, no git commit, no git status unless the user specifically requests it
