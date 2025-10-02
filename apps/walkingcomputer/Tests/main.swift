@@ -25,6 +25,10 @@ func runTests() async {
 
     // Run the specified test
     switch testName {
+    case "registry":
+        runArtifactRegistryTests()
+        return
+
     case "basic":
         let (name, prompts) = TestScripts.basicPhasing()
         await runner.runTest(name: name, prompts: prompts)
@@ -64,6 +68,7 @@ func runTests() async {
     default:
         print("❌ Unknown test: \(testName)")
         print("\nAvailable tests:")
+        print("  - registry    : Artifact registry unit tests")
         print("  - basic       : Basic phasing generation")
         print("  - write_read  : Write then read phasing")
         print("  - edit        : Edit existing phasing")

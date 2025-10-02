@@ -239,15 +239,22 @@ class AssistantClient {
         return try await callGroq(messages: messages)
     }
 
-    func generateConversationalResponse(conversationHistory: [(role: String, content: String)]) async throws -> String {
+    func generateConversationalResponse(conversationHistory: [(role: String, content: String)], contextPrefix: String? = nil) async throws -> String {
         log("Generating conversational response", category: .assistant, component: "AssistantClient")
 
-        let systemPrompt = """
+        // Build system prompt with optional context prefix
+        var systemPrompt = ""
+
+        if let context = contextPrefix {
+            systemPrompt += context
+        }
+
+        systemPrompt += """
         Voice-first project speccer. Your responses will be spoken via TTS to someone walking.
 
         CORE RULES:
         1. Simple statements/ideas → Single word acknowledgment ("Noted", "Got it", "Sure")
-        2. Questions → Answer directly from your knowledge
+        2. Questions → If artifact context is provided above, answer ONLY from that context. Count carefully and be precise. Otherwise, answer from your knowledge.
         3. Never suggest searching or mention search capability
         4. Never ask clarifying questions unless incomprehensible
 

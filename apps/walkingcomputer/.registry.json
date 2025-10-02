@@ -1,0 +1,34 @@
+{
+  "artifacts" : [
+    {
+      "created" : "2025-10-02T17:35:23Z",
+      "keywords" : [
+        "description",
+        "pitch",
+        "overview",
+        "summary"
+      ],
+      "path" : "artifacts\/description.md",
+      "summary" : "Project description",
+      "topics" : [
+
+      ],
+      "type" : "spoken"
+    },
+    {
+      "created" : "2025-10-02T17:35:23Z",
+      "keywords" : [
+        "phasing",
+        "phases",
+        "plan",
+        "phase"
+      ],
+      "path" : "artifacts\/phasing.md",
+      "summary" : "Project phasing plan",
+      "topics" : [
+
+      ],
+      "type" : "spoken"
+    }
+  ]
+}

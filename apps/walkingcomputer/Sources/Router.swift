@@ -28,6 +28,7 @@ enum ProposedAction: Codable {
     case copyBoth
     case search(String)  // Shallow search (small depth)
     case deepSearch(String)  // Deep research (medium depth)
+    case loadContext([String])  // Load artifact(s) into context silently
 
     // Custom coding for enum with associated values
     enum CodingKeys: String, CodingKey {
@@ -38,6 +39,7 @@ enum ProposedAction: Codable {
         case instructions  // For split/merge
         case startPhase  // For merge
         case endPhase  // For merge
+        case paths  // For loadContext
     }
 
     init(from decoder: Decoder) throws {
@@ -93,6 +95,9 @@ enum ProposedAction: Codable {
         case "deep_search":
             let query = try container.decode(String.self, forKey: .query)
             self = .deepSearch(query)
+        case "load_context":
+            let paths = try container.decode([String].self, forKey: .paths)
+            self = .loadContext(paths)
         default:
             // Log the unknown action for debugging
             log("Warning: Unknown action '\(action)' - falling back to error", category: .router, component: "Router")
@@ -157,6 +162,9 @@ enum ProposedAction: Codable {
         case .deepSearch(let query):
             try container.encode("deep_search", forKey: .action)
             try container.encode(query, forKey: .query)
+        case .loadContext(let paths):
+            try container.encode("load_context", forKey: .action)
+            try container.encode(paths, forKey: .paths)
         }
     }
 }
@@ -182,6 +190,7 @@ class Router {
     private let groqApiKey: String
     private let modelId: String
     private let apiURL = "https://api.groq.com/openai/v1/chat/completions"
+    private let registry: ArtifactRegistry?
 
     private let systemPrompt = """
     Route user input to appropriate action. Return EXACT JSON format shown in examples.
@@ -239,13 +248,27 @@ class Router {
     CRITICAL: Use EXACT action names shown above (e.g., "edit_phasing" not "edit_phase")
     """
 
-    init(groqApiKey: String, modelId: String) {
+    init(groqApiKey: String, modelId: String, registry: ArtifactRegistry? = nil) {
         self.groqApiKey = groqApiKey
         self.modelId = modelId
+        self.registry = registry
     }
 
-    func route(transcript: String, context: RouterContext) async throws -> RouterResponse {
+    func route(transcript: String, context: RouterContext, contextAlreadyLoaded: Bool = false) async throws -> RouterResponse {
         log("Analyzing user intent...", category: .router)
+
+        // Check if we should load context based on intent and artifact matching
+        // Don't return early - we'll load context in the background
+        if let contextAction = checkForContextLoading(transcript: transcript, contextAlreadyLoaded: contextAlreadyLoaded) {
+            log("Will load context before responding", category: .router)
+            // Return the loadContext action - orchestrator will execute it
+            // Then orchestrator needs to call route again for the actual response
+            return RouterResponse(
+                intent: .directive,
+                action: contextAction,
+                reasoning: "Loading artifact context"
+            )
+        }
 
         // Truncate very long transcripts to prevent token limit errors
         let truncatedTranscript = transcript.count > 1500
@@ -321,5 +344,46 @@ class Router {
         sections.append("Current user input: \(transcript)")
 
         return sections.joined(separator: "\n\n")
+    }
+
+    // MARK: - Context Loading Integration
+
+    private func checkForContextLoading(transcript: String, contextAlreadyLoaded: Bool = false) -> ProposedAction? {
+        guard let registry = registry else {
+            log("No registry available for context loading", category: .router)
+            return nil
+        }
+
+        // Skip if context is already loaded (prevent infinite loop on re-route)
+        if contextAlreadyLoaded {
+            log("Context already loaded, skipping re-load", category: .router)
+            return nil
+        }
+
+        // Parse user intent
+        let intent = IntentParser.parse(transcript)
+        log("Parsed intent: \(intent) for transcript: '\(transcript.prefix(50))...'", category: .router)
+
+        // Only load context for questions about artifacts
+        // Questions like "how many phases" or "what are the challenges"
+        guard intent == .question else {
+            log("Intent is not .question, skipping context load", category: .router)
+            return nil
+        }
+
+        // Try to match artifacts
+        let matches = registry.match(input: transcript, threshold: 5.0)
+        log("Found \(matches.count) artifact matches", category: .router)
+
+        guard !matches.isEmpty else {
+            log("No artifacts matched for question", category: .router)
+            return nil
+        }
+
+        // Return loadContext action with top 2 matches
+        let paths = Array(matches.prefix(2)).map { $0.path }
+        log("Matched artifacts for question: \(paths.joined(separator: ", "))", category: .router)
+
+        return .loadContext(paths)
     }
 }

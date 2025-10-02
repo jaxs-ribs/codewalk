@@ -41,11 +41,15 @@ class Orchestrator: ObservableObject {
     @Published var lastResponse: String = ""
     @Published var conversationHistory: [(role: String, content: String)] = []
 
+    // Context loaded from artifacts for the current turn
+    private var loadedContext: [String: String] = [:]
+
     private var actionQueue: [ActionQueueItem] = []
     private let artifactManager: ArtifactManager
     private let assistantClient: AssistantClient
     private let ttsManager: any TTSProtocol
     private let router: Router
+    private let artifactRegistry: ArtifactRegistry
 
     #if canImport(UIKit)
     private let groqTTSManager: GroqTTSManager?
@@ -61,11 +65,38 @@ class Orchestrator: ObservableObject {
         // Initialize artifact manager
         artifactManager = ArtifactManager()
 
+        // Initialize artifact registry
+        let artifactsPath = artifactManager.getFullPath(for: "").deletingLastPathComponent()
+        artifactRegistry = ArtifactRegistry(artifactsPath: artifactsPath)
+
+        // Bootstrap registry with known artifacts
+        let descriptionArtifact = Artifact(
+            path: "artifacts/description.md",
+            type: .spoken,
+            keywords: ["description", "pitch", "overview", "summary"],
+            topics: [],
+            created: Date(),
+            summary: "Project description"
+        )
+        artifactRegistry.add(descriptionArtifact)
+
+        let phasingArtifact = Artifact(
+            path: "artifacts/phasing.md",
+            type: .spoken,
+            keywords: ["phasing", "phases", "plan", "phase"],
+            topics: [],
+            created: Date(),
+            summary: "Project phasing plan"
+        )
+        artifactRegistry.add(phasingArtifact)
+
+        _ = artifactRegistry.save()
+
         // Initialize assistant client
         assistantClient = AssistantClient(groqApiKey: config.groqApiKey, modelName: config.llmModelId)
 
-        // Initialize router
-        router = Router(groqApiKey: config.groqApiKey, modelId: config.llmModelId)
+        // Initialize router with registry
+        router = Router(groqApiKey: config.groqApiKey, modelId: config.llmModelId, registry: artifactRegistry)
 
         // Initialize TTS manager (iOS native or injected for testing)
         #if canImport(UIKit)
@@ -116,6 +147,28 @@ class Orchestrator: ObservableObject {
     }
 
     // MARK: - Queue Management
+
+    func routeAndEnqueue(transcript: String) {
+        // Add user transcript to conversation history
+        addUserTranscript(transcript)
+
+        Task {
+            do {
+                let recentMessages = conversationHistory.suffix(10).map { "\($0.role): \($0.content)" }
+                let context = RouterContext(recentMessages: Array(recentMessages), lastSearchQuery: lastSearchQuery)
+
+                log("Routing user intent...", category: .router)
+                let response = try await router.route(transcript: transcript, context: context)
+
+                // Enqueue the routed action
+                enqueueAction(response.action)
+            } catch {
+                logError("Routing failed: \(error)", component: "Router")
+                // On routing failure, treat as conversation to maintain context
+                enqueueAction(.conversation(transcript))
+            }
+        }
+    }
 
     func enqueueAction(_ action: ProposedAction) {
         log("Enqueueing action: \(action)", category: .orchestrator)
@@ -226,6 +279,25 @@ class Orchestrator: ObservableObject {
             await executeSearch(query: query, depth: .small)
         case .deepSearch(let query):
             await executeSearch(query: query, depth: .medium)
+        case .loadContext(let paths):
+            await loadContextFromArtifacts(paths: paths)
+
+            // After loading context, we need to route again to get the actual action
+            // The original transcript should be in conversation history
+            if let lastUserMessage = conversationHistory.last(where: { $0.role == "user" }) {
+                let recentMessages = conversationHistory.suffix(10).map { "\($0.role): \($0.content)" }
+                let context = RouterContext(recentMessages: Array(recentMessages), lastSearchQuery: lastSearchQuery)
+
+                do {
+                    // Re-route with context loaded - pass contextAlreadyLoaded to prevent infinite loop
+                    let response = try await router.route(transcript: lastUserMessage.content, context: context, contextAlreadyLoaded: true)
+
+                    // Enqueue the actual action (should be conversation)
+                    enqueueAction(response.action)
+                } catch {
+                    logError("Failed to re-route after context load: \(error)", component: "Orchestrator")
+                }
+            }
         }
     }
 
@@ -306,6 +378,92 @@ class Orchestrator: ObservableObject {
         }
     }
 
+    // MARK: - Context Loading
+
+    private func loadContextFromArtifacts(paths: [String]) async {
+        log("Loading context from \(paths.count) artifact(s)", category: .orchestrator)
+
+        // Clear previous context
+        loadedContext.removeAll()
+
+        for path in paths {
+            // Extract filename from path (e.g., "artifacts/phasing.md" -> "phasing.md")
+            let filename = (path as NSString).lastPathComponent
+
+            if let content = artifactManager.safeRead(filename: filename) {
+                loadedContext[path] = content
+                log("Loaded context from \(filename) (\(content.count) chars)", category: .orchestrator)
+            } else {
+                log("Failed to load context from \(filename)", category: .orchestrator)
+            }
+        }
+
+        // Context is now available for the next conversational response
+        // It will be cleared at the start of the next turn
+    }
+
+    func getLoadedContext() -> String {
+        guard !loadedContext.isEmpty else { return "" }
+
+        var contextString = ""
+        for (path, content) in loadedContext {
+            contextString += "\n[Context from \(path)]:\n\(content)\n"
+        }
+        return contextString
+    }
+
+    func clearLoadedContext() {
+        loadedContext.removeAll()
+    }
+
+    private func updateRegistryAfterWrite(type: ArtifactType, content: String) {
+        // Update the artifact in the registry
+        let path = "artifacts/\(type.filename)"
+
+        // Get first few sentences for summary
+        let summary = extractSummary(from: content)
+
+        let artifact = Artifact(
+            path: path,
+            type: .spoken,
+            keywords: type == .description ? ["description", "pitch", "overview", "summary"] : ["phasing", "phases", "plan", "phase"],
+            topics: [],
+            created: Date(),
+            summary: summary
+        )
+
+        artifactRegistry.add(artifact)
+        _ = artifactRegistry.save()
+
+        // Add breadcrumb to conversation
+        let breadcrumb = """
+        [ARTIFACT: \(type.displayName.capitalized)]
+        Path: \(path)
+        Type: spoken
+        Keywords: \(artifact.keywords.joined(separator: ", "))
+        Summary: \(summary)
+        """
+
+        addAssistantResponse(breadcrumb)
+
+        log("Updated registry and added breadcrumb for \(type.displayName)", category: .orchestrator)
+    }
+
+    private func extractSummary(from content: String, maxLength: Int = 200) -> String {
+        // Get first line or first N characters as summary
+        let lines = content.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+
+        if let firstLine = lines.first {
+            let summary = firstLine.trimmingCharacters(in: .whitespaces)
+            if summary.count <= maxLength {
+                return summary
+            }
+            return String(summary.prefix(maxLength)) + "..."
+        }
+
+        return String(content.prefix(maxLength)) + "..."
+    }
+
     private func copyDescriptionAction() async {
         if copyDescriptionToClipboard() {
             await speak(lastResponse)
@@ -378,6 +536,9 @@ class Orchestrator: ObservableObject {
             if artifactManager.safeWrite(filename: type.filename, content: content) {
                 lastResponse = "\(type.displayName.capitalized) written."
                 addAssistantWriteConfirmation(for: type)
+
+                // Update registry and add breadcrumb
+                updateRegistryAfterWrite(type: type, content: content)
 
                 if shouldSpeak {
                     await speak(lastResponse)
@@ -625,6 +786,9 @@ class Orchestrator: ObservableObject {
                 lastResponse = "\(type.displayName.capitalized) updated."
                 await speak(self.lastResponse)
                 addAssistantResponse("I've regenerated the \(type.displayName) with your new requirement.")
+
+                // Update registry and add breadcrumb for edit
+                updateRegistryAfterWrite(type: type, content: updatedContent)
             } else {
                 lastResponse = "Failed to update \(type.displayName)"
                 await speak(self.lastResponse)
@@ -654,12 +818,19 @@ class Orchestrator: ObservableObject {
         // Removed auto-rerun search logic - was causing false positives
 
         do {
-            // Generate conversational response
+            // Get loaded context if available
+            let contextString = getLoadedContext()
+
+            // Generate conversational response (context will be prepended to system prompt if present)
             let response = try await assistantClient.generateConversationalResponse(
-                conversationHistory: conversationHistory
+                conversationHistory: conversationHistory,
+                contextPrefix: contextString.isEmpty ? nil : "IMPORTANT: Use the following artifact content to answer the user's question. Count carefully and be precise.\(contextString)\n\n"
             )
 
             lastResponse = response
+
+            // Clear loaded context after use
+            clearLoadedContext()
 
             // Speak the response
             await speak(response)

@@ -1,45 +1,33 @@
 # Project Phasing
 
-## Phase 1: Create HTML Canvas and Game Loop
-Create the HTML5 canvas element and implement the basic game loop that continuously renders at 60fps.
-**Definition of Done:** Open index.html in browser, see a blank canvas element filling most of the viewport, open console and verify "game loop running" prints every frame
+## Phase 1: Bytecode Loader & Decoder
+Build a loader that can read a simple bytecode file and decode it into Rust data structures. Support basic operations like loading a file at runtime, parsing opcodes into an enum, and storing them in a Vec<u8> with proper error handling for malformed bytecode.  
+**Definition of Done:** Run `cargo run examples/fib.zkbc`, see "Bytecode loaded: 42 instructions" printed in console with no panics.
 
-## Phase 2: Draw Grid-Based Snake
-Implement the snake as a series of connected squares on a grid system with basic rendering.
-**Definition of Done:** Open index.html, see a static snake made of 3 green square segments positioned in the center of the canvas
+## Phase 2: Basic Register VM Core
+Create a minimal register-based VM that can execute simple arithmetic with 16 general-purpose registers and a program counter. Implement ADD, SUB, MUL, and MOV instructions with immediate values. The VM runs in a loop fetching and executing until it hits a HALT.  
+**Definition of Done:** Execute a bytecode with "ADD r1, r2, r3; HALT", see registers update correctly and "VM halted after 2 cycles" printed.
 
-## Phase 3: Implement Request Animation Frame
-Use requestAnimationFrame to create a continuous loop for updating the snake's position
-**Definition of Done:** Verify that the snake's position is updated on each frame, but does not yet move in a specific direction
+## Phase 3: Memory System & Load/Store
+Add a flat memory space with byte addressing and implement LOAD/STORE instructions. Provide 64KB of memory, addressable via registers plus immediate offsets, with proper bounds checking that throws a clean error on invalid access.  
+**Definition of Done:** Run bytecode "STORE r1, 0x1000; LOAD r2, 0x1000", see r2 contains same value as r1 and "Memory access at 0x1000" logged.
 
-## Phase 4: Add Directional Movement and Edge Wrapping
-Make the snake move in one direction and wrap around to the left side when it reaches the right edge
-**Definition of Done:** Open index.html, watch snake move smoothly to the right, when it reaches right edge it wraps around to left side
+## Phase 4: Control Flow & Jumps
+Add conditional and unconditional jumps. Implement JMP, JEQ, JNE with register comparisons, plus a flags register to track zero and carry bits. This enables building loops and if-statements in bytecode.  
+**Definition of Done:** Execute bytecode with "JEQ r1, r2, label" where r1==r2, see program counter jump to label address and "Jump taken to 0x0042" printed.
 
-## Phase 5: Keyboard Direction Controls
-Add keyboard input to change the snake's direction of movement.
-**Definition of Done:** Open index.html, use arrow keys to change snake direction while it's moving, snake responds immediately without reversing into itself
+## Phase 5: System Calls & Host Interface
+Add a syscall interface so the guest can request services from the host. Implement a simple ABI with syscall numbers in r0 and arguments in r1-r3, starting with basic I/O like print integer and read clock cycle counter.  
+**Definition of Done:** Run bytecode with "MOV r0, 1; MOV r1, 42; SYSCALL", see "Guest output: 42" printed to host console with syscall number logged.
 
-## Phase 6: Add Food and Growth
-Spawn food items randomly on the grid and make the snake grow when eating food.
-**Definition of Done:** Open index.html, see red food square appear on grid, move snake to touch food, observe snake grow by one segment and new food spawn elsewhere
+## Phase 6: Execution Trace Recording
+Instrument the VM to record every instruction execution in a trace. Each trace entry contains PC, opcode, and register states.  
+**Definition of Done:** Run fibonacci bytecode for 10 cycles, see "Trace: 10 entries" printed with each entry showing PC and opcode.
 
-## Phase 7: Game Over Conditions
-Implement collision detection for snake hitting walls or itself.
-**Definition of Done:** Open index.html, steer snake into wall edge - game stops and displays "Game Over" message, restart and steer snake into its own body - game stops
+## Phase 7: Memory Merkle Tree
+Build a sparse Merkle tree over memory for efficient proofs. Each memory access updates the tree with a Merkle commitment.  
+**Definition of Done:** Run bytecode with memory operations, see "Memory root: 0xabc123..." printed and consistent across runs.
 
-## Phase 8: Implement Score Tracking and Portal Teleportation
-Track and display the player's score based on food eaten, and add two portals (blue and orange) that teleport the snake between fixed positions, maintaining direction
-**Definition of Done:** Open index.html, eat one food item - see score display 'Score: 1' on screen, eat three more food items - see score display 'Score: 4', see blue circle at position A and orange circle at position B, move snake into blue portal - snake instantly appears at orange portal position while maintaining direction, and score updates correctly after teleporting and eating food
-
-## Phase 9: Implement Wall Dash
-Add spacebar-triggered dash that lets the snake pass through walls briefly.
-**Definition of Done:** Open index.html, position snake facing wall, press spacebar - see snake pass through wall and emerge on opposite side with brief invincibility effect
-
-## Phase 10: Add Eating Sound
-Implement a crunch sound effect when the snake eats food.
-**Definition of Done:** Open index.html, eat food item - hear distinct crunch sound through speakers, eat multiple food items rapidly - sounds play cleanly without clipping
-
-## Phase 11: Add Portal Teleport Sound
-Add a whoosh sound effect when using portals.
-**Definition of Done:** Open index.html, move snake through portal - hear whoosh sound effect, use portals multiple times - sounds play smoothly without overlap issues
+## Phase 8: Cryptographic Proof Generation & Verification
+Generate a STARK proof that the execution trace is valid. Implement a simple AIR with constraints for register consistency and memory Merkle paths, then generate a proof that can be verified in constant time without re-executing the entire program.  
+**Definition of Done:** Generate proof for 10-cycle trace, see "Proof size: 4.2KB" and "Verification: true" when running verifier on proof with same public inputs.
