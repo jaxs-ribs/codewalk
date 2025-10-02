@@ -1,27 +1,24 @@
 import Foundation
 
-// MARK: - Assistant Client
-
-class AssistantClient {
-    private let groqApiKey: String
+/// High-level content generator - owns prompts and generation logic
+class ContentGenerator {
+    private let llmClient: GroqLLMClient
     private let modelName: String
-    private let apiURL = "https://api.groq.com/openai/v1/chat/completions"
 
     // Constants
     private let maxTokens = 2000
     private let temperature = 0.7
     private let conversationHistoryLimit = 100
 
-    init(groqApiKey: String, modelName: String) {
-        self.groqApiKey = groqApiKey
+    init(llmClient: GroqLLMClient, modelName: String) {
+        self.llmClient = llmClient
         self.modelName = modelName
-        // print("[AssistantClient] Initialized")
     }
 
-    // MARK: - Content Generation
+    // MARK: - Description Generation
 
     func generateDescription(conversationHistory: [(role: String, content: String)]) async throws -> String {
-        log("Generating description from conversation context", category: .assistant, component: "AssistantClient")
+        log("Generating description from conversation context", category: .assistant, component: "ContentGenerator")
 
         let systemPrompt = """
         Generate a project description from this conversation.
@@ -53,30 +50,39 @@ class AssistantClient {
         [Your natural, speakable description]
         """
 
-        let messages = buildMessages(systemPrompt: systemPrompt,
-                                    conversationHistory: conversationHistory,
-                                    userPrompt: "Generate the complete description markdown document based on our conversation. Start with '# Project Description' and include all details discussed.")
+        let messages = buildMessages(
+            systemPrompt: systemPrompt,
+            conversationHistory: conversationHistory,
+            userPrompt: "Generate the complete description markdown document based on our conversation. Start with '# Project Description' and include all details discussed."
+        )
 
-        return try await callGroq(messages: messages)
+        return try await llmClient.generate(
+            messages: messages,
+            model: modelName,
+            temperature: temperature,
+            maxTokens: maxTokens
+        )
     }
 
-    func generatePhasing(conversationHistory: [(role: String, content: String)], statusCallback: ((String) -> Void)? = nil) async throws -> String {
-        log("Starting multi-pass phasing generation", category: .assistant, component: "AssistantClient")
+    // MARK: - Phasing Generation (Multi-Pass)
 
-        // Pass 1: Generate initial draft (Orchestrator already said "Writing phasing...")
+    func generatePhasing(conversationHistory: [(role: String, content: String)], statusCallback: ((String) -> Void)? = nil) async throws -> String {
+        log("Starting multi-pass phasing generation", category: .assistant, component: "ContentGenerator")
+
+        // Pass 1: Generate initial draft
         let draft = try await generatePhasingDraft(conversationHistory: conversationHistory)
-        log("Pass 1 complete: generated \(draft.count) chars", category: .assistant, component: "AssistantClient")
+        log("Pass 1 complete: generated \(draft.count) chars", category: .assistant, component: "ContentGenerator")
 
         // Pass 2: Critique and redraft
         statusCallback?("Reviewing...")
         let refined = try await critiquePhasingDraft(draft: draft, conversationHistory: conversationHistory)
-        log("Pass 2 complete: refined to \(refined.count) chars", category: .assistant, component: "AssistantClient")
+        log("Pass 2 complete: refined to \(refined.count) chars", category: .assistant, component: "ContentGenerator")
 
         return refined
     }
 
     private func generatePhasingDraft(conversationHistory: [(role: String, content: String)]) async throws -> String {
-        log("Pass 1: Generating phasing draft", category: .assistant, component: "AssistantClient")
+        log("Pass 1: Generating phasing draft", category: .assistant, component: "ContentGenerator")
 
         let systemPrompt = """
         Generate a project phasing plan from this conversation.
@@ -150,15 +156,22 @@ class AssistantClient {
         **Definition of Done:** [Test that verifies ONLY this phase's work]
         """
 
-        let messages = buildMessages(systemPrompt: systemPrompt,
-                                    conversationHistory: conversationHistory,
-                                    userPrompt: "Generate the complete phasing plan markdown document based on our conversation. Start with '# Project Phasing' and include all phases.")
+        let messages = buildMessages(
+            systemPrompt: systemPrompt,
+            conversationHistory: conversationHistory,
+            userPrompt: "Generate the complete phasing plan markdown document based on our conversation. Start with '# Project Phasing' and include all phases."
+        )
 
-        return try await callGroq(messages: messages)
+        return try await llmClient.generate(
+            messages: messages,
+            model: modelName,
+            temperature: temperature,
+            maxTokens: maxTokens
+        )
     }
 
     private func critiquePhasingDraft(draft: String, conversationHistory: [(role: String, content: String)]) async throws -> String {
-        log("Pass 2: Critiquing and refining phasing draft", category: .assistant, component: "AssistantClient")
+        log("Pass 2: Critiquing and refining phasing draft", category: .assistant, component: "ContentGenerator")
 
         let systemPrompt = """
         You are reviewing a phasing plan draft. Check each phase against these criteria and output a CORRECTED version.
@@ -232,15 +245,24 @@ class AssistantClient {
         \(draft)
         """
 
-        let messages = buildMessages(systemPrompt: systemPrompt,
-                                    conversationHistory: [],
-                                    userPrompt: userPrompt)
+        let messages = buildMessages(
+            systemPrompt: systemPrompt,
+            conversationHistory: [],
+            userPrompt: userPrompt
+        )
 
-        return try await callGroq(messages: messages)
+        return try await llmClient.generate(
+            messages: messages,
+            model: modelName,
+            temperature: temperature,
+            maxTokens: maxTokens
+        )
     }
 
+    // MARK: - Conversational Response
+
     func generateConversationalResponse(conversationHistory: [(role: String, content: String)]) async throws -> String {
-        log("Generating conversational response", category: .assistant, component: "AssistantClient")
+        log("Generating conversational response", category: .assistant, component: "ContentGenerator")
 
         let systemPrompt = """
         Voice-first project speccer. Your responses will be spoken via TTS to someone walking.
@@ -278,19 +300,27 @@ class AssistantClient {
         // Use the last user message as the prompt
         let lastUserMessage = conversationHistory.last { $0.role == "user" }?.content ?? ""
 
-        let messages = buildMessages(systemPrompt: systemPrompt,
-                                    conversationHistory: Array(conversationHistory.dropLast()),
-                                    userPrompt: lastUserMessage)
+        let messages = buildMessages(
+            systemPrompt: systemPrompt,
+            conversationHistory: Array(conversationHistory.dropLast()),
+            userPrompt: lastUserMessage
+        )
 
-        return try await callGroq(messages: messages)
+        return try await llmClient.generate(
+            messages: messages,
+            model: modelName,
+            temperature: temperature,
+            maxTokens: maxTokens
+        )
     }
 
     // MARK: - Helper Methods
 
-    private func buildMessages(systemPrompt: String,
-                              conversationHistory: [(role: String, content: String)],
-                              userPrompt: String) -> [[String: String]] {
-
+    private func buildMessages(
+        systemPrompt: String,
+        conversationHistory: [(role: String, content: String)],
+        userPrompt: String
+    ) -> [[String: String]] {
         var messages: [[String: String]] = [
             ["role": "system", "content": systemPrompt]
         ]
@@ -305,39 +335,5 @@ class AssistantClient {
         messages.append(["role": "user", "content": userPrompt])
 
         return messages
-    }
-
-    private func callGroq(messages: [[String: String]]) async throws -> String {
-        var request = URLRequest(url: URL(string: apiURL)!)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(groqApiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let requestBody: [String: Any] = [
-            "model": modelName,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": maxTokens
-        ]
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
-
-        log("Sending request to Groq...", category: .network, component: "AssistantClient")
-
-        // Use retry logic for resilience
-        let data = try await NetworkManager.shared.performRequestWithRetry(request)
-
-        // Parse response
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        guard let choices = json?["choices"] as? [[String: Any]],
-              let firstChoice = choices.first,
-              let message = firstChoice["message"] as? [String: Any],
-              let content = message["content"] as? String else {
-            throw NSError(domain: "AssistantClient", code: -2,
-                         userInfo: [NSLocalizedDescriptionKey: "Invalid response format"])
-        }
-
-        log("Generated \(content.count) chars", category: .assistant, component: "AssistantClient")
-        return content
     }
 }

@@ -39,9 +39,14 @@ final class STTUploader {
         body.append("json\r\n".data(using: .utf8)!)
         
         // Add audio file
+        // Detect file type from extension
+        let isM4A = audioURL.pathExtension.lowercased() == "m4a"
+        let filename = isM4A ? "audio.m4a" : "audio.wav"
+        let contentType = isM4A ? "audio/mp4" : "audio/wav"
+
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: audio/wav\r\n\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: \(contentType)\r\n\r\n".data(using: .utf8)!)
         
         let audioData = try Data(contentsOf: audioURL)
         body.append(audioData)

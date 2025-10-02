@@ -110,9 +110,16 @@ class NetworkManager {
     }
 
     private func shouldRetry(for error: Error) -> Bool {
+        let nsError = error as NSError
+
+        // Don't retry POSIX errors (like "Message too long" - Code 40)
+        if nsError.domain == NSPOSIXErrorDomain {
+            return false
+        }
+
         // Retry on network errors
-        if (error as NSError).domain == NSURLErrorDomain {
-            let code = (error as NSError).code
+        if nsError.domain == NSURLErrorDomain {
+            let code = nsError.code
             // Retry on timeout, cannot connect, network lost, etc.
             return code == NSURLErrorTimedOut ||
                    code == NSURLErrorCannotConnectToHost ||

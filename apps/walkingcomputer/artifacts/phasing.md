@@ -1,45 +1,37 @@
 # Project Phasing
 
-## Phase 1: Create HTML Canvas and Game Loop
-Create the HTML5 canvas element and implement the basic game loop that continuously renders at 60fps.
-**Definition of Done:** Open index.html in browser, see a blank canvas element filling most of the viewport, open console and verify "game loop running" prints every frame
+## Phase 1: Canvas Setup
+Set up high-resolution canvas with fine grid system.
+**Definition of Done:** Open index.html in browser, see 800x600 canvas with 20x20 pixel grid overlay, console logs "Canvas: 40x30 cells"
 
-## Phase 2: Draw Grid-Based Snake
-Implement the snake as a series of connected squares on a grid system with basic rendering.
-**Definition of Done:** Open index.html, see a static snake made of 3 green square segments positioned in the center of the canvas
+## Phase 2: Snake Head Movement
+Implement snake head with smooth pixel-perfect movement tracking.
+**Definition of Done:** Press arrow keys, see green 20x20 square move in 2-pixel increments at 60fps, console prints "Head: x,y" coordinates updating continuously
 
-## Phase 3: Implement Request Animation Frame
-Use requestAnimationFrame to create a continuous loop for updating the snake's position
-**Definition of Done:** Verify that the snake's position is updated on each frame, but does not yet move in a specific direction
+## Phase 3: Segment Creation
+Create a single body segment that can be instantiated and positioned behind the head
+**Definition of Done:** A single green segment is displayed 20 pixels behind the head, and console shows 'Body length: 1'
 
-## Phase 4: Add Directional Movement and Edge Wrapping
-Make the snake move in one direction and wrap around to the left side when it reaches the right edge
-**Definition of Done:** Open index.html, watch snake move smoothly to the right, when it reaches right edge it wraps around to left side
+## Phase 4: Segment Trailing Mechanics
+Implement trailing mechanics so that each segment follows the previous one smoothly
+**Definition of Done:** Two green segments are displayed, each 20 pixels behind the previous one, and move smoothly when the head moves
 
-## Phase 5: Keyboard Direction Controls
-Add keyboard input to change the snake's direction of movement.
-**Definition of Done:** Open index.html, use arrow keys to change snake direction while it's moving, snake responds immediately without reversing into itself
+## Phase 5: Multiple Segment Instantiation and Testing
+Add functionality to instantiate and display multiple segments, up to a total of 3, with proper trailing mechanics
+**Definition of Done:** After 3 seconds, see 3 green segments following head smoothly, each segment trails 20 pixels behind previous one, console shows 'Body length: 3'
 
-## Phase 6: Add Food and Growth
-Spawn food items randomly on the grid and make the snake grow when eating food.
-**Definition of Done:** Open index.html, see red food square appear on grid, move snake to touch food, observe snake grow by one segment and new food spawn elsewhere
+## Phase 6: Food System
+Create food items that spawn randomly and can be consumed.
+**Definition of Done:** See red 20x20 food square appear randomly on grid, move head over food, food disappears and console logs "Food consumed at x,y"
 
-## Phase 7: Game Over Conditions
-Implement collision detection for snake hitting walls or itself.
-**Definition of Done:** Open index.html, steer snake into wall edge - game stops and displays "Game Over" message, restart and steer snake into its own body - game stops
+## Phase 7: Implement Bidirectional Teleportation Portals
+Implement two portals, Portal A and Portal B, with basic teleportation mechanics, enabling bidirectional travel between them
+**Definition of Done:** Both Portal A and Portal B are rendered as circular objects on the left and right sides of the game environment respectively, Portal A is blue and Portal B is orange. When the snake's head collides with Portal A, it is instantly teleported to a predefined exit point with coordinates (x, y), triggering a console log event with the message 'Portal A triggered' and updating the game state accordingly. Similarly, when the snake's head collides with Portal B, it is instantly teleported to Portal A's location, triggering a console log event with the message 'Portal B triggered' and updating the game state accordingly.
 
-## Phase 8: Implement Score Tracking and Portal Teleportation
-Track and display the player's score based on food eaten, and add two portals (blue and orange) that teleport the snake between fixed positions, maintaining direction
-**Definition of Done:** Open index.html, eat one food item - see score display 'Score: 1' on screen, eat three more food items - see score display 'Score: 4', see blue circle at position A and orange circle at position B, move snake into blue portal - snake instantly appears at orange portal position while maintaining direction, and score updates correctly after teleporting and eating food
+## Phase 8: Slow Motion Zones
+Create radial slow-motion fields around portals.
+**Definition of Done:** Move snake head within 100 pixels of any portal, see movement speed reduce by 50%, console prints "Slow-mo: true" on entry, "false" on exit
 
-## Phase 9: Implement Wall Dash
-Add spacebar-triggered dash that lets the snake pass through walls briefly.
-**Definition of Done:** Open index.html, position snake facing wall, press spacebar - see snake pass through wall and emerge on opposite side with brief invincibility effect
-
-## Phase 10: Add Eating Sound
-Implement a crunch sound effect when the snake eats food.
-**Definition of Done:** Open index.html, eat food item - hear distinct crunch sound through speakers, eat multiple food items rapidly - sounds play cleanly without clipping
-
-## Phase 11: Add Portal Teleport Sound
-Add a whoosh sound effect when using portals.
-**Definition of Done:** Open index.html, move snake through portal - hear whoosh sound effect, use portals multiple times - sounds play smoothly without overlap issues
+## Phase 9: Dash Mechanic
+Implement speed boost ability with visual feedback.
+**Definition of Done:** Press spacebar, see snake speed triple for 200ms with white particle trail, console shows "Dash active" for 200ms then "Cooldown: 1000ms" counting down

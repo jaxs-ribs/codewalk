@@ -9,14 +9,13 @@ final class Recorder: NSObject {
     private var isPrepared = false
     
     // Pre-configured recorder settings for reuse
+    // Using AAC for better compression (smaller file sizes for network upload)
     private let recorderSettings: [String: Any] = [
-        AVFormatIDKey: kAudioFormatLinearPCM,
+        AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
         AVSampleRateKey: 16000,
         AVNumberOfChannelsKey: 1,
-        AVLinearPCMBitDepthKey: 16,
-        AVLinearPCMIsFloatKey: false,
-        AVLinearPCMIsBigEndianKey: false,
-        AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+        AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
+        AVEncoderBitRateKey: 32000  // 32 kbps for voice
     ]
     
     override init() {
@@ -87,10 +86,10 @@ final class Recorder: NSObject {
     
     func startInstant() -> Bool {
         // Super fast synchronous start - no async needed since we're pre-warmed
-        
-        // Create file URL
+
+        // Create file URL with m4a extension for AAC
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        let url = caches.appendingPathComponent("recording-\(UUID().uuidString).wav")
+        let url = caches.appendingPathComponent("recording-\(UUID().uuidString).m4a")
         
         do {
             // Create new recorder (very fast since session is active)

@@ -21,8 +21,6 @@ enum ProposedAction: Codable {
     case splitPhase(phaseNumber: Int, instructions: String)
     case mergePhases(startPhase: Int, endPhase: Int, instructions: String?)
     case conversation(String)
-    case repeatLast
-    case stop
     case copyDescription
     case copyPhasing
     case copyBoth
@@ -77,10 +75,6 @@ enum ProposedAction: Codable {
         case "conversation":
             let content = try container.decode(String.self, forKey: .content)
             self = .conversation(content)
-        case "repeat_last":
-            self = .repeatLast
-        case "stop":
-            self = .stop
         case "copy_description":
             self = .copyDescription
         case "copy_phasing":
@@ -141,10 +135,6 @@ enum ProposedAction: Codable {
         case .conversation(let content):
             try container.encode("conversation", forKey: .action)
             try container.encode(content, forKey: .content)
-        case .repeatLast:
-            try container.encode("repeat_last", forKey: .action)
-        case .stop:
-            try container.encode("stop", forKey: .action)
         case .copyDescription:
             try container.encode("copy_description", forKey: .action)
         case .copyPhasing:
@@ -225,12 +215,6 @@ class Router {
     "copy description" → {"intent": "directive", "action": {"action": "copy_description"}}
     "copy phasing" → {"intent": "directive", "action": {"action": "copy_phasing"}}
     "copy both" → {"intent": "directive", "action": {"action": "copy_both"}}
-
-    NAVIGATION:
-    "repeat" → {"intent": "directive", "action": {"action": "repeat_last"}}
-    "stop" → {"intent": "directive", "action": {"action": "stop"}}
-    "next phase" → {"intent": "directive", "action": {"action": "next_phase"}}
-    "previous phase" → {"intent": "directive", "action": {"action": "previous_phase"}}
 
     CONVERSATION (default for questions/discussion):
     "how does X work?" → {"intent": "conversation", "action": {"action": "conversation", "content": "how does X work?"}}
