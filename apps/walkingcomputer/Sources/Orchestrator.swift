@@ -28,7 +28,7 @@ enum TTSProvider {
 // MARK: - Action Queue Item
 
 struct ActionQueueItem {
-    let action: ProposedAction
+    let action: ToolAction
     let id = UUID()
 }
 
@@ -45,7 +45,6 @@ class Orchestrator: ObservableObject {
     private let artifactManager: ArtifactManager
     private let assistantClient: AssistantClient
     private let ttsManager: any TTSProtocol
-    private let router: Router
 
     #if canImport(UIKit)
     private let groqTTSManager: GroqTTSManager?
@@ -64,8 +63,7 @@ class Orchestrator: ObservableObject {
         // Initialize assistant client
         assistantClient = AssistantClient(groqApiKey: config.groqApiKey, modelName: config.llmModelId)
 
-        // Initialize router
-        router = Router(groqApiKey: config.groqApiKey, modelId: config.llmModelId)
+        // Router removed in favor of ToolAction planning
 
         // Initialize TTS manager (iOS native or injected for testing)
         #if canImport(UIKit)
@@ -117,7 +115,7 @@ class Orchestrator: ObservableObject {
 
     // MARK: - Queue Management
 
-    func enqueueAction(_ action: ProposedAction) {
+    func enqueueAction(_ action: ToolAction) {
         log("Enqueueing action: \(action)", category: .orchestrator)
 
         let item = ActionQueueItem(action: action)
@@ -140,20 +138,22 @@ class Orchestrator: ObservableObject {
         // Add to conversation history as user input
         addUserTranscript(text)
 
-        // Route the prompt through the router (like production)
+        // Plan a tool action from context
         do {
-            let recentMessages = conversationHistory.suffix(10).map { "\($0.role): \($0.content)" }
-            let context = RouterContext(recentMessages: Array(recentMessages), lastSearchQuery: lastSearchQuery)
-            let response = try await router.route(transcript: text, context: context)
-
-            // Enqueue the routed action
-            enqueueAction(response.action)
+            let (desc, phasing) = artifactManager.readSpec()
+            let action = try await assistantClient.planToolAction(
+                userQuery: text,
+                conversationHistory: conversationHistory,
+                specDescription: desc,
+                specPhasing: phasing
+            )
+            enqueueAction(action)
 
             // Wait for completion
             await waitForCompletion()
         } catch {
-            logError("Test mode: Router failed: \(error)", component: "Orchestrator")
-            lastResponse = "Routing failed: \(error.localizedDescription)"
+            logError("Test mode: planning failed: \(error)", component: "Orchestrator")
+            lastResponse = "Planning failed: \(error.localizedDescription)"
         }
     }
 
@@ -185,47 +185,53 @@ class Orchestrator: ObservableObject {
 
     // MARK: - Action Execution
 
-    private func executeAction(_ action: ProposedAction) async {
-        log("Executing action: \(action)", category: .orchestrator)
+    private func executeAction(_ action: ToolAction) async {
+        log("Executing tool action: \(action)", category: .orchestrator)
 
         switch action {
-        case .writeDescription:
-            await writeDescription()
-        case .writePhasing:
-            await writePhasing()
-        case .writeBoth:
-            await writeDescriptionAndPhasing()
-        case .readDescription:
-            await readDescription()
-        case .readPhasing:
-            await readPhasing()
-        case .readSpecificPhase(let phaseNumber):
-            await readSpecificPhase(phaseNumber)
-        case .editDescription(let content):
-            await editDescription(content: content)
-        case .editPhasing(let phaseNumber, let content):
-            await editPhasing(phaseNumber: phaseNumber, content: content)
-        case .splitPhase(let phaseNumber, let instructions):
-            await splitPhase(phaseNumber, instructions: instructions)
-        case .mergePhases(let startPhase, let endPhase, let instructions):
-            await mergePhases(startPhase, endPhase: endPhase, instructions: instructions)
-        case .conversation(let content):
-            await handleConversation(content)
-        case .repeatLast:
-            // Already displayed in lastResponse
-            break
-        case .stop:
-            lastResponse = "Stopped"
-        case .copyDescription:
-            await copyDescriptionAction()
-        case .copyPhasing:
-            await copyPhasingAction()
-        case .copyBoth:
-            await copyBothAction()
-        case .search(let query):
-            await executeSearch(query: query, depth: .small)
-        case .deepSearch(let query):
-            await executeSearch(query: query, depth: .medium)
+        case .extract(let text):
+            lastResponse = text
+            addAssistantResponse(text)
+            // Do not block the queue on long speech; allow interrupts
+            Task { @MainActor [weak self] in
+                await self?.speak(text)
+            }
+
+        case .overwrite(let artifact, let content):
+            let ok = artifactManager.overwrite(artifact: artifact, content: content)
+            lastResponse = ok ? "Updated \(artifact)." : "Failed to update \(artifact)."
+            addAssistantResponse(lastResponse)
+            Task { @MainActor [weak self] in
+                await self?.speak(self?.lastResponse ?? "")
+            }
+
+        case .writeDiff(let artifact, let diff, let fallback):
+            let ok = artifactManager.applyUnifiedDiff(artifact: artifact, diff: diff, fallbackContent: fallback)
+            lastResponse = ok ? "Changes applied to \(artifact)." : "Failed to apply changes to \(artifact)."
+            addAssistantResponse(lastResponse)
+            Task { @MainActor [weak self] in
+                await self?.speak(self?.lastResponse ?? "")
+            }
+
+        case .search(let query, let depth):
+            let d: SearchDepth = (depth == "deep") ? .medium : .small
+            await executeSearch(query: query, depth: d)
+
+        case .copy(let artifact):
+            switch artifact.lowercased() {
+            case "spec", "both":
+                _ = copyBothToClipboard()
+            case "description":
+                _ = copyDescriptionToClipboard()
+            case "phasing":
+                _ = copyPhasingToClipboard()
+            default:
+                lastResponse = "Unknown artifact to copy."
+            }
+            addAssistantResponse(lastResponse)
+            Task { @MainActor [weak self] in
+                await self?.speak(self?.lastResponse ?? "")
+            }
         }
     }
 
@@ -330,177 +336,173 @@ class Orchestrator: ObservableObject {
         }
     }
 
-    // MARK: - Artifact Operations (Placeholder for Phase 5)
+    // MARK: - Unified Write Handler (Phase 3)
 
-    private func writeDescription() async {
-        _ = await writeArtifact(.description)
-    }
+    private func executeWrite(artifact: String, instructions: String?) async {
+        // Determine the artifact type
+        let artifactLower = artifact.lowercased()
 
-    private func writePhasing() async {
-        _ = await writeArtifact(.phasing)
-    }
-
-    private func writeDescriptionAndPhasing() async {
-        await speak("Writing description...")
-        let descriptionSuccess = await writeArtifact(.description, shouldSpeak: false)
-        await speak(descriptionSuccess ? "Description written." : "Failed to write description")
-
-        await speak("Writing phasing...")
-        let phasingSuccess = await writeArtifact(.phasing, shouldSpeak: false)
-        await speak(phasingSuccess ? "Phasing written." : "Failed to write phasing")
-
-        switch (descriptionSuccess, phasingSuccess) {
-        case (true, true):
-            lastResponse = "Description and phasing written."
-        case (true, false):
-            lastResponse = "Description written, but writing phasing failed."
-        case (false, true):
-            lastResponse = "Phasing written, but writing description failed."
-        case (false, false):
-            lastResponse = "Failed to write description and phasing."
-        }
-
-        if !descriptionSuccess || !phasingSuccess {
-            await speak(lastResponse)
-        }
-    }
-
-    @discardableResult
-    private func writeArtifact(_ type: ArtifactType, shouldSpeak: Bool = true) async -> Bool {
-        lastResponse = "Writing \(type.displayName)..."
-        if shouldSpeak {
-            await speak(lastResponse)
-        }
-
-        do {
-            let content = try await generateContent(for: type, shouldSpeak: shouldSpeak)
-
-            if artifactManager.safeWrite(filename: type.filename, content: content) {
-                lastResponse = "\(type.displayName.capitalized) written."
-                addAssistantWriteConfirmation(for: type)
-
-                if shouldSpeak {
-                    await speak(lastResponse)
-                }
-                return true
+        // Handle spec/both - write both description and phasing
+        if artifactLower == "spec" || artifactLower == "both" {
+            if instructions != nil {
+                // Edit both with instructions
+                await executeWrite(artifact: "description", instructions: instructions)
+                await executeWrite(artifact: "phasing", instructions: instructions)
             } else {
-                lastResponse = "Failed to write \(type.displayName)"
-                if shouldSpeak {
-                    await speak(lastResponse)
-                }
-                return false
+                // Create both from conversation history
+                await speak("Writing description...")
+                await generateAndWriteDescription()
+                await speak("Writing phasing...")
+                await generateAndWritePhasing()
+                lastResponse = "Description and phasing written."
             }
-        } catch {
-            lastResponse = handleGenerationError(error, for: type.displayName)
-            if shouldSpeak {
-                await speak(lastResponse)
-            }
-            return false
+            return
         }
-    }
 
-    private func generateContent(for type: ArtifactType, shouldSpeak: Bool) async throws -> String {
-        switch type {
-        case .description:
-            return try await assistantClient.generateDescription(
-                conversationHistory: conversationHistory
-            )
-        case .phasing:
-            // For phasing, use multi-pass generation with status updates
-            var statusCallbackToUse: ((String) -> Void)? = nil
-            if shouldSpeak {
-                statusCallbackToUse = { [weak self] status in
-                    guard let self = self else { return }
-                    Task { @MainActor [weak self] in
-                        guard let self = self else { return }
-                        self.lastResponse = status
-                        await self.speak(status)
+        // Determine if this is description or phasing
+        guard artifactLower == "description" || artifactLower == "phasing" else {
+            lastResponse = "Unknown artifact: \(artifact)"
+            await speak(lastResponse)
+            return
+        }
+
+        let isDescription = artifactLower == "description"
+        let displayName = isDescription ? "description" : "phasing"
+
+        // Check if file exists to determine create vs edit
+        let (existingDescription, existingPhasing) = artifactManager.readSpec()
+        let fileExists = (isDescription && existingDescription != nil) ||
+                        (!isDescription && existingPhasing != nil)
+
+        // If we have instructions, this is an edit/transform operation
+        if let inst = instructions, !inst.isEmpty {
+            // Special handling for phasing operations
+            if !isDescription {
+                let lowerInst = inst.lowercased()
+
+                // Check for merge operation
+                if lowerInst.contains("merge") {
+                    if let range = extractPhaseRange(from: inst) {
+                        await performMergePhases(range.start, endPhase: range.end, instructions: inst)
+                        return
                     }
                 }
+
+                // Check for split operation
+                if lowerInst.contains("split") {
+                    if let phaseNum = extractPhaseNumber(from: inst) {
+                        await performSplitPhase(phaseNum, instructions: inst)
+                        return
+                    }
+                }
+
+                // Check for specific phase edit
+                if let phaseNum = extractPhaseNumber(from: inst) {
+                    // Edit specific phase
+                    await performEditPhase(phaseNum, instructions: inst)
+                    return
+                }
             }
 
-            return try await assistantClient.generatePhasing(
-                conversationHistory: conversationHistory,
-                statusCallback: statusCallbackToUse
+            // General edit - regenerate with instructions
+            addUserTranscript("Additional requirement for the \(displayName): \(inst)")
+
+            if isDescription {
+                await generateAndWriteDescription()
+            } else {
+                await generateAndWritePhasing()
+            }
+
+        } else {
+            // No instructions - pure create from conversation history
+            lastResponse = "Writing \(displayName)..."
+            await speak(lastResponse)
+
+            if isDescription {
+                await generateAndWriteDescription()
+            } else {
+                await generateAndWritePhasing()
+            }
+        }
+    }
+
+    // Helper methods for writing artifacts
+    private func generateAndWriteDescription() async {
+        do {
+            let content = try await assistantClient.generateDescription(
+                conversationHistory: conversationHistory
             )
+
+            if artifactManager.writeSpecDescription(content) {
+                lastResponse = "Description written."
+                addAssistantResponse("I've written the project description based on our conversation.")
+                await speak(lastResponse)
+            } else {
+                lastResponse = "Failed to write description"
+                await speak(lastResponse)
+            }
+        } catch {
+            lastResponse = handleGenerationError(error, for: "description")
+            await speak(lastResponse)
         }
     }
 
-    private func addAssistantWriteConfirmation(for type: ArtifactType) {
-        switch type {
-        case .description:
-            addAssistantResponse("I've written the project description based on our conversation.")
-        case .phasing:
-            addAssistantResponse("I've written the project phasing based on our conversation.")
+    private func generateAndWritePhasing() async {
+        do {
+            // Use multi-pass generation with status updates
+            let statusCallback: ((String) -> Void) = { [weak self] status in
+                guard let self = self else { return }
+                Task { @MainActor [weak self] in
+                    guard let self = self else { return }
+                    self.lastResponse = status
+                    await self.speak(status)
+                }
+            }
+
+            let content = try await assistantClient.generatePhasing(
+                conversationHistory: conversationHistory,
+                statusCallback: statusCallback
+            )
+
+            if artifactManager.writeSpecPhasing(content) {
+                lastResponse = "Phasing written."
+                addAssistantResponse("I've written the project phasing based on our conversation.")
+                await speak(lastResponse)
+            } else {
+                lastResponse = "Failed to write phasing"
+                await speak(lastResponse)
+            }
+        } catch {
+            lastResponse = handleGenerationError(error, for: "phasing")
+            await speak(lastResponse)
         }
     }
 
-    private func readDescription() async {
-        if let content = artifactManager.safeRead(filename: "description.md") {
-            lastResponse = "Reading description..."
-            log("Read description (\(content.count) chars)", category: .artifacts, component: "Orchestrator")
+    private func performEditPhase(_ phaseNumber: Int, instructions: String) async {
+        guard let config = try? EnvConfig.load() else {
+            lastResponse = "Failed to load configuration for phase editing"
+            await speak(lastResponse)
+            return
+        }
 
-            // Speak the content using TTS
-            await speak(content)
+        await speak("Editing phase \(phaseNumber)...")
+
+        let success = await artifactManager.editSpecificPhase(phaseNumber, instructions: instructions, groqApiKey: config.groqApiKey)
+
+        if success {
+            lastResponse = "Phase \(phaseNumber) updated."
+            await speak(lastResponse)
+            addAssistantResponse("I've updated phase \(phaseNumber) based on your instructions: \(instructions)")
         } else {
-            lastResponse = "No description yet."
-
-            // Speak the error message
-            await speak(self.lastResponse)
-
-            // List what files exist
-            let files = artifactManager.listArtifacts()
-            log("Current artifacts: \(files.joined(separator: ", "))", category: .artifacts, component: "Orchestrator")
+            lastResponse = "Failed to update phase \(phaseNumber)"
+            await speak(lastResponse)
         }
     }
 
-    private func readPhasing() async {
-        if let content = artifactManager.safeRead(filename: "phasing.md") {
-            lastResponse = "Reading phasing..."
-            log("Read phasing (\(content.count) chars)", category: .artifacts, component: "Orchestrator")
-
-            // Speak the content using TTS
-            await speak(content)
-        } else {
-            lastResponse = "No phasing yet."
-
-            // Speak the error message
-            await speak(self.lastResponse)
-
-            // List what files exist
-            let files = artifactManager.listArtifacts()
-            log("Current artifacts: \(files.joined(separator: ", "))", category: .artifacts, component: "Orchestrator")
-        }
-    }
-
-    private func readSpecificPhase(_ phaseNumber: Int) async {
-        if let phaseContent = artifactManager.readPhase(from: "phasing.md", phaseNumber: phaseNumber) {
-            lastResponse = phaseContent
-            log("Read phase \(phaseNumber) (\(phaseContent.count) chars)", category: .artifacts, component: "Orchestrator")
-
-            // Speak the phase content using TTS
-            await speak(phaseContent)
-        } else {
-            lastResponse = "Phase \(phaseNumber) not found."
-
-            // Speak the error message
-            await speak(self.lastResponse)
-        }
-    }
-
-    private func editDescription(content: String) async {
-        await editArtifact(type: .description, content: content, phaseNumber: nil)
-    }
-
-    private func editPhasing(phaseNumber: Int?, content: String) async {
-        await editArtifact(type: .phasing, content: content, phaseNumber: phaseNumber)
-    }
-
-    private func splitPhase(_ phaseNumber: Int, instructions: String) async {
+    private func performSplitPhase(_ phaseNumber: Int, instructions: String) async {
         lastResponse = "Splitting phase \(phaseNumber)..."
         await speak(lastResponse)
 
-        // Get config for groq API key
         guard let config = try? EnvConfig.load() else {
             lastResponse = "Failed to load configuration for phase splitting"
             await speak(lastResponse)
@@ -519,11 +521,10 @@ class Orchestrator: ObservableObject {
         }
     }
 
-    private func mergePhases(_ startPhase: Int, endPhase: Int, instructions: String?) async {
+    private func performMergePhases(_ startPhase: Int, endPhase: Int, instructions: String?) async {
         lastResponse = "Merging phases \(startPhase) through \(endPhase)..."
         await speak(lastResponse)
 
-        // Get config for groq API key
         guard let config = try? EnvConfig.load() else {
             lastResponse = "Failed to load configuration for phase merging"
             await speak(lastResponse)
@@ -547,94 +548,289 @@ class Orchestrator: ObservableObject {
         }
     }
 
-    private enum ArtifactType {
-        case description
-        case phasing
+    // Helper methods for phase extraction
+    private func extractPhaseNumber(from text: String) -> Int? {
+        let patterns = [
+            "phase\\s+(\\d+)",
+            "(\\d+)\\s*phase",
+            "phase\\s+([a-z]+)",
+            "#(\\d+)"
+        ]
 
-        var filename: String {
-            switch self {
-            case .description: return "description.md"
-            case .phasing: return "phasing.md"
+        for pattern in patterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) {
+                if let range = Range(match.range(at: 1), in: text) {
+                    let captured = String(text[range])
+
+                    // Handle word numbers
+                    let wordToNum = ["one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+                                     "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10]
+                    if let num = wordToNum[captured.lowercased()] {
+                        return num
+                    }
+
+                    // Handle numeric
+                    if let num = Int(captured) {
+                        return num
+                    }
+                }
             }
         }
-
-        var displayName: String {
-            switch self {
-            case .description: return "description"
-            case .phasing: return "phasing"
-            }
-        }
+        return nil
     }
 
-    private func editArtifact(type: ArtifactType, content: String, phaseNumber: Int?) async {
-        lastResponse = "Updating \(type.displayName)..."
+    private func extractPhaseRange(from text: String) -> (start: Int, end: Int)? {
+        // Normalize dashes and case
+        let normalized = text
+            .replacingOccurrences(of: "\u{2013}", with: "-")
+            .replacingOccurrences(of: "\u{2014}", with: "-")
+            .lowercased()
 
-        // If editing a specific phase number, use the diff-based approach
-        if type == .phasing, let phase = phaseNumber {
-            // Get config for groq API key
-            guard let config = try? EnvConfig.load() else {
-                lastResponse = "Failed to load configuration for phase editing"
-                await speak(lastResponse)
+        // Try numeric patterns first
+        let numPatterns = [
+            "phases?\\s+(\\d+)\\s*(?:to|through|thru|-)\\s*(\\d+)",
+            "(\\d+)\\s*(?:to|through|thru|-)\\s*(\\d+)"
+        ]
+        for pattern in numPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+               let match = regex.firstMatch(in: normalized, range: NSRange(normalized.startIndex..., in: normalized)) {
+                if let r1 = Range(match.range(at: 1), in: normalized),
+                   let r2 = Range(match.range(at: 2), in: normalized),
+                   let start = Int(normalized[r1]),
+                   let end = Int(normalized[r2]) {
+                    return (start, end)
+                }
+            }
+        }
+
+        // Word-number ranges (e.g., "phases two to four")
+        let wordToNum: [String: Int] = [
+            "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+            "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10
+        ]
+        let wordPatterns = [
+            "phases?\\s+([a-z]+)\\s*(?:to|through|thru|-)\\s*([a-z]+)",
+            "([a-z]+)\\s*(?:to|through|thru|-)\\s*([a-z]+)"
+        ]
+        for pattern in wordPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+               let match = regex.firstMatch(in: normalized, range: NSRange(normalized.startIndex..., in: normalized)) {
+                if let r1 = Range(match.range(at: 1), in: normalized),
+                   let r2 = Range(match.range(at: 2), in: normalized) {
+                    let s = String(normalized[r1])
+                    let e = String(normalized[r2])
+                    if let start = wordToNum[s], let end = wordToNum[e] {
+                        return (start, end)
+                    }
+                }
+            }
+        }
+
+        // Conjunction variant
+        if let regex = try? NSRegularExpression(pattern: "phases?\\s+(\\d+)\\s*and\\s*(\\d+)", options: .caseInsensitive),
+           let match = regex.firstMatch(in: normalized, range: NSRange(normalized.startIndex..., in: normalized)),
+           let r1 = Range(match.range(at: 1), in: normalized),
+           let r2 = Range(match.range(at: 2), in: normalized),
+           let start = Int(normalized[r1]), let end = Int(normalized[r2]) {
+            return (start, end)
+        }
+
+        return nil
+    }
+
+    // MARK: - Unified Read Handler (Phase 4)
+
+    private func executeRead(artifact: String, scope: String?) async {
+        let artifactLower = artifact.lowercased()
+
+        // Use the last user message as the request for context-aware reading
+        let userQuery = conversationHistory.last { $0.role == "user" }?.content ?? "read"
+
+        // Load spec context
+        let (specDescription, specPhasing) = artifactManager.readSpec()
+
+        if specDescription == nil && specPhasing == nil {
+            lastResponse = "No spec yet."
+            await speak(lastResponse)
+            return
+        }
+
+        // Provide a soft hint to the model, but let it decide
+        var preferred: String? = nil
+        let uqLower = userQuery.lowercased()
+        if uqLower.contains("read the spec") || uqLower.contains("read the whole thing") || uqLower.contains("read everything") || uqLower.contains("read me everything") {
+            preferred = "Read the full spec: description then phasing."
+        }
+        switch artifactLower {
+        case "spec", "both":
+            preferred = "Read the full spec: description then phasing."
+        case "description":
+            preferred = "Read the Project Description section."
+        case "phasing":
+            preferred = scope?.isEmpty == false ? "Focus on the requested phases if possible." : "Read the Project Phasing section."
+        default:
+            break
+        }
+
+        // Ask the model to select the right content from the spec
+        do {
+            let content = try await assistantClient.generateReadFromSpec(
+                specDescription: specDescription,
+                specPhasing: specPhasing,
+                userQuery: userQuery,
+                preferred: preferred
+            )
+            let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                lastResponse = trimmed
+                log("Generated read content (\(trimmed.count) chars)", category: .artifacts, component: "Orchestrator")
+                await speak(trimmed)
                 return
             }
+        } catch {
+            logError("Context read generation failed: \(error)", component: "Orchestrator")
+        }
 
-            await speak("Editing phase \(phase)...")
-
-            let success = await artifactManager.editSpecificPhase(phase, instructions: content, groqApiKey: config.groqApiKey)
-
-            if success {
-                lastResponse = "Phase \(phase) updated."
-                await speak(lastResponse)
-                addAssistantResponse("I've updated phase \(phase) based on your instructions: \(content)")
+        // Fallback direct reads if generation failed
+        if artifactLower == "spec" || artifactLower == "both" {
+            if let desc = specDescription, !desc.isEmpty { await speak(desc) } else { await speak("No description yet.") }
+            if let ph = specPhasing, !ph.isEmpty { await speak(ph) } else { await speak("No phasing yet.") }
+            return
+        }
+        if artifactLower == "description" {
+            if let desc = specDescription, !desc.isEmpty {
+                lastResponse = desc
+                await speak(desc)
             } else {
-                lastResponse = "Failed to update phase \(phase)"
+                lastResponse = "No description yet."
+                await speak(lastResponse)
+            }
+            return
+        }
+        if artifactLower == "phasing" {
+            if let ph = specPhasing, !ph.isEmpty {
+                lastResponse = ph
+                await speak(ph)
+            } else {
+                lastResponse = "No phasing yet."
                 await speak(lastResponse)
             }
             return
         }
 
-        // For full artifact edits, use the existing regeneration approach
-        do {
-            // Add the edit request to conversation history as a requirement
-            if type == .phasing {
-                addUserTranscript("Additional requirement for the phasing: \(content)")
-            } else {
-                addUserTranscript("Additional requirement for the \(type.displayName): \(content)")
-            }
+        lastResponse = "Unknown artifact: \(artifact)"
+        await speak(lastResponse)
+    }
 
-            // Regenerate the artifact with the new requirement included
-            let updatedContent: String
-            switch type {
-            case .description:
-                updatedContent = try await assistantClient.generateDescription(conversationHistory: conversationHistory)
-            case .phasing:
-                // For phasing edits, use multi-pass with status updates
-                let statusCallback: ((String) -> Void)? = { [weak self] status in
-                    guard let self = self else { return }
-                    Task { @MainActor [weak self] in
-                        guard let self = self else { return }
-                        self.lastResponse = status
-                        await self.speak(status)
-                    }
-                }
-                updatedContent = try await assistantClient.generatePhasing(conversationHistory: conversationHistory, statusCallback: statusCallback)
-            }
+    private func readPhaseRange(start: Int, end: Int) async {
+        let (_, phasing) = artifactManager.readSpec()
+        guard let phasingContent = phasing else {
+            lastResponse = "No phasing yet."
+            await speak(lastResponse)
+            return
+        }
 
-            // Save the regenerated artifact
-            if artifactManager.safeWrite(filename: type.filename, content: updatedContent) {
-                lastResponse = "\(type.displayName.capitalized) updated."
-                await speak(self.lastResponse)
-                addAssistantResponse("I've regenerated the \(type.displayName) with your new requirement.")
+        // Parse phases from the phasing content
+        let phases = PhaseParser.parsePhases(from: phasingContent)
+        let matchingPhases = phases.filter { $0.number >= start && $0.number <= end }
+
+        if matchingPhases.isEmpty {
+            lastResponse = "Phases \(start) through \(end) not found."
+            await speak(lastResponse)
+            return
+        }
+
+        // Build combined text for all phases in range
+        var combinedText = "Reading phases \(start) through \(end):\n\n"
+        for phase in matchingPhases {
+            combinedText += "## Phase \(phase.number): \(phase.title)\n\n"
+            combinedText += "\(phase.description)\n\n"
+            combinedText += "**Definition of Done:** \(phase.definitionOfDone)\n\n"
+        }
+
+        lastResponse = combinedText
+        log("Read phases \(start)-\(end) (\(combinedText.count) chars)", category: .artifacts, component: "Orchestrator")
+        await speak(combinedText)
+    }
+
+    // MARK: - Artifact Operations (Phase 3 - Unified Write Handler)
+
+    private func writeDescription() async {
+        await executeWrite(artifact: "description", instructions: nil)
+    }
+
+    private func writePhasing() async {
+        await executeWrite(artifact: "phasing", instructions: nil)
+    }
+
+    private func writeDescriptionAndPhasing() async {
+        await executeWrite(artifact: "both", instructions: nil)
+    }
+
+    // Legacy writeArtifact methods removed in Phase 5 - functionality moved to executeWrite()
+
+    private func readDescription() async {
+        await executeRead(artifact: "description", scope: nil)
+    }
+
+    private func readPhasing() async {
+        await executeRead(artifact: "phasing", scope: nil)
+    }
+
+    private func readSpecificPhase(_ phaseNumber: Int) async {
+        // Direct implementation to avoid recursion with executeRead
+        let (_, phasing) = artifactManager.readSpec()
+        if let phasingContent = phasing {
+            // Parse phases from the phasing content
+            let phases = PhaseParser.parsePhases(from: phasingContent)
+            if let phase = phases.first(where: { $0.number == phaseNumber }) {
+                let phaseText = "## Phase \(phase.number): \(phase.title)\n\n\(phase.description)\n\n**Definition of Done:** \(phase.definitionOfDone)"
+                lastResponse = phaseText
+                log("Read phase \(phaseNumber) (\(phaseText.count) chars)", category: .artifacts, component: "Orchestrator")
+
+                // Speak the phase content using TTS
+                await speak(phaseText)
             } else {
-                lastResponse = "Failed to update \(type.displayName)"
-                await speak(self.lastResponse)
+                lastResponse = "Phase \(phaseNumber) not found."
+
+                // Speak the error message
+                await speak(lastResponse)
             }
-        } catch {
-            logError("Failed to regenerate \(type.displayName): \(error)", component: "Orchestrator")
-            lastResponse = "Failed to regenerate \(type.displayName)"
-            await speak(self.lastResponse)
+        } else {
+            lastResponse = "No phasing yet."
+
+            // Speak the error message
+            await speak(lastResponse)
         }
     }
+
+    private func editDescription(content: String) async {
+        await executeWrite(artifact: "description", instructions: content)
+    }
+
+    private func editPhasing(phaseNumber: Int?, content: String) async {
+        if let phase = phaseNumber {
+            await executeWrite(artifact: "phasing", instructions: "edit phase \(phase): \(content)")
+        } else {
+            await executeWrite(artifact: "phasing", instructions: content)
+        }
+    }
+
+    private func splitPhase(_ phaseNumber: Int, instructions: String) async {
+        await executeWrite(artifact: "phasing", instructions: "split phase \(phaseNumber): \(instructions)")
+    }
+
+    private func mergePhases(_ startPhase: Int, endPhase: Int, instructions: String?) async {
+        let mergeInstructions = if let inst = instructions {
+            "merge phases \(startPhase) through \(endPhase): \(inst)"
+        } else {
+            "merge phases \(startPhase) through \(endPhase)"
+        }
+        await executeWrite(artifact: "phasing", instructions: mergeInstructions)
+    }
+
+    // Legacy methods removed in Phase 5 - all operations now use unified handlers
 
     private func handleConversation(_ content: String) async {
         state = .conversing
@@ -844,7 +1040,8 @@ class Orchestrator: ObservableObject {
     // MARK: - Clipboard Operations
 
     func copyDescriptionToClipboard() -> Bool {
-        guard let content = artifactManager.safeRead(filename: "description.md") else {
+        let (description, _) = artifactManager.readSpec()
+        guard let content = description else {
             lastResponse = "No description to copy. Say 'write the description' first."
             return false
         }
@@ -857,7 +1054,8 @@ class Orchestrator: ObservableObject {
     }
 
     func copyPhasingToClipboard() -> Bool {
-        guard let content = artifactManager.safeRead(filename: "phasing.md") else {
+        let (_, phasing) = artifactManager.readSpec()
+        guard let content = phasing else {
             lastResponse = "No phasing to copy. Say 'write the phasing' first."
             return false
         }
@@ -870,20 +1068,32 @@ class Orchestrator: ObservableObject {
     }
 
     func copyBothToClipboard() -> Bool {
-        let description = artifactManager.safeRead(filename: "description.md") ?? ""
-        let phasing = artifactManager.safeRead(filename: "phasing.md") ?? ""
+        // Use spec.md directly if it exists, otherwise combine sections
+        if let specContent = artifactManager.safeRead(filename: "spec.md") {
+            #if canImport(UIKit)
+            UIPasteboard.general.string = specContent
+            #endif
+            lastResponse = "Spec copied to clipboard!"
+            return true
+        }
 
-        guard !description.isEmpty || !phasing.isEmpty else {
+        // Fallback to reading individual sections from spec
+        let (description, phasing) = artifactManager.readSpec()
+
+        guard description != nil || phasing != nil else {
             lastResponse = "No artifacts to copy. Write them first."
             return false
         }
 
         var combined = ""
-        if !description.isEmpty {
-            combined += description + "\n\n"
+        if let desc = description {
+            combined += desc + "\n\n"
         }
-        if !phasing.isEmpty {
-            combined += "---\n\n" + phasing
+        if let phase = phasing {
+            if !combined.isEmpty {
+                combined += "---\n\n"
+            }
+            combined += phase
         }
 
         #if canImport(UIKit)

@@ -18,6 +18,134 @@ class AssistantClient {
         // print("[AssistantClient] Initialized")
     }
 
+    // MARK: - Context-Aware Reading
+
+    func generateReadFromSpec(specDescription: String?, specPhasing: String?, userQuery: String, preferred: String? = nil) async throws -> String {
+        log("Generating read content from spec context", category: .assistant, component: "AssistantClient")
+
+        let desc = specDescription ?? ""
+        let phase = specPhasing ?? ""
+
+        let systemPrompt = """
+        You are a voice reader for a project spec consisting of two sections: Project Description and Project Phasing.
+
+        GOAL:
+        - Given the user's request and the current spec content, produce exactly what should be read out loud.
+        - Prefer quoting the spec verbatim where it makes sense.
+        - If the user asks to "read the spec" or "read everything", output the full spec: description first, then phasing.
+        - If they ask for a part (e.g., a phase or a section), output only that portion verbatim.
+        - If they ask a question about the spec, answer concisely using the spec, quoting short fragments as needed.
+
+        RULES:
+        - Keep markdown formatting from the spec for headings and bold text.
+        - Do not claim to have changed anything.
+        - Keep output focused and directly responsive to the request.
+        - If the spec section requested is missing, say so briefly (e.g., "No phasing yet.").
+        """
+
+        var userParts: [String] = []
+        if !desc.isEmpty { userParts.append("CURRENT DESCRIPTION:\n" + desc) }
+        if !phase.isEmpty { userParts.append("CURRENT PHASING:\n" + phase) }
+        userParts.append("USER REQUEST:\n" + userQuery)
+        if let preferred = preferred, !preferred.isEmpty {
+            userParts.append("PREFERENCE HINT (may ignore if not applicable):\n" + preferred)
+        }
+
+        let userPrompt = userParts.joined(separator: "\n\n")
+
+        let messages = buildMessages(systemPrompt: systemPrompt,
+                                    conversationHistory: [],
+                                    userPrompt: userPrompt)
+
+        // Lower temperature for predictable extraction
+        return try await callGroq(messages: messages)
+    }
+
+    // MARK: - Tool Planning (single minimal toolset)
+
+    func planToolAction(userQuery: String,
+                        conversationHistory: [(role: String, content: String)],
+                        specDescription: String?,
+                        specPhasing: String?) async throws -> ToolAction {
+        log("Planning tool action from context", category: .assistant, component: "AssistantClient")
+
+        let systemPrompt = """
+        You control a small set of tools. Decide which SINGLE tool to use now and return JSON ONLY.
+
+        TOOLS:
+        - extract(text): For reading: extract verbatim content from the provided spec (or a concise answer grounded in it). Include the final text to speak in "text".
+        - overwrite(artifact, content): For full rewrites. artifact ∈ {spec, description, phasing}. content is full markdown for that artifact.
+        - write_diff(artifact, diff, content?): For selective edits. Provide a unified diff for the target artifact; optionally include full content fallback in "content".
+        - search(query, depth?): For web search. depth ∈ {deep|null}.
+        - copy(artifact): Copy artifact text. artifact ∈ {spec, description, phasing}.
+
+        RULES:
+        - If the user asks to "read" or "what's in ...", prefer extract(text) using the provided spec.
+        - If they ask to "write the spec" or similar, prefer overwrite(spec, content) with both sections.
+        - For small changes (merge/split/edit), prefer write_diff with a valid unified diff; include full content as fallback if unsure.
+        - Never claim you executed multiple tools. Pick one tool per turn.
+        - Output strict JSON for one of the tools above. No extra keys.
+        """
+
+        var userParts: [String] = []
+        if let desc = specDescription, !desc.isEmpty {
+            userParts.append("CURRENT DESCRIPTION:\n" + desc)
+        }
+        if let phasing = specPhasing, !phasing.isEmpty {
+            userParts.append("CURRENT PHASING:\n" + phasing)
+        }
+        if !conversationHistory.isEmpty {
+            let history = conversationHistory.suffix(10).map { "\($0.role): \($0.content)" }.joined(separator: "\n")
+            userParts.append("RECENT CONVERSATION (newest last):\n" + history)
+        }
+        userParts.append("USER REQUEST:\n" + userQuery)
+        let userPrompt = userParts.joined(separator: "\n\n")
+
+        let messages = buildMessages(systemPrompt: systemPrompt,
+                                    conversationHistory: [],
+                                    userPrompt: userPrompt)
+
+        // Ask for a compact response
+        let raw = try await callGroq(messages: messages)
+
+        // Attempt strict decoding
+        if let data = raw.data(using: .utf8), let action = try? JSONDecoder().decode(ToolAction.self, from: data) {
+            return action
+        }
+
+        // Normalize common nested shapes like {"extract": {"text": "..."}}
+        if let data = raw.data(using: .utf8),
+           let any = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let ex = any["extract"] as? [String: Any], let text = ex["text"] as? String {
+                return .extract(text: text)
+            }
+            if let ow = any["overwrite"] as? [String: Any],
+               let artifact = ow["artifact"] as? String,
+               let content = ow["content"] as? String {
+                return .overwrite(artifact: artifact, content: content)
+            }
+            if let wd = any["write_diff"] as? [String: Any],
+               let artifact = wd["artifact"] as? String,
+               let diff = wd["diff"] as? String {
+                let fallback = wd["content"] as? String
+                return .writeDiff(artifact: artifact, diff: diff, fallbackContent: fallback)
+            }
+            if let sr = any["search"] as? [String: Any], let q = sr["query"] as? String {
+                let depth = sr["depth"] as? String
+                return .search(query: q, depth: depth)
+            }
+            if let cp = any["copy"] as? [String: Any], let artifact = cp["artifact"] as? String {
+                return .copy(artifact: artifact)
+            }
+            if let text = any["text"] as? String {
+                return .extract(text: text)
+            }
+        }
+
+        // Fallback: treat model output as text to speak
+        return .extract(text: raw)
+    }
+
     // MARK: - Content Generation
 
     func generateDescription(conversationHistory: [(role: String, content: String)]) async throws -> String {
@@ -250,6 +378,7 @@ class AssistantClient {
         2. Questions → Answer directly from your knowledge
         3. Never suggest searching or mention search capability
         4. Never ask clarifying questions unless incomprehensible
+        5. Never claim to have executed actions (writes/edits/copies). Do NOT say things like "I've updated/written/changed". If the user implies an edit, briefly acknowledge and let the orchestrator handle it.
 
         TTS OPTIMIZATION (for complex answers):
         - Focus on ONE key idea per response. Rarely two if essential.

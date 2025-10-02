@@ -14,6 +14,8 @@ class NetworkManager {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 30.0  // 30 second timeout for each request
         configuration.timeoutIntervalForResource = 60.0  // 60 second total timeout
+        configuration.allowsConstrainedNetworkAccess = true
+        configuration.httpMaximumConnectionsPerHost = 4
         self.session = URLSession(configuration: configuration)
 
         log("Initialized with retry logic and 30s timeout", category: .network, component: "NetworkManager")

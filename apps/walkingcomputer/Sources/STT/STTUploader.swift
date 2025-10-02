@@ -59,9 +59,13 @@ final class STTUploader {
         } catch {
             logError("Network request failed after retries: \(error)", component: "STT")
 
-            // Return a fallback message if offline
-            if (error as NSError).domain == NSURLErrorDomain {
+            let nsErr = error as NSError
+            // Return a fallback message if offline or payload too large/pathological network error
+            if nsErr.domain == NSURLErrorDomain {
                 return "[Network unavailable - please try again]"
+            }
+            if nsErr.domain == NSPOSIXErrorDomain && nsErr.code == 40 { // Message too long
+                return "[Audio upload failed (message too long) - please retry]"
             }
             throw error
         }

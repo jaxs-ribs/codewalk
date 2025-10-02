@@ -13,7 +13,6 @@ class AgentViewModel: ObservableObject {
     private var audioTimer: Timer?
     private var recorder: Recorder?
     private var sttUploader: STTUploader?
-    private var router: Router?
     private(set) var orchestrator: Orchestrator?
     private var recordingStartTime: Date?
     private var recordingTimer: Timer?
@@ -36,9 +35,6 @@ class AgentViewModel: ObservableObject {
         // Initialize STT
         sttUploader = STTUploader(groqApiKey: env.groqApiKey)
         log("Using Groq STT for transcription", category: .system)
-
-        router = Router(groqApiKey: env.groqApiKey, modelId: env.llmModelId)
-        log("Router initialized", category: .system)
 
         orchestrator = Orchestrator(config: env)
         log("Orchestrator initialized", category: .system)
@@ -168,71 +164,21 @@ class AgentViewModel: ObservableObject {
     }
 
     private func routeTranscript(_ transcript: String) async {
-        log("Routing user intent...", category: .router)
+        log("Planning tool action from transcript...", category: .router)
 
-        var routerContext = RouterContext.empty
-
-        // Capture recent context, then record the new transcript
+        // Add transcript to conversation and let the Orchestrator plan + execute
         await MainActor.run {
-            if let orchestrator = self.orchestrator {
-                let recentMessages = orchestrator.recentConversationContext(limit: 100)
-                let lastSearchQuery = orchestrator.currentSearchQuery()
-                orchestrator.addUserTranscript(transcript)
-                routerContext = RouterContext(
-                    recentMessages: recentMessages,
-                    lastSearchQuery: lastSearchQuery
-                )
-            }
+            self.orchestrator?.addUserTranscript(transcript)
         }
 
-        do {
-            guard let router = router else {
-                logError("Router not initialized")
-                await MainActor.run {
-                    self.lastMessage = "Router not configured"
-                    self.currentState = .idle
-                }
-                return
-            }
-
-            let response = try await router.route(transcript: transcript, context: routerContext)
-
+        if let orchestrator = orchestrator {
+            await orchestrator.injectPrompt(transcript)
+        } else {
             await MainActor.run {
-                // Handle the routed action through orchestrator
-                self.handleRoutedAction(response)
-            }
-        } catch {
-            logError("Routing failed: \(error)", component: "Router")
-
-            // Even on routing failure, treat as conversation to maintain context
-            await MainActor.run {
-                // Enqueue as conversation so user's message is still processed
-                self.orchestrator?.enqueueAction(.conversation(transcript))
-                self.currentState = .idle
+                self.lastMessage = "Orchestrator not configured"
             }
         }
+        await MainActor.run { self.currentState = .idle }
     }
 
-    private func handleRoutedAction(_ response: RouterResponse) {
-        log("Handling action: \(response.action)", category: .orchestrator)
-
-        // Check if orchestrator is busy
-        guard let orchestrator = orchestrator else {
-            lastMessage = "Orchestrator not initialized"
-            currentState = .idle
-            return
-        }
-
-        if orchestrator.isExecuting {
-            lastMessage = "Still processing..."
-            currentState = .idle
-            return
-        }
-
-        // Enqueue the action for execution
-        orchestrator.enqueueAction(response.action)
-
-        // Return to idle state (orchestrator updates will come via subscription)
-        currentState = .idle
-    }
 }
