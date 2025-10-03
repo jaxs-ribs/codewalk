@@ -8,6 +8,7 @@ import Combine
 class Orchestrator: ObservableObject {
     @Published var isExecuting: Bool = false
     @Published var lastResponse: String = ""
+    @Published var currentAction: ProposedAction? = nil
 
     private let actionOrchestrator: ActionOrchestrator
     private let voiceOutput: VoiceOutputManager
@@ -92,6 +93,12 @@ class Orchestrator: ObservableObject {
         actionOrchestrator.$isExecuting
             .sink { [weak self] executing in
                 self?.isExecuting = executing
+            }
+            .store(in: &cancellables)
+
+        actionOrchestrator.$currentAction
+            .sink { [weak self] action in
+                self?.currentAction = action
             }
             .store(in: &cancellables)
     }

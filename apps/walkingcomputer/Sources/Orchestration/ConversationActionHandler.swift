@@ -6,7 +6,14 @@ class ConversationActionHandler: ActionHandler {
     private let voiceOutput: VoiceOutputManager
     private let conversationContext: ConversationContext
     private let searchContext: SearchContext
-    var lastResponse: String = ""
+    var lastResponse: String = "" {
+        didSet {
+            Task { @MainActor in
+                statusCallback?(lastResponse)
+            }
+        }
+    }
+    private var statusCallback: (@MainActor (String) -> Void)?
 
     init(
         assistantClient: AssistantClient,
@@ -18,6 +25,10 @@ class ConversationActionHandler: ActionHandler {
         self.voiceOutput = voiceOutput
         self.conversationContext = conversationContext
         self.searchContext = searchContext
+    }
+
+    func setStatusCallback(_ callback: @escaping @MainActor (String) -> Void) {
+        self.statusCallback = callback
     }
 
     func canHandle(_ action: ProposedAction) -> Bool {

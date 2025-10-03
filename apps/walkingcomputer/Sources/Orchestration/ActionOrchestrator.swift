@@ -6,6 +6,7 @@ import Combine
 class ActionOrchestrator: ObservableObject {
     @Published var isExecuting: Bool = false
     @Published var lastResponse: String = ""
+    @Published var currentAction: ProposedAction? = nil
 
     private var actionQueue: [ActionQueueItem] = []
     private let handlers: [ActionHandler]
@@ -18,6 +19,13 @@ class ActionOrchestrator: ObservableObject {
         self.handlers = handlers
         self.conversationContext = conversationContext
         self.searchContext = searchContext
+
+        // Set up status callback for all handlers to propagate updates in real-time
+        for handler in handlers {
+            handler.setStatusCallback { [weak self] status in
+                self?.lastResponse = status
+            }
+        }
     }
 
     // MARK: - Queue Management
@@ -91,23 +99,21 @@ class ActionOrchestrator: ObservableObject {
     private func executeAction(_ action: ProposedAction) async {
         log("Executing action: \(action)", category: .orchestrator)
 
+        // Set current action
+        currentAction = action
+
         // Find handler that can handle this action
         guard let handler = handlers.first(where: { $0.canHandle(action) }) else {
             logError("No handler found for action: \(action)", component: "ActionOrchestrator")
+            currentAction = nil
             return
         }
 
-        // Execute the action
+        // Execute the action (status updates will propagate via callback)
         await handler.handle(action)
 
-        // Update lastResponse from handler
-        if let artifactHandler = handler as? ArtifactActionHandler {
-            lastResponse = artifactHandler.lastResponse
-        } else if let searchHandler = handler as? SearchActionHandler {
-            lastResponse = searchHandler.lastResponse
-        } else if let conversationHandler = handler as? ConversationActionHandler {
-            lastResponse = conversationHandler.lastResponse
-        }
+        // Clear current action
+        currentAction = nil
     }
 
     // MARK: - Context Access (for compatibility)

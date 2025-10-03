@@ -80,7 +80,15 @@ class AgentViewModel: ObservableObject {
     func startRecording() {
         log("🎙️ Starting recording...", category: .recorder)
 
-        // Stop any ongoing TTS speech
+        // Block recording only if writing/editing artifacts (allow interrupting reads and conversations)
+        if orchestrator?.isExecuting == true,
+           let currentAction = orchestrator?.currentAction,
+           isWriteOrEditAction(currentAction) {
+            log("⚠️ Blocked recording - writing/editing artifact in progress", category: .recorder)
+            return
+        }
+
+        // Stop any ongoing TTS speech (for read actions)
         voiceOutput?.stop()
 
         currentState = .recording
@@ -91,6 +99,17 @@ class AgentViewModel: ObservableObject {
         } else {
             logError("Failed to start recording")
             currentState = .idle
+        }
+    }
+
+    private func isWriteOrEditAction(_ action: ProposedAction) -> Bool {
+        switch action {
+        case .writeDescription, .writePhasing, .writeBoth,
+             .editDescription, .editPhasing,
+             .splitPhase, .mergePhases:
+            return true
+        default:
+            return false
         }
     }
 

@@ -10,7 +10,14 @@ class ArtifactActionHandler: ActionHandler {
     private let assistantClient: AssistantClient
     private let voiceOutput: VoiceOutputManager
     private let conversationContext: ConversationContext
-    var lastResponse: String = ""
+    var lastResponse: String = "" {
+        didSet {
+            Task { @MainActor in
+                statusCallback?(lastResponse)
+            }
+        }
+    }
+    private var statusCallback: (@MainActor (String) -> Void)?
 
     init(
         artifactManager: ArtifactManager,
@@ -22,6 +29,10 @@ class ArtifactActionHandler: ActionHandler {
         self.assistantClient = assistantClient
         self.voiceOutput = voiceOutput
         self.conversationContext = conversationContext
+    }
+
+    func setStatusCallback(_ callback: @escaping @MainActor (String) -> Void) {
+        self.statusCallback = callback
     }
 
     func canHandle(_ action: ProposedAction) -> Bool {
