@@ -128,6 +128,13 @@ class ArtifactStore {
         let url = artifactsPath.appendingPathComponent(filename)
         let tempURL = url.appendingPathExtension("tmp")
 
+        // Log which session we're writing to
+        if let sessionId = sessionId {
+            log("Writing \(filename) to session: \(sessionId)", category: .artifacts, component: "ArtifactStore")
+        } else {
+            log("Writing \(filename) in legacy mode", category: .artifacts, component: "ArtifactStore")
+        }
+
         // Create backup if file exists
         if fileManager.fileExists(atPath: url.path) {
             createBackup(filename: filename)

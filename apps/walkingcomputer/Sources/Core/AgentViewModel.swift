@@ -34,8 +34,9 @@ class AgentViewModel: ObservableObject {
         // Subscribe to session changes
         sessionManager?.$activeSessionId
             .dropFirst() // Skip initial value
-            .sink { [weak self] _ in
-                self?.handleSessionSwitch()
+            .sink { [weak self] newSessionId in
+                guard let newSessionId = newSessionId else { return }
+                self?.handleSessionSwitch(to: newSessionId)
             }
             .store(in: &cancellables)
 
@@ -228,27 +229,54 @@ class AgentViewModel: ObservableObject {
         currentState = .idle
     }
 
-    private func handleSessionSwitch() {
-        log("Session switched - recreating orchestrator", category: .system)
+    private func handleSessionSwitch(to newSessionId: UUID) {
+        guard let sessionManager = sessionManager else {
+            logError("Cannot handle session switch: no session manager", component: "AgentViewModel")
+            return
+        }
+
+        log("Session switched to \(newSessionId) - recreating orchestrator", category: .system)
+
+        // Verify the session manager has the new session ID
+        if let currentId = sessionManager.getActiveSessionId() {
+            log("SessionManager activeSessionId: \(currentId)", category: .system)
+            if currentId != newSessionId {
+                logError("⚠️ RACE CONDITION DETECTED! Publisher says \(newSessionId) but SessionManager still has \(currentId)", component: "AgentViewModel")
+                logError("⚠️ Waiting briefly for SessionManager to update...", component: "AgentViewModel")
+
+                // Wait for next run loop to let the assignment complete
+                DispatchQueue.main.async { [weak self] in
+                    self?.recreateOrchestrator(for: newSessionId)
+                }
+                return
+            }
+        }
+
+        // Session ID matches, proceed
+        recreateOrchestrator(for: newSessionId)
+    }
+
+    private func recreateOrchestrator(for sessionId: UUID) {
+        guard let sessionManager = sessionManager else { return }
+
+        log("Creating orchestrator for session: \(sessionId)", category: .system)
 
         // Stop any ongoing speech
         voiceOutput?.stop()
 
         // Recreate orchestrator with new session
         let env = EnvConfig.load()
-        if let sessionManager = sessionManager {
-            orchestrator = Orchestrator(config: env, sessionManager: sessionManager, voiceOutput: voiceOutput)
+        orchestrator = Orchestrator(config: env, sessionManager: sessionManager, voiceOutput: voiceOutput)
 
-            // Re-subscribe to orchestrator updates
-            orchestrator?.$lastResponse
-                .sink { [weak self] response in
-                    if !response.isEmpty {
-                        self?.lastMessage = response
-                    }
+        // Re-subscribe to orchestrator updates
+        orchestrator?.$lastResponse
+            .sink { [weak self] response in
+                if !response.isEmpty {
+                    self?.lastMessage = response
                 }
-                .store(in: &cancellables)
+            }
+            .store(in: &cancellables)
 
-            log("Orchestrator recreated for new session", category: .system)
-        }
+        log("Orchestrator recreated for session: \(sessionId)", category: .system)
     }
 }

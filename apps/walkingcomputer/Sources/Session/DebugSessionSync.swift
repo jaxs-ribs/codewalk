@@ -154,17 +154,25 @@ class DebugSessionSync {
 
         let symlinkPath = projectRoot.appendingPathComponent("artifacts").appendingPathComponent("active-session")
 
-        // Remove existing symlink
+        // Remove existing symlink (try both remove and unlink for different file types)
         if fileManager.fileExists(atPath: symlinkPath.path) {
-            try? fileManager.removeItem(at: symlinkPath)
+            do {
+                try fileManager.removeItem(at: symlinkPath)
+            } catch {
+                // If removal fails, try unlinking directly
+                _ = unlink(symlinkPath.path)
+            }
         }
 
         // Create new symlink
         do {
             try fileManager.createSymbolicLink(at: symlinkPath, withDestinationURL: sourceDir)
-            log("🔗 Created symlink to active session at artifacts/active-session", category: .system, component: "DebugSessionSync")
-        } catch {
-            logError("Failed to create symlink: \(error)", component: "DebugSessionSync")
+            log("🔗 Updated symlink to active session: \(sessionId)", category: .system, component: "DebugSessionSync")
+        } catch let error as NSError {
+            // Only log if it's not a "file exists" error
+            if error.code != 17 && error.code != 516 {
+                logError("Failed to create symlink: \(error)", component: "DebugSessionSync")
+            }
         }
     }
 }

@@ -7,7 +7,7 @@ class SessionManager: ObservableObject {
     @Published private(set) var activeSessionId: UUID?
     @Published private(set) var sessions: [Session] = []
 
-    private let sessionStore: SessionStore
+    let sessionStore: SessionStore
     private let conversationHistoryStore: ConversationHistoryStore
     private let debugSync: DebugSessionSync
     private(set) var conversationContext: ConversationContext
@@ -49,12 +49,20 @@ class SessionManager: ObservableObject {
     /// Create a new session
     @discardableResult
     func createSession() -> Session {
+        // Save current session's conversation if we have one active
+        if let currentId = activeSessionId {
+            saveCurrentConversation()
+            updateSessionTimestamp(currentId)
+        }
+
         let session = sessionStore.createSession()
         sessions.insert(session, at: 0) // Add to front (newest first)
-        activeSessionId = session.id
 
         // Clear conversation context for new session
         conversationContext.clear()
+
+        // Update active session - this triggers the publisher
+        activeSessionId = session.id
 
         // Create symlink to active session for easy debugging
         let sessionPath = sessionStore.getSessionPath(for: session.id)

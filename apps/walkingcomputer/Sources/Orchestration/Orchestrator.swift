@@ -30,6 +30,7 @@ class Orchestrator: ObservableObject {
 
         // Initialize services with active session ID
         let activeSessionId = sessionManager.getActiveSessionId()
+        log("Orchestrator initializing with session ID: \(activeSessionId?.uuidString ?? "nil")", category: .system, component: "Orchestrator")
         let artifactManager = ArtifactManager(groqApiKey: config.groqApiKey, sessionId: activeSessionId)
         let assistantClient = AssistantClient(groqApiKey: config.groqApiKey, modelName: config.llmModelId)
 
