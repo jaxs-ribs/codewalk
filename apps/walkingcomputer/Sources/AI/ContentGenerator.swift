@@ -273,6 +273,20 @@ class ContentGenerator {
         3. Never suggest searching or mention search capability
         4. Never ask clarifying questions unless incomprehensible
 
+        CONTEXT-LOADED DOCUMENTS:
+        After creating/editing artifacts (description.md, phasing.md) or performing research,
+        the full content is automatically loaded into conversation with [Context: ...] markers.
+
+        When answering questions about these documents:
+        - Reference the most recent [Context: ...] version in the conversation
+        - Answer directly from that content (e.g., count phases, quote text, cite research details)
+        - No need to say "let me check" - you have it in context
+
+        Examples:
+        - "How many phases?" → Count phases in [Context: Updated phasing.md]
+        - "What's in the description?" → Quote from [Context: Updated description.md]
+        - "What did the research say about X?" → Reference [Context: Search results for ...]
+
         TTS OPTIMIZATION (for complex answers):
         - Focus on ONE key idea per response. Rarely two if essential.
         - One concept per sentence, keep sentences under 20 words

@@ -79,12 +79,15 @@ class SearchActionHandler: ActionHandler {
             let cleanedSummary = stripThinkBlocks(summary)
             lastResponse = cleanedSummary
 
-            // Add search result to conversation history (keep full response for context)
+            // Add search query to history
             let historyPrefix = depth == .medium ? "Deep research on: " : "Search for: "
             conversationContext.addUserMessage(historyPrefix + query)
-            conversationContext.addAssistantMessage(summary)  // Keep full response in history
 
-            // Speak the cleaned search results
+            // Load raw search results into context (silently - no TTS)
+            let contextType = depth == .medium ? "Deep research on '\(query)'" : "Search results for '\(query)'"
+            conversationContext.addSilentContextMessage(summary, type: contextType)
+
+            // Speak the cleaned search results (user hears this)
             await speak(cleanedSummary)
         } catch {
             logError("Perplexity \(depthDescription) failed: \(error)", component: "SearchActionHandler")
@@ -106,11 +109,13 @@ class SearchActionHandler: ActionHandler {
             logSuccess("Brave search successful, summary: \(summary.count) chars", component: "SearchActionHandler")
             lastResponse = summary
 
-            // Add search result to conversation history
+            // Add search query to history
             conversationContext.addUserMessage("Search for: \(query)")
-            conversationContext.addAssistantMessage(summary)
 
-            // Speak the search results
+            // Load search results into context (silently - no TTS)
+            conversationContext.addSilentContextMessage(summary, type: "Search results for '\(query)'")
+
+            // Speak the search results (user hears this)
             await speak(summary)
         } catch {
             logError("Brave search failed: \(error)", component: "SearchActionHandler")

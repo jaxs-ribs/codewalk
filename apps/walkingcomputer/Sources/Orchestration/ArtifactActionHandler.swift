@@ -119,6 +119,9 @@ class ArtifactActionHandler: ActionHandler {
                 lastResponse = "\(type.displayName.capitalized) written."
                 addAssistantWriteConfirmation(for: type)
 
+                // Auto-load artifact into context
+                loadArtifactIntoContext(type: type, content: content)
+
                 if shouldSpeak {
                     await speak(lastResponse)
                 }
@@ -249,6 +252,11 @@ class ArtifactActionHandler: ActionHandler {
                 lastResponse = "Phase \(phase) updated."
                 await speak(lastResponse)
                 conversationContext.addAssistantMessage("I've updated phase \(phase) based on your instructions: \(content)")
+
+                // Auto-load updated phasing into context
+                if let updatedContent = artifactManager.safeRead(filename: "phasing.md") {
+                    loadArtifactIntoContext(type: .phasing, content: updatedContent)
+                }
             } else {
                 lastResponse = "Failed to update phase \(phase)"
                 await speak(lastResponse)
@@ -288,6 +296,9 @@ class ArtifactActionHandler: ActionHandler {
                 lastResponse = "\(type.displayName.capitalized) updated."
                 await speak(lastResponse)
                 conversationContext.addAssistantMessage("I've regenerated the \(type.displayName) with your new requirement.")
+
+                // Auto-load updated artifact into context
+                loadArtifactIntoContext(type: type, content: updatedContent)
             } else {
                 lastResponse = "Failed to update \(type.displayName)"
                 await speak(lastResponse)
@@ -317,6 +328,11 @@ class ArtifactActionHandler: ActionHandler {
             lastResponse = "Phase \(phaseNumber) split successfully."
             await speak(lastResponse)
             conversationContext.addAssistantMessage("I've split phase \(phaseNumber) based on your instructions: \(instructions)")
+
+            // Auto-load updated phasing into context
+            if let updatedContent = artifactManager.safeRead(filename: "phasing.md") {
+                loadArtifactIntoContext(type: .phasing, content: updatedContent)
+            }
         } else {
             lastResponse = "Failed to split phase \(phaseNumber)"
             await speak(lastResponse)
@@ -339,6 +355,11 @@ class ArtifactActionHandler: ActionHandler {
             lastResponse = "Phases merged successfully."
             await speak(lastResponse)
             conversationContext.addAssistantMessage("I've merged phases \(startPhase) through \(endPhase)")
+
+            // Auto-load updated phasing into context
+            if let updatedContent = artifactManager.safeRead(filename: "phasing.md") {
+                loadArtifactIntoContext(type: .phasing, content: updatedContent)
+            }
         } else {
             let phaseCount = endPhase - startPhase + 1
             if phaseCount > 5 {
@@ -475,5 +496,11 @@ class ArtifactActionHandler: ActionHandler {
 
     private func speak(_ text: String) async {
         await voiceOutput.speak(text)
+    }
+
+    /// Load artifact content into conversation context (silently, no TTS)
+    private func loadArtifactIntoContext(type: ArtifactType, content: String) {
+        conversationContext.addSilentContextMessage(content, type: "Updated \(type.filename)")
+        log("Loaded \(type.filename) into context (\(content.count) chars)", category: .artifacts, component: "ArtifactActionHandler")
     }
 }

@@ -53,6 +53,12 @@ class VoiceOutputManager {
     }
 
     func speak(_ text: String) async {
+        // Skip speaking context messages
+        if ConversationContext.isContextMessage(text) {
+            log("Skipping TTS for context message", category: .tts, component: "VoiceOutputManager")
+            return
+        }
+
         // Log the AI response
         logAIResponse(text)
 

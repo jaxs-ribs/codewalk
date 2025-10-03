@@ -41,6 +41,27 @@ class ConversationContext {
         trimIfNeeded()
     }
 
+    /// Add context message (not spoken by TTS, used for loading artifacts/research)
+    func addSilentContextMessage(_ content: String, type: String) {
+        let contextMessage = "[Context: \(type)]\n\n\(content)"
+        history.append((role: "assistant", content: contextMessage))
+        lastUpdated = Date()
+        trimIfNeeded()
+
+        log("Added silent context: \(type) (\(content.count) chars)", category: .system, component: "ConversationContext")
+
+        // Log token budget info (rough estimate: 1 token ≈ 4 chars)
+        let estimatedTokens = estimateTokenCount()
+        if estimatedTokens > 24000 {
+            log("⚠️ Conversation context large: ~\(estimatedTokens) tokens (approaching 32k limit)", category: .system, component: "ConversationContext")
+        }
+    }
+
+    /// Check if a message is a context message (should not be spoken)
+    static func isContextMessage(_ content: String) -> Bool {
+        return content.hasPrefix("[Context:")
+    }
+
     /// Get recent messages formatted as strings
     func recentMessages(limit: Int = 6) -> [String] {
         let slice = history.suffix(limit)
@@ -57,6 +78,22 @@ class ConversationContext {
     /// Clear all history
     func clear() {
         history.removeAll()
+    }
+
+    /// Estimate total token count (rough: 1 token ≈ 4 chars)
+    func estimateTokenCount() -> Int {
+        let totalChars = history.reduce(0) { $0 + $1.content.count }
+        return totalChars / 4
+    }
+
+    /// Get context stats for debugging
+    func getContextStats() -> (messages: Int, contextMessages: Int, estimatedTokens: Int) {
+        let contextCount = history.filter { Self.isContextMessage($0.content) }.count
+        return (
+            messages: history.count,
+            contextMessages: contextCount,
+            estimatedTokens: estimateTokenCount()
+        )
     }
 
     private func trimIfNeeded() {
