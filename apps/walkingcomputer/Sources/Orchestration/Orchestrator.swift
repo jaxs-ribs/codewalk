@@ -11,9 +11,12 @@ class Orchestrator: ObservableObject {
 
     private let actionOrchestrator: ActionOrchestrator
     private let voiceOutput: VoiceOutputManager
+    private let sessionManager: SessionManager
     private var cancellables = Set<AnyCancellable>()
 
-    init(config: EnvConfig, voiceOutput: VoiceOutputManager? = nil) {
+    init(config: EnvConfig, sessionManager: SessionManager, voiceOutput: VoiceOutputManager? = nil) {
+        self.sessionManager = sessionManager
+
         // Use provided voice output or create new one
         if let provided = voiceOutput {
             self.voiceOutput = provided
@@ -21,12 +24,13 @@ class Orchestrator: ObservableObject {
             self.voiceOutput = VoiceOutputManager(config: config)
         }
 
-        // Initialize context
-        let conversationContext = ConversationContext()
+        // Get conversation context from session manager
+        let conversationContext = sessionManager.conversationContext
         let searchContext = SearchContext()
 
-        // Initialize services
-        let artifactManager = ArtifactManager(groqApiKey: config.groqApiKey)
+        // Initialize services with active session ID
+        let activeSessionId = sessionManager.getActiveSessionId()
+        let artifactManager = ArtifactManager(groqApiKey: config.groqApiKey, sessionId: activeSessionId)
         let assistantClient = AssistantClient(groqApiKey: config.groqApiKey, modelName: config.llmModelId)
 
         // Initialize search services
@@ -79,6 +83,8 @@ class Orchestrator: ObservableObject {
         actionOrchestrator.$lastResponse
             .sink { [weak self] response in
                 self?.lastResponse = response
+                // Auto-save conversation after each response
+                self?.sessionManager.saveCurrentConversation()
             }
             .store(in: &cancellables)
 

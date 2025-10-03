@@ -1,0 +1,9 @@
+# Project Description
+
+We're building a zero-knowledge virtual machine that lets you prove you ran a program correctly without revealing what the program actually did. It's basically a tiny computer inside your computer that speaks RISC-V instructions, so you can compile almost any code to run on it.
+
+The VM itself is super minimal - we're implementing just the core RISC-V instructions in a small circuit. When you run a program, it generates a cryptographic proof that the execution followed the rules without leaking any data about the computation. Think of it like a black box where you can prove "I ran this code properly" while keeping all inputs, outputs, and intermediate steps secret.
+
+We're keeping it simple to start. No fancy optimizations or exotic features - just a solid foundation that works. The prover runs on the host machine, so there's no remote servers or networking complexity. You compile your Rust or C code to RISC-V, feed it into our VM, and out pops a proof you can verify anywhere.
+
+The verification is equally straightforward. Anyone can check your proof in milliseconds without re-running the entire computation. We're focusing on making the API clean and intuitive, so developers don't need a PhD in cryptography to use zero-knowledge proofs in their applications.

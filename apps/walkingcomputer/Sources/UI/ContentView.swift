@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var viewModel = AgentViewModel()
+    @State private var showingSessionList = false
 
     var body: some View {
         Color.white
@@ -24,6 +25,28 @@ struct ContentView: View {
                         .lineLimit(2)
                 }
             )
+            .overlay(
+                // Session list button (top-right)
+                VStack {
+                    HStack {
+                        Spacer()
+                        Button {
+                            showingSessionList = true
+                        } label: {
+                            Image(systemName: "list.bullet")
+                                .font(.title2)
+                                .foregroundColor(.gray)
+                                .padding()
+                        }
+                    }
+                    Spacer()
+                }
+            )
+            .sheet(isPresented: $showingSessionList) {
+                if let sessionManager = viewModel.sessionManager {
+                    SessionListView(sessionManager: sessionManager)
+                }
+            }
             .persistentSystemOverlays(.hidden)
             .statusBarHidden()
             .onAppear {

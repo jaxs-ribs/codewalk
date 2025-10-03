@@ -1,0 +1,33 @@
+# Project Phasing
+
+## Phase 1: Core VM Skeleton
+**Scope:** Create the basic VM structure with register file and program counter.
+**Definition of Done:** Execute `cargo test vm::tests::test_create_vm`, see VM instance created with 32 registers initialized to zero and PC set to 0x0.
+
+## Phase 2: Instruction Decoding
+**Scope:** Define the Instruction enum and implement the fetch-decode pipeline.
+**Definition of Done:** Execute `cargo test decoder::tests::test_decode_add`, see ADD instruction decoded correctly with register operands extracted.
+
+## Phase 3: Arithmetic Execution
+**Scope:** Implement register-to-register arithmetic operations (ADD, SUB, MUL).
+**Definition of Done:** Execute `cargo test vm::tests::test_add_instruction`, see register r1 = r2 + r3 with overflow flag set correctly.
+
+## Phase 4: Memory Allocator
+**Scope:** Build a simple bump allocator for VM memory without paging yet.
+**Definition of Done:** Execute `cargo test memory::tests::test_alloc_64b`, see 64 bytes allocated at address 0x1000 and marked as used.
+
+## Phase 5: Memory Load/Store
+**Scope:** Add memory read/write instructions to the VM.
+**Definition of Done:** Execute `cargo test vm::tests::test_load_store`, see value 0xABCD written to address 0x1000 and read back correctly.
+
+## Phase 6: Paged Memory Management
+**Scope:** Implement 4KB pages and virtual-to-physical address translation.
+**Definition of Done:** Execute `cargo test mmu::tests::test_map_page`, see virtual page 0x1000 mapped to physical frame 0x2000 with read/write permissions.
+
+## Phase 7: R1CS Gadget for Addition
+**Scope:** Create the constraint system gadget for proving register addition.
+**Definition of Done:** Execute `cargo test circuits::gadgets::test_add_constraints`, see 5 R1CS constraints generated for a+b=c with no overflow.
+
+## Phase 8: Execution Trace Recording
+**Scope:** Record register and memory state changes during VM execution for proof generation.
+**Definition of Done:** Execute `cargo test trace::tests::test_record_add`, see trace entry created showing PC=0x0, opcode=ADD, r1=5, r2=3, r3=2.

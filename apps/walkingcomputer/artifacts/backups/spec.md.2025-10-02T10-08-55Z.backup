@@ -1,0 +1,53 @@
+# Project Description
+
+We're building a classic Snake game that feels alive. The moment you open the page, you'll see a sleek canvas ready to play. Use your arrow keys to guide the snake—it moves smoothly, no jerky motions here. Every time you snag food, your snake grows and a satisfying crunch sound plays. Hit a wall or yourself and you'll hear a gentle game-over chime.
+
+The real magic is in the details. The snake doesn't just move—it glides with subtle animation between squares. When you eat, the food pops with a quick particle burst and the score updates with a smooth roll effect. The background pulses softly to the beat of a retro soundtrack that shifts tempo as you speed up. Walls shimmer slightly so you always know where they are, even when you're focused on the next bite.
+
+We keep it simple but polished. The game tracks your high score automatically and displays it right under the current score. Press spacebar to pause, and the whole screen dims with a subtle overlay. No complex menus, no power-ups, just pure Snake that looks and sounds fantastic. One click to start playing, and you'll lose yourself trying to beat your best run.
+
+# Project Phasing
+
+## Phase 1: Create Game Canvas
+Create HTML file with canvas element and basic JavaScript setup.
+**Definition of Done:** Run `python -m http.server`, open `localhost:8000`, see 800x600 canvas with black background and "Score: 0" text at top.
+
+## Phase 2: Draw Static Snake
+Render snake as array of green squares on canvas.
+**Definition of Done:** Refresh page, see 5 green squares (20x20 pixels each) arranged vertically at canvas center.
+
+## Phase 3: Add Snake Movement
+Implement game loop to move snake in current direction.
+**Definition of Done:** Refresh page, watch snake move right automatically, squares stay connected as it moves.
+
+## Phase 4: Add Direction Controls
+Implement keyboard input to change snake direction.
+**Definition of Done:** Press up/down/left/right arrows, snake changes movement direction without reversing into itself.
+
+## Phase 5: Spawn Food Item
+Add red food square at random position on canvas.
+**Definition of Done:** Refresh page, see red square (20x20 pixels) at random position not overlapping snake.
+
+## Phase 6: Implement Food Collision
+Detect when snake head touches food.
+**Definition of Done:** Move snake head to touch food, see console log "Food eaten".
+
+## Phase 7: Add Growth and Scoring
+Make snake grow longer and increase score when eating food.
+**Definition of Done:** Move snake to eat food, see snake add one green square at tail, score increases by 10.
+
+## Phase 8: Add Wall Collision
+Detect when snake hits canvas boundaries.
+**Definition of Done:** Move snake into any canvas edge, see console log "Wall hit".
+
+## Phase 9: Add Self Collision
+Detect when snake head touches its own body.
+**Definition of Done:** Move snake to make head touch body segment, see console log "Self hit".
+
+## Phase 10: Add Game State Management
+Implement game over state when collision occurs.
+**Definition of Done:** After wall/self collision, snake stops moving and "Game Over" text appears at canvas center.
+
+## Phase 11: Add Sound Effects
+Add chime sound for eating, buzzer for game over.
+**Definition of Done:** Eat food, hear chime sound through speakers; trigger game over, hear buzzer sound.

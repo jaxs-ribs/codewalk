@@ -1,0 +1,45 @@
+# Project Description
+
+A vibrant Snake game built with vanilla HTML, CSS, and JavaScript. The snake grows as it eats food, with smooth animations for movement, eating, and game over. Includes satisfying sound effects for eating, collisions, and background music. Features a sleek, modern design with a dark theme, glowing snake, colorful food items, and responsive controls for desktop and mobile.
+
+# Project Phasing
+
+## Phase 1: Create Game Canvas
+Create HTML file with canvas element and basic JavaScript setup.
+**Definition of Done:** Run `python -m http.server`, open `localhost:8000`, see 800x600 canvas with black background and "Score: 0" text at top.
+
+## Phase 2: Implement Static Snake and Movement
+Render snake as an array of green squares on canvas and implement game loop to move snake in current direction, ensuring squares stay connected as it moves
+**Definition of Done:** Refresh page, see 5 green squares (20x20 pixels each) arranged vertically at canvas center, and watch snake move right automatically
+
+## Phase 3: Add Direction Controls
+Implement keyboard input to change snake direction.
+**Definition of Done:** Press up/down/left/right arrows, snake changes movement direction without reversing into itself.
+
+## Phase 4: Spawn Food Item
+Add red food square at random position on canvas.
+**Definition of Done:** Refresh page, see red square (20x20 pixels) at random position not overlapping snake.
+
+## Phase 5: Implement Food Collision
+Detect when snake head touches food.
+**Definition of Done:** Move snake head to touch food, see console log "Food eaten".
+
+## Phase 6: Add Growth and Scoring
+Make snake grow longer and increase score when eating food.
+**Definition of Done:** Move snake to eat food, see snake add one green square at tail, score increases by 10.
+
+## Phase 7: Add Wall Collision
+Detect when snake hits canvas boundaries.
+**Definition of Done:** Move snake into any canvas edge, see console log "Wall hit".
+
+## Phase 8: Add Self Collision
+Detect when snake head touches its own body.
+**Definition of Done:** Move snake to make head touch body segment, see console log "Self hit".
+
+## Phase 9: Add Game State Management
+Implement game over state when collision occurs.
+**Definition of Done:** After wall/self collision, snake stops moving and "Game Over" text appears at canvas center.
+
+## Phase 10: Add Sound Effects
+Add chime sound for eating, buzzer for game over.
+**Definition of Done:** Eat food, hear chime sound through speakers; trigger game over, hear buzzer sound.

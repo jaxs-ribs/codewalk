@@ -1,0 +1,29 @@
+# Project Phasing
+
+## Phase 1: Project Setup
+Initialize Express server with basic middleware and PostgreSQL database connection.
+**Definition of Done:** Run `npm start`, server starts on port 3000, and `curl localhost:3000/health` returns `{"status":"ok"}`.
+
+## Phase 2: Database Schema
+Create PostgreSQL tables for users and dog profiles with proper relationships and constraints.
+**Definition of Done:** Run `psql tinderdogs -c "\d users"` and see columns: id, email, password_hash, created_at, updated_at.
+
+## Phase 3: User Registration API
+Build POST /api/register endpoint that accepts email, password, and creates user record with hashed password.
+**Definition of Done:** Execute `curl -X POST localhost:3000/api/register -d '{"email":"test@example.com","password":"123456"}'` and receive 201 response with `{"id":1,"email":"test@example.com"}`.
+
+## Phase 4: User Authentication
+Create POST /api/login endpoint that validates credentials and returns JWT token.
+**Definition of Done:** Run `curl -X POST localhost:3000/api/login -d '{"email":"test@example.com","password":"123456"}'` and receive 200 response with `{"token":"eyJ..."}`.
+
+## Phase 5: Dog Profile Creation
+Build POST /api/dogs endpoint for creating dog profiles with authentication middleware.
+**Definition of Done:** Execute `curl -X POST localhost:3000/api/dogs -H "Authorization: Bearer TOKEN" -d '{"name":"Buddy","age":3,"breed":"Golden Retriever"}'` and receive 201 response with created dog object including id.
+
+## Phase 6: View Other Dogs
+Create GET /api/dogs endpoint that returns paginated list of other dogs excluding current user's dog.
+**Definition of Done:** Run `curl -H "Authorization: Bearer TOKEN" localhost:3000/api/dogs` and receive array of dog objects with id, name, age, breed fields.
+
+## Phase 7: Swipe Mechanism
+Build POST /api/swipes endpoint to record like/dislike actions between dogs.
+**Definition of Done:** Execute `curl -X POST localhost:3000/api/swipes -H "Authorization: Bearer TOKEN" -d '{"targetDogId":2,"action":"like"}'` and receive 201 response with created swipe record.

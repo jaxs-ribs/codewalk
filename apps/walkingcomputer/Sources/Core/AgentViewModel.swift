@@ -14,6 +14,7 @@ class AgentViewModel: ObservableObject {
     private var voiceOutput: VoiceOutputManager?
     private var router: Router?
     private(set) var orchestrator: Orchestrator?
+    private(set) var sessionManager: SessionManager?
     private var cancellables = Set<AnyCancellable>()
 
     init() {
@@ -25,6 +26,19 @@ class AgentViewModel: ObservableObject {
         // Load environment config
         let env = EnvConfig.load()
 
+        // Initialize session manager first
+        sessionManager = SessionManager()
+        sessionManager?.initialize()
+        log("SessionManager initialized", category: .system)
+
+        // Subscribe to session changes
+        sessionManager?.$activeSessionId
+            .dropFirst() // Skip initial value
+            .sink { [weak self] _ in
+                self?.handleSessionSwitch()
+            }
+            .store(in: &cancellables)
+
         // Initialize voice I/O
         voiceInput = VoiceInputManager(groqApiKey: env.groqApiKey)
         voiceOutput = VoiceOutputManager(config: env)
@@ -33,8 +47,11 @@ class AgentViewModel: ObservableObject {
         router = Router(groqApiKey: env.groqApiKey, modelId: env.llmModelId)
         log("Router initialized", category: .system)
 
-        orchestrator = Orchestrator(config: env, voiceOutput: voiceOutput)
-        log("Orchestrator initialized", category: .system)
+        // Initialize orchestrator with session manager
+        if let sessionManager = sessionManager {
+            orchestrator = Orchestrator(config: env, sessionManager: sessionManager, voiceOutput: voiceOutput)
+            log("Orchestrator initialized", category: .system)
+        }
 
         // Subscribe to orchestrator updates
         orchestrator?.$lastResponse
@@ -209,5 +226,29 @@ class AgentViewModel: ObservableObject {
 
         // Return to idle state (orchestrator updates will come via subscription)
         currentState = .idle
+    }
+
+    private func handleSessionSwitch() {
+        log("Session switched - recreating orchestrator", category: .system)
+
+        // Stop any ongoing speech
+        voiceOutput?.stop()
+
+        // Recreate orchestrator with new session
+        let env = EnvConfig.load()
+        if let sessionManager = sessionManager {
+            orchestrator = Orchestrator(config: env, sessionManager: sessionManager, voiceOutput: voiceOutput)
+
+            // Re-subscribe to orchestrator updates
+            orchestrator?.$lastResponse
+                .sink { [weak self] response in
+                    if !response.isEmpty {
+                        self?.lastMessage = response
+                    }
+                }
+                .store(in: &cancellables)
+
+            log("Orchestrator recreated for new session", category: .system)
+        }
     }
 }

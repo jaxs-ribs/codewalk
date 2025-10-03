@@ -1,0 +1,7 @@
+# Project Description
+
+We're building a hyper-polished Snake game that runs at 300 FPS in the browser using HTML5 Canvas and vanilla JavaScript. The twist? Instead of a chunky 8x8 grid, we're using a super fine resolution grid so movement feels buttery smooth and you can thread through tight spaces with pixel-perfect precision.
+
+The core mechanic centers around portals that let you warp across the map. When your snake's head gets close to a portal, time slows down Matrix-style, giving you that split-second to line up the perfect entry angle. The snake itself animates with subtle squash and stretch, and each segment follows the one in front with a nice fluid delay. We've got crisp sound effects for eating, dashing, and portal jumps - nothing too crazy, just satisfying audio feedback.
+
+The dash ability lets you briefly boost forward, but it's on a short cooldown so you can't spam it. The snake grows with each apple, but we're keeping the growth rate reasonable so games don't drag on forever. Collision detection is pixel-perfect, so if you graze your own tail, you're done. The whole thing renders efficiently using requestAnimationFrame and object pooling to hit that 300 FPS target even on mid-range laptops. It's basically the Snake game you know, but dialed up to eleven with modern polish and that "just one more run" feel.

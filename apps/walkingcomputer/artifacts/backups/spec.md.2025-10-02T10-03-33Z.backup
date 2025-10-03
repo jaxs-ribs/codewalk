@@ -1,0 +1,20 @@
+# Project Description
+
+## What We're Building
+A voice-first mobile app that helps you spec projects while walking.
+
+## Core Features
+- Voice input and output
+- Real-time transcription
+
+# Project Phasing
+
+## Phase 1: Foundation
+Set up the basic voice capture and transcription pipeline.
+
+**Definition of Done:** Voice input is captured and transcribed accurately.
+
+## Phase 2: Processing
+Add intelligent processing to structure the captured content.
+
+**Definition of Done:** Transcribed content is organized into project specs.

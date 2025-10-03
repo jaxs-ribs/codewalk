@@ -1,0 +1,11 @@
+# Project Phasing
+
+## Phase 1: Foundation
+Set up the basic voice capture and transcription pipeline.
+
+**Definition of Done:** Voice input is captured and transcribed accurately.
+
+## Phase 2: Processing
+Add intelligent processing to structure the captured content.
+
+**Definition of Done:** Transcribed content is organized into project specs.

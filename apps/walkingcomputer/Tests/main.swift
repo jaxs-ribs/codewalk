@@ -11,11 +11,12 @@ func runTests() async {
     // Load environment
     let config = EnvConfig.load()
 
-    // Create mock TTS
-    let mockTTS = MockTTSManager()
+    // Create session manager (tests will use legacy mode without sessionId)
+    let sessionManager = SessionManager()
+    sessionManager.initialize()
 
-    // Create orchestrator with mock TTS
-    let orchestrator = Orchestrator(config: config, ttsManager: mockTTS)
+    // Create orchestrator with session manager
+    let orchestrator = Orchestrator(config: config, sessionManager: sessionManager)
 
     // Create test runner
     let runner = TestRunner(orchestrator: orchestrator)

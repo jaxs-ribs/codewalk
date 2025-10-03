@@ -1,0 +1,29 @@
+# Project Phasing
+
+## Phase 1: Canvas Setup
+Set up high-resolution canvas with fine grid system.
+**Definition of Done:** Open index.html in browser, see 800x600 canvas with 20x20 pixel grid overlay, console logs "Canvas: 40x30 cells"
+
+## Phase 2: Snake Head Movement
+Implement snake head with smooth pixel-perfect movement tracking.
+**Definition of Done:** Press arrow keys, see green 20x20 square move in 2-pixel increments at 60fps, console prints "Head: x,y" coordinates updating continuously
+
+## Phase 3: Snake Body Growth
+Add body segments that follow the head with proper trailing mechanics.
+**Definition of Done:** After 3 seconds, see 3 green segments following head smoothly, each segment trails 20 pixels behind previous one, console shows "Body length: 3"
+
+## Phase 4: Food System
+Create food items that spawn randomly and can be consumed.
+**Definition of Done:** See red 20x20 food square appear randomly on grid, move head over food, food disappears and console logs "Food consumed at x,y"
+
+## Phase 5: Implement Bidirectional Teleportation Portals
+Implement two portals, Portal A and Portal B, with basic teleportation mechanics, enabling bidirectional travel between them
+**Definition of Done:** Both Portal A and Portal B are rendered as circular objects on the left and right sides of the game environment respectively, Portal A is blue and Portal B is orange. When the snake's head collides with Portal A, it is instantly teleported to a predefined exit point with coordinates (x, y), triggering a console log event with the message 'Portal A triggered' and updating the game state accordingly. Similarly, when the snake's head collides with Portal B, it is instantly teleported to Portal A's location, triggering a console log event with the message 'Portal B triggered' and updating the game state accordingly.
+
+## Phase 6: Slow Motion Zones
+Create radial slow-motion fields around portals.
+**Definition of Done:** Move snake head within 100 pixels of any portal, see movement speed reduce by 50%, console prints "Slow-mo: true" on entry, "false" on exit
+
+## Phase 7: Dash Mechanic
+Implement speed boost ability with visual feedback.
+**Definition of Done:** Press spacebar, see snake speed triple for 200ms with white particle trail, console shows "Dash active" for 200ms then "Cooldown: 1000ms" counting down

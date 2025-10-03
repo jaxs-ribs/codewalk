@@ -1,0 +1,61 @@
+# Project Description
+
+We're building a sleek Snake game in a single HTML file that runs on canvas. The snake starts as three glowing neon segments moving smoothly across a dark grid, leaving a subtle trail behind it. When you eat food, a rising tone plays and the snake grows by one segment. If you hit a wall or yourself, the screen gently shakes and a descending buzzer signals game over. We'll use Web Audio API for crisp retro sounds, keep controls simple with mute and volume sliders, and make everything feel polished with smooth animations and collision feedback.
+
+# Project Phasing
+
+## Phase 1: HTML Canvas Setup
+Create the basic HTML file with canvas element and establish the rendering foundation.
+**Definition of Done:** Open index.html in browser, see black 600x600 canvas centered on page, no errors in console.
+
+## Phase 2: Game Loop Foundation
+Implement the core game loop and grid rendering system.
+**Definition of Done:** Open index.html, see empty grid (20x20 squares) drawn on canvas, game loop running at 5 FPS (grid redraws every 200ms), canvas context properly initialized, grid rendering function correctly bound to requestAnimationFrame, and frame rate accurately measured using performance.now().
+
+## Phase 3: Snake Entity Creation and Rendering
+Create the snake entity and render it on the grid
+**Definition of Done:** Open index.html, see a green snake (3 segments) statically displayed on the grid with segments aligned to grid cells
+
+## Phase 4: Snake Movement Implementation with Direction Control
+Implement continuous movement with direction control using arrow keys
+**Definition of Done:** Verify that the snake moves continuously across the grid, responds to arrow key presses to change direction, and continues moving in the new direction
+
+## Phase 5: Food Spawning
+Implement a dynamic food entity that randomly spawns at diverse grid positions, ensuring a unique and engaging experience with each page refresh, and guaranteeing the food pellet's visibility and correct placement within the grid layout
+**Definition of Done:** Open index.html, see a red food pellet at a random grid location, refresh the page, and verify the food appears at a different location, ensuring the food spawning mechanism is fully functional and consistently produces the expected outcome.
+
+## Phase 6: Food Collision
+Detect when snake head touches food and handle the collision.
+**Definition of Done:** Navigate snake head to food, food disappears, console logs "Food eaten at [x,y]", run 3 times to verify.
+
+## Phase 7: Snake Growth
+Implement snake growth mechanic when eating food.
+**Definition of Done:** Eat food, snake grows from 3 to 4 segments visible, next food spawns at new location.
+
+## Phase 8: Wall Collision
+Add boundary detection for canvas edges.
+**Definition of Done:** Navigate snake head to wall edge, game freezes with snake at wall, console logs "Wall collision at [x,y]".
+
+## Phase 9: Self Collision
+Detect when snake head touches its own body.
+**Definition of Done:** Create snake loop, navigate head into body, game freezes, console logs "Self collision at [x,y]".
+
+## Phase 10: Game State Management
+Implement game over state and restart capability.
+**Definition of Done:** Trigger collision, see "Game Over" text on canvas, press spacebar, game resets with 3-segment snake.
+
+## Phase 11: Audio Context Setup
+Initialize Web Audio API with basic tone generation.
+**Definition of Done:** Open console, run `testTone()`, hear 440Hz beep for 0.2 seconds, no audio errors in console.
+
+## Phase 12: Food Sound Effect
+Add rising tone when eating food.
+**Definition of Done:** Eat food, hear tone rise from 400Hz to 800Hz over 0.3 seconds, sound plays once per food eaten.
+
+## Phase 13: Collision Sound Effect
+Add descending buzzer for game over.
+**Definition of Done:** Trigger collision, hear descending tone from 600Hz to 200Hz over 0.5 seconds.
+
+## Phase 14: Visual Effects
+Implement screen shake on collision and snake trail effect.
+**Definition of Done:** Trigger collision, see canvas shift 5 pixels for 200ms, move snake to see faint green trails at 3 previous positions.

@@ -1,0 +1,21 @@
+# Project Description
+
+We're building a classic Snake game that runs right in your browser using HTML5 Canvas and JavaScript. The snake moves smoothly around the screen, growing longer each time it eats food that appears randomly. Players control the direction using arrow keys, and the game speeds up as their score increases.
+
+The visual experience features smooth, modern animations - the snake has a subtle glow effect and fluid movement between grid positions. When food is consumed, there's a satisfying particle burst animation. The background has a subtle animated gradient that shifts colors as you play. The snake's body segments animate with a slight wave effect, making movement feel more organic and alive.
+
+For audio, we've got crisp sound effects that enhance every action. There's a distinct chime when eating food, a low whoosh when the snake turns, and a dramatic game over sound. Each sound is short and punchy so it doesn't get annoying during longer play sessions. The audio levels are balanced so effects complement rather than overpower the experience.
+
+The game includes a simple start screen with instructions, displays the current score and high score, and handles both desktop and mobile controls through on-screen buttons. When the game ends, players can restart instantly with the spacebar. The entire game runs at 60 FPS for buttery smooth gameplay, with smooth transitions between all game states.
+
+# Project Phasing
+
+## Phase 1: Foundation
+Set up the basic voice capture and transcription pipeline.
+
+**Definition of Done:** Voice input is captured and transcribed accurately.
+
+## Phase 2: Processing
+Add intelligent processing to structure the captured content.
+
+**Definition of Done:** Transcribed content is organized into project specs.

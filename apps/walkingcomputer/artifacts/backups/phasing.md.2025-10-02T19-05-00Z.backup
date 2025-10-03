@@ -1,0 +1,33 @@
+# Project Phasing
+
+## Phase 1: Canvas Setup
+Set up high-resolution canvas with fine grid system.
+**Definition of Done:** Open index.html in browser, see 800x600 canvas with 20x20 pixel grid overlay, console logs "Canvas: 40x30 cells"
+
+## Phase 2: Snake Head Movement
+Implement snake head with smooth pixel-perfect movement tracking.
+**Definition of Done:** Press arrow keys, see green 20x20 square move in 2-pixel increments at 60fps, console prints "Head: x,y" coordinates updating continuously
+
+## Phase 3: Snake Body Growth
+Add body segments that follow the head with proper trailing mechanics.
+**Definition of Done:** After 3 seconds, see 3 green segments following head smoothly, each segment trails 20 pixels behind previous one, console shows "Body length: 3"
+
+## Phase 4: Food System
+Create food items that spawn randomly and can be consumed.
+**Definition of Done:** See red 20x20 food square appear randomly on grid, move head over food, food disappears and console logs "Food consumed at x,y"
+
+## Phase 5: Portal A
+Implement first portal with basic teleportation mechanics.
+**Definition of Done:** Portal A is rendered as a blue circular object on the left side of the game environment, and when the snake's head collides with it, the head is instantly teleported to a predefined exit point with coordinates (x, y), triggering a console log event with the message 'Portal A triggered' and updating the game state accordingly.
+
+## Phase 6: Portal B
+Add second portal linked to portal A for bidirectional travel.
+**Definition of Done:** See orange circular portal B on right side, touch portal B with head, head instantly appears at portal A location, console logs "Portal B triggered"
+
+## Phase 7: Slow Motion Zones
+Create radial slow-motion fields around portals.
+**Definition of Done:** Move snake head within 100 pixels of any portal, see movement speed reduce by 50%, console prints "Slow-mo: true" on entry, "false" on exit
+
+## Phase 8: Dash Mechanic
+Implement speed boost ability with visual feedback.
+**Definition of Done:** Press spacebar, see snake speed triple for 200ms with white particle trail, console shows "Dash active" for 200ms then "Cooldown: 1000ms" counting down

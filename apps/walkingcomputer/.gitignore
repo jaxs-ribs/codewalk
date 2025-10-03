@@ -45,5 +45,7 @@ logs/
 *.tmp
 *.temp
 
-artifacts/*
-artifacts/
+
+# Debug sync files (simulator only)
+artifacts/debug-sessions/
+artifacts/active-session
