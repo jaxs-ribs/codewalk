@@ -30,7 +30,9 @@ targets:
         NSMicrophoneUsageDescription: Walking Computer needs microphone access for voice recording
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.walkingcomputer
+        PRODUCT_BUNDLE_IDENTIFIER: com.lucbaracat.walkingcomputer
+        DEVELOPMENT_TEAM: G5222LNZYP
+        CODE_SIGN_STYLE: Automatic
     preBuildScripts:
       - name: Copy .env file
         script: |
@@ -46,5 +48,5 @@ targets:
       - target: WalkingComputer
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.walkingcomputer.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.lucbaracat.walkingcomputer.tests
         GENERATE_INFOPLIST_FILE: YES

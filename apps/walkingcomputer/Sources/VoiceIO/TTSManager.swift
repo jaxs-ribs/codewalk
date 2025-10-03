@@ -19,7 +19,7 @@ class TTSManager: NSObject, ObservableObject, TTSProtocol {
             let session = AVAudioSession.sharedInstance()
             // Use playback category to work with recording
             try session.setCategory(.playAndRecord,
-                                   mode: .voicePrompt,
+                                   mode: .spokenAudio,
                                    options: [.defaultToSpeaker,
                                            .allowBluetooth,
                                            .duckOthers])
@@ -50,7 +50,7 @@ class TTSManager: NSObject, ObservableObject, TTSProtocol {
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playAndRecord,
-                                   mode: .voicePrompt,
+                                   mode: .spokenAudio,
                                    options: [.defaultToSpeaker,
                                            .allowBluetooth,
                                            .duckOthers])
@@ -66,7 +66,7 @@ class TTSManager: NSObject, ObservableObject, TTSProtocol {
         // Configure for walking pace (150-180 words per minute)
         utterance.rate = 0.52  // Faster pace for better flow
         utterance.pitchMultiplier = 1.0
-        utterance.volume = 0.9
+        utterance.volume = 1.0  // Maximum volume
 
         // Use enhanced voice if available
         if let voice = selectBestVoice() {
